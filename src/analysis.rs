@@ -1,0 +1,212 @@
+use ndarray::prelude::*;
+use num_complex::Complex;
+use chrono::{DateTime, Utc};
+
+use crate::header::CorHeader;
+use crate::args::Args;
+use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal};
+
+type C32 = Complex<f32>;
+
+#[derive(Debug)]
+pub struct AnalysisResults {
+    // Common
+    pub yyyydddhhmmss1: String,
+    pub source_name: String,
+    pub length_f32: f32,
+    pub ant1_az: f32,
+    pub ant1_el: f32,
+    pub ant1_hgt: f32,
+    pub ant2_az: f32,
+    pub ant2_el: f32,
+    pub ant2_hgt: f32,
+    pub mjd: f64,
+    // Delay
+    pub delay_range: Array1<f32>,
+    pub visibility: Array1<f32>,
+    pub delay_rate: Array1<f32>,
+    pub delay_max_amp: f32,
+    pub delay_phase: f32,
+    pub delay_snr: f32,
+    pub delay_noise: f32,
+    pub residual_delay: f32,
+    pub corrected_delay: f32,
+    // Frequency
+    pub freq_max_amp: f32,
+    pub freq_phase: f32,
+    pub freq_freq: f32,
+    pub freq_snr: f32,
+    pub freq_noise: f32,
+    pub freq_rate: Array1<f32>,
+    pub freq_rate_spectrum: Array1<C32>,
+    pub freq_range: Array1<f32>,
+    pub freq_max_freq: f32,
+    pub residual_rate: f32,
+    pub corrected_rate: f32,
+    // Ranges
+    pub rate_range: Vec<f32>,
+}
+
+pub fn analyze_results(
+    freq_rate_array: &Array2<C32>,
+    delay_rate_array: &Array2<C32>,
+    delay_rate_2d_data_comp: &Array2<C32>,
+    header: &CorHeader,
+    length: i32,
+    effective_integ_time: f32,
+    obs_time: &DateTime<Utc>,
+    padding_length: usize,
+    args: &Args,
+) -> AnalysisResults {
+    let fft_point_usize = header.fft_point as usize;
+    let fft_point_half = fft_point_usize / 2;
+    let fft_point_f32 = header.fft_point as f32;
+    let length_f32 = length as f32;
+    let padding_length_half = padding_length / 2;
+
+    // --- Ranges ---
+    let delay_range = Array::linspace(-(fft_point_f32 / 2.0) +1.0, fft_point_f32 / 2.0, fft_point_usize);
+
+    let freq_range = Array::linspace(0.0f32, (header.sampling_speed as f32 / 2.0) / 1e6 -1.0, fft_point_half);
+    let rate_range = rate_cal(padding_length as f32, effective_integ_time);
+
+    // --- Delay Analysis ---
+    let delay_rate_2d_data_array = delay_rate_array.clone().mapv(|x| x.norm());
+    let delay_noise = noise_level(delay_rate_2d_data_comp.view(), delay_rate_2d_data_comp.mean().unwrap(), padding_length, fft_point_usize);
+
+    
+
+    let (peak_rate_idx, peak_delay_idx) = if !args.delay_window.is_empty() && !args.rate_window.is_empty() {
+        let delay_win_low = args.delay_window[0];
+        let delay_win_high = args.delay_window[1];
+        let rate_win_low = args.rate_window[0];
+        let rate_win_high = args.rate_window[1];
+
+        let mut max_val_in_window = 0.0f32;
+        let mut temp_peak_rate_idx = padding_length_half; // Default to center if no peak found in window
+        let mut temp_peak_delay_idx = fft_point_half; // Default to center if no peak found in window
+
+        for r_idx in 0..rate_range.len() {
+            if rate_range[r_idx] >= rate_win_low && rate_range[r_idx] <= rate_win_high {
+                for d_idx in 0..delay_range.len() {
+                    if delay_range[d_idx] >= delay_win_low && delay_range[d_idx] <= delay_win_high {
+                        let current_val = delay_rate_2d_data_array[[r_idx, d_idx]];
+                        if current_val > max_val_in_window {
+                            max_val_in_window = current_val;
+                            temp_peak_rate_idx = r_idx;
+                            temp_peak_delay_idx = d_idx;
+                        }
+                    }
+                }
+            }
+        }
+        (temp_peak_rate_idx, temp_peak_delay_idx)
+    } else {
+        // Default to the center if no window is specified
+        (padding_length_half, fft_point_half - 1)
+    };
+    
+    let delay_max_amp = delay_rate_2d_data_array[[peak_rate_idx, peak_delay_idx]];
+    let delay_phase = delay_rate_2d_data_comp[[peak_rate_idx, peak_delay_idx]].arg().to_degrees();
+    let delay_rate_slice = delay_rate_2d_data_array.column(peak_delay_idx).to_owned();
+
+    let residual_delay_val: f32 = delay_range[peak_delay_idx];
+    let delay_snr = delay_max_amp / delay_noise;
+    let visibility = delay_rate_2d_data_array.row(peak_rate_idx).to_owned();
+
+    let residual_rate_val: f32;
+
+    // --- Frequency Analysis ---
+    let freq_rate_2d_data_array = freq_rate_array.clone().mapv(|x| x.norm());
+
+    let (peak_freq_row_idx, peak_rate_col_idx) = if !args.rate_window.is_empty() {
+        let rate_win_low = args.rate_window[0];
+        let rate_win_high = args.rate_window[1];
+
+        let mut max_val_in_window = 0.0f32;
+        let mut temp_peak_freq_row_idx = 0;
+        let mut temp_peak_rate_col_idx = padding_length_half;
+
+        for r_idx in 0..rate_range.len() {
+            if rate_range[r_idx] >= rate_win_low && rate_range[r_idx] <= rate_win_high {
+                for f_idx in 0..freq_range.len() {
+                    let current_val = freq_rate_2d_data_array[[f_idx, r_idx]];
+                    if current_val > max_val_in_window {
+                        max_val_in_window = current_val;
+                        temp_peak_freq_row_idx = f_idx;
+                        temp_peak_rate_col_idx = r_idx;
+                    }
+                }
+            }
+        }
+        (temp_peak_freq_row_idx, temp_peak_rate_col_idx)
+    } else {
+        let cross_power_slice = freq_rate_2d_data_array.column(padding_length_half);
+        let (max_f_idx, _) = cross_power_slice.iter().enumerate().fold((0, 0.0f32), |(i_max, v_max), (i, &v)| {
+            if v > v_max { (i, v) } else { (i_max, v_max) }
+        });
+        (max_f_idx, padding_length_half)
+    };
+
+    let freq_max_amp = freq_rate_2d_data_array[[peak_freq_row_idx, peak_rate_col_idx]];
+    let freq_phase = freq_rate_array[[peak_freq_row_idx, peak_rate_col_idx]].arg().to_degrees();
+    let freq_freq = freq_range[peak_freq_row_idx];
+    let freq_noise = noise_level(freq_rate_array.view(), freq_rate_array.mean().unwrap(), fft_point_half, padding_length);
+    let freq_snr = freq_max_amp / freq_noise;
+    let freq_rate = freq_rate_2d_data_array.row(peak_freq_row_idx).to_owned();
+    let freq_rate_spectrum = freq_rate_array.column(peak_rate_col_idx).to_owned();
+
+    // Set the final residual_rate_val based on the mode                                                                                                   
+    if args.frequency {                                                                                                                                    
+        residual_rate_val = rate_range[peak_rate_col_idx];                                                                                                 
+    } else {                                                                                                                                               
+        residual_rate_val = rate_range[peak_rate_idx];                                                                                                     
+    };                                                        
+
+
+    // --- Antenna Az/El Calculation ---
+    let (ant1_az, ant1_el, ant1_hgt) = radec2azalt(
+        [header.station1_position[0] as f32, header.station1_position[1] as f32, header.station1_position[2] as f32],
+        *obs_time, header.source_position_ra as f32, header.source_position_dec as f32
+    );
+    let (ant2_az, ant2_el, ant2_hgt) = radec2azalt(
+        [header.station2_position[0] as f32, header.station2_position[1] as f32, header.station2_position[2] as f32],
+        *obs_time, header.source_position_ra as f32, header.source_position_dec as f32
+    );
+    
+    AnalysisResults {
+        yyyydddhhmmss1: obs_time.format("%Y/%j %H:%M:%S").to_string(),
+        source_name: header.source_name.clone(),
+        length_f32,
+        ant1_az: ant1_az as f32,
+        ant1_el: ant1_el as f32,
+        ant1_hgt: ant1_hgt as f32,
+        ant2_az: ant2_az as f32,
+        ant2_el: ant2_el as f32,
+        ant2_hgt: ant2_hgt as f32,
+        mjd: mjd_cal(*obs_time),
+        delay_range,
+        visibility,
+        delay_rate: delay_rate_slice,
+        delay_max_amp,
+        delay_phase,
+        delay_snr,
+        delay_noise,
+        residual_delay: residual_delay_val,
+        corrected_delay: args.delay_correct,
+        freq_max_amp,
+        freq_phase,
+        freq_freq,
+        freq_snr,
+        freq_noise,
+        freq_rate,
+        freq_rate_spectrum,
+        freq_range,
+        freq_max_freq: freq_freq,
+        residual_rate: residual_rate_val,
+        corrected_rate: args.rate_correct,
+        rate_range,
+    }
+}
+
+

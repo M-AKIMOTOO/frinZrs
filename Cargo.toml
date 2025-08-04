@@ -1,0 +1,39 @@
+[package]
+name = "frinZ-rs"
+version = "1.0.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# [[bin]]
+# name = "frinZrs"
+# path = "src/main.rs"
+
+[[bin]]
+name = "frinZ"
+path = "src/main.rs"
+
+[[bin]]
+name = "frinZ-rs"
+path = "src/main.rs"
+
+[[bin]]
+name = "frinZ-rs-1.0.0"
+path = "src/main.rs"
+
+[dependencies]
+chrono        = "0.4.22"
+data-encoding = "2.3.2"
+hex           = "0.4.3"
+num-complex   = "0.4.2"
+rustfft       = "6.1.0"
+byteorder     = "1.4.3"
+ndarray       = "0.16.1"
+plotters      = "0.3.5"
+plotters-bitmap = "0.3.5"
+clap          = { version = "4.4.6", features = ["derive"] }
+astro         = "2.0.0"
+blh           = "0.3.0"
+image = "0.24"
+imageproc = "0.23"
+euclid = "0.22.11"
+
