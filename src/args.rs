@@ -64,7 +64,7 @@ pub struct Args {
     #[arg(long, aliases = ["rate-w", "rate-wi", "rate-win", "rate-wind", "rate-windo"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
     pub rate_window: Vec<f32>,
 
-    pub cmap_time: bool,
+    // /pub cmap_time: bool,
 
     /// Cumulate length in seconds.
     #[arg(long, aliases = ["cu", "cum", "cumu", "cumul", "cumula", "cumulat"], default_value_t = 0)]
