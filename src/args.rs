@@ -1,7 +1,7 @@
 use clap::Parser;
 pub use std::path::PathBuf;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(
     name = "frinZ",
     version = "1.0",
@@ -77,4 +77,12 @@ pub struct Args {
     /// Output header information to console and file.
     #[arg(long)]
     pub header: bool,
+
+    /// Enable precise search mode.
+    #[arg(long)]
+    pub search: bool,
+
+    /// Number of iterations for precise search.
+    #[arg(long, default_value_t = 3)]
+    pub iter: i32,
 }

@@ -86,3 +86,4 @@ pub fn mjd_cal(time: DateTime<Utc>) -> f64 {
     let julian_day = time::julian_day(&date);
     julian_day - 2400000.5
 }
+

@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use crate::header::CorHeader;
 use crate::args::Args;
 use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal};
+use crate::fitting;
 
 type C32 = Complex<f32>;
 
@@ -31,6 +32,7 @@ pub struct AnalysisResults {
     pub delay_noise: f32,
     pub residual_delay: f32,
     pub corrected_delay: f32,
+    pub delay_offset: f32,
     // Frequency
     pub freq_max_amp: f32,
     pub freq_phase: f32,
@@ -43,6 +45,7 @@ pub struct AnalysisResults {
     pub freq_max_freq: f32,
     pub residual_rate: f32,
     pub corrected_rate: f32,
+    pub rate_offset: f32,
     // Ranges
     pub rate_range: Vec<f32>,
 }
@@ -65,9 +68,9 @@ pub fn analyze_results(
     let padding_length_half = padding_length / 2;
 
     // --- Ranges ---
-    let delay_range = Array::linspace(-(fft_point_f32 / 2.0) +1.0, fft_point_f32 / 2.0, fft_point_usize);
+    let delay_range = Array::linspace(-(fft_point_f32 / 2.0) + 1.0, fft_point_f32 / 2.0, fft_point_usize);
 
-    let freq_range = Array::linspace(0.0f32, (header.sampling_speed as f32 / 2.0) / 1e6 -1.0, fft_point_half);
+    let freq_range = Array::linspace(0.0f32, (header.sampling_speed as f32 / 2.0) / 1e6, fft_point_half);
     let rate_range = rate_cal(padding_length as f32, effective_integ_time);
 
     // --- Delay Analysis ---
@@ -110,11 +113,42 @@ pub fn analyze_results(
     let delay_phase = delay_rate_2d_data_comp[[peak_rate_idx, peak_delay_idx]].arg().to_degrees();
     let delay_rate_slice = delay_rate_2d_data_array.column(peak_delay_idx).to_owned();
 
-    let residual_delay_val: f32 = delay_range[peak_delay_idx];
+    let mut residual_delay_val: f32 = delay_range[peak_delay_idx];
+    let mut delay_offset = 0.0;
+    if args.search {
+        // Extract points for quadratic fitting
+        let mut x_coords: Vec<f64> = Vec::new();
+        let mut y_values: Vec<f64> = Vec::new();
+
+        // Define the window size (e.g., 3 points: peak and 1 point on each side)
+        let window_size = 3;
+        let half_window = (window_size / 2) as isize;
+
+        for i in -half_window..=half_window {
+            let current_idx = peak_delay_idx as isize + i;
+            if current_idx >= 0 && current_idx < delay_range.len() as isize {
+                x_coords.push(delay_range[current_idx as usize] as f64);
+                y_values.push(delay_rate_2d_data_array[[peak_rate_idx, current_idx as usize]] as f64);
+            }
+        }
+
+        if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&x_coords, &y_values) {
+            // The peak_x from fitting is the absolute delay value
+            // We need to calculate the offset from the original peak_delay_idx
+            delay_offset = fit_result.peak_x as f32; // This is the residual offset
+            residual_delay_val = args.delay_correct + delay_offset; // This is the total corrected delay
+        } else {
+            // Handle error, for now, just print and use original peak
+            eprintln!("Warning: Quadratic fitting for delay failed. Using original peak.");
+            // delay_offset remains 0.0, residual_delay_val remains original
+        }
+    }
+
     let delay_snr = delay_max_amp / delay_noise;
     let visibility = delay_rate_2d_data_array.row(peak_rate_idx).to_owned();
 
-    let residual_rate_val: f32;
+    let mut residual_rate_val: f32;
+    let mut rate_offset = 0.0;
 
     // --- Frequency Analysis ---
     let freq_rate_2d_data_array = freq_rate_array.clone().mapv(|x| x.norm());
@@ -156,12 +190,60 @@ pub fn analyze_results(
     let freq_rate = freq_rate_2d_data_array.row(peak_freq_row_idx).to_owned();
     let freq_rate_spectrum = freq_rate_array.column(peak_rate_col_idx).to_owned();
 
-    // Set the final residual_rate_val based on the mode                                                                                                   
-    if args.frequency {                                                                                                                                    
-        residual_rate_val = rate_range[peak_rate_col_idx];                                                                                                 
-    } else {                                                                                                                                               
-        residual_rate_val = rate_range[peak_rate_idx];                                                                                                     
-    };                                                        
+    // Set the final residual_rate_val based on the mode
+    if args.frequency {
+        residual_rate_val = rate_range[peak_rate_col_idx];
+    } else {
+        residual_rate_val = rate_range[peak_rate_idx];
+    };
+
+    if args.search {
+        if args.frequency {
+            let mut x_coords: Vec<f64> = Vec::new();
+            let mut y_values: Vec<f64> = Vec::new();
+
+            let window_size = 3;
+            let half_window = (window_size / 2) as isize;
+
+            for i in -half_window..=half_window {
+                let current_idx = peak_rate_col_idx as isize + i;
+                if current_idx >= 0 && current_idx < rate_range.len() as isize {
+                    x_coords.push(rate_range[current_idx as usize] as f64);
+                    y_values.push(freq_rate_2d_data_array[[peak_freq_row_idx, current_idx as usize]] as f64);
+                }
+            }
+
+            let rate_scale_factor = (10.0 * padding_length as f64) * effective_integ_time as f64;
+            let scaled_x_coords: Vec<f64> = x_coords.iter().map(|&x| x * rate_scale_factor).collect();
+
+            if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&scaled_x_coords, &y_values) {
+                rate_offset = (fit_result.peak_x / rate_scale_factor) as f32; // This is the residual offset
+                residual_rate_val = args.rate_correct + rate_offset; // This is the total corrected rate
+            }
+        } else {
+            let mut x_coords: Vec<f64> = Vec::new();
+            let mut y_values: Vec<f64> = Vec::new();
+
+            let window_size = 3;
+            let half_window = (window_size / 2) as isize;
+
+            for i in -half_window..=half_window {
+                let current_idx = peak_rate_idx as isize + i;
+                if current_idx >= 0 && current_idx < rate_range.len() as isize {
+                    x_coords.push(rate_range[current_idx as usize] as f64);
+                    y_values.push(delay_rate_2d_data_array[[current_idx as usize, peak_delay_idx]] as f64);
+                }
+            }
+
+            let rate_scale_factor = (10.0 * padding_length as f64) * effective_integ_time as f64;
+            let scaled_x_coords: Vec<f64> = x_coords.iter().map(|&x| x * rate_scale_factor).collect();
+
+            if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&scaled_x_coords, &y_values) {
+                rate_offset = (fit_result.peak_x / rate_scale_factor) as f32; // This is the residual offset
+                residual_rate_val = args.rate_correct + rate_offset; // This is the total corrected rate
+            }
+        }
+    }                                                        
 
 
     // --- Antenna Az/El Calculation ---
@@ -194,6 +276,7 @@ pub fn analyze_results(
         delay_noise,
         residual_delay: residual_delay_val,
         corrected_delay: args.delay_correct,
+        delay_offset,
         freq_max_amp,
         freq_phase,
         freq_freq,
@@ -205,6 +288,7 @@ pub fn analyze_results(
         freq_max_freq: freq_freq,
         residual_rate: residual_rate_val,
         corrected_rate: args.rate_correct,
+        rate_offset,
         rate_range,
     }
 }

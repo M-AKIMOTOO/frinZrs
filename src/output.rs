@@ -87,39 +87,7 @@ pub fn output_header_info(header: &CorHeader, output_dir: &Path, basename: &str)
 }
 
 
-use num_complex::Complex;
-type C32 = Complex<f32>;
 
-pub fn output_complex_spectrum(
-    complex_vec: &[C32],
-    output_dir: &Path,
-    basename: &str,
-    header: &CorHeader,
-    length: i32,
-) -> io::Result<()> {
-    let complex_file_path = output_dir.join(format!("{}_complex_spectrum.tsv", basename));
-    let mut output_str = "#index	length[sec]	frequency[MHz]	real	imag
-".to_string();
-    let fft_point_half = (header.fft_point / 2) as usize;
-
-    for i in 0..length as usize {
-        for j in 0..fft_point_half {
-            let data_index = i * fft_point_half + j;
-            let freq_mhz = j as f32 + header.observing_frequency as f32 / 1e6;
-            let vis = complex_vec[data_index];
-            output_str += &format!(
-                "{} 	{} 	{} 	{:+.6e} 	{:+.6e}
-",
-                j, i, freq_mhz, vis.re, vis.im
-            );
-        }
-        output_str += "
-";
-    }
-
-    std::fs::write(complex_file_path, output_str)?;
-    Ok(())
-}
 
 pub fn generate_output_names(
     header: &CorHeader,
@@ -149,7 +117,7 @@ pub fn generate_output_names(
 
 pub fn format_delay_output(results: &AnalysisResults, label: &[&str]) -> String {
     format!(
-        " {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.2}   {:>+4.6}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}\n",
+        " {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.8}   {:>+4.8}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}\n",
         results.yyyydddhhmmss1,
         label[3],
         results.source_name,
