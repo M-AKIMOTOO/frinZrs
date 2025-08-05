@@ -149,8 +149,7 @@ pub fn generate_output_names(
 
 pub fn format_delay_output(results: &AnalysisResults, label: &[&str]) -> String {
     format!(
-        " {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.2}   {:>+4.6}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}
-",
+        " {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.2}   {:>+4.6}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}\n",
         results.yyyydddhhmmss1,
         label[3],
         results.source_name,
@@ -174,8 +173,7 @@ pub fn format_delay_output(results: &AnalysisResults, label: &[&str]) -> String 
 
 pub fn format_freq_output(results: &AnalysisResults, label: &[&str]) -> String {
     format!(
-        " {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}
-",
+        " {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}\n",
         results.yyyydddhhmmss1,
         label[3],
         results.source_name,

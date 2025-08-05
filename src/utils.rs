@@ -38,25 +38,20 @@ pub fn radec2azalt(ant_position: [f32; 3], time: DateTime<Utc>, obs_ra: f32, obs
     let obs_month = time.month() as u8;
     let obs_day = time.day() as u8;
     let obs_hour = time.hour() as u8;
-    let obs_minute = (time.minute() as f64 / 24.0) as u8;
-    let obs_second = (time.second() as f64 / 24.0 / 60.0) as f64 + (time.nanosecond() as f64 / 1_000_000_000.0);
+    let obs_minute = time.minute() as u8;
+    let obs_second = time.second() as f64; // + (time.nanosecond() as f64 / 1_000_000_000.0);
 
-    let day_of_month = time::DayOfMonth {
-        day: obs_day,
-        hr: obs_hour,
-        min: obs_minute,
-        sec: obs_second,
-        time_zone: 0.0,
-    };
+    let decimal_day_calc = obs_day as f64 + obs_hour as f64 / 24.0 + obs_minute as f64 / 60.0 / 24.0 + obs_second as f64 / 24.0 / 60.0 / 60.0;
+
     let date = time::Date {
         year: obs_year,
         month: obs_month,
-        decimal_day: time::decimal_day(&day_of_month),
+        decimal_day: decimal_day_calc,
         cal_type: time::CalType::Gregorian,
     };
 
     let geocentric_coord = GeocentricCoord::new(ant_position[0] as f64, ant_position[1] as f64, ant_position[2] as f64);
-    let geodetic_coord: GeodeticCoord<ellipsoid::GRS80> = geocentric_coord.into();
+    let geodetic_coord: GeodeticCoord<ellipsoid::WGS84> = geocentric_coord.into();
     let longitude_radian = geodetic_coord.lon.0;
     let latitude_radian = geodetic_coord.lat.0;
     let height_meter = geodetic_coord.hgt;
@@ -76,20 +71,15 @@ pub fn mjd_cal(time: DateTime<Utc>) -> f64 {
     let obs_month = time.month() as u8;
     let obs_day = time.day() as u8;
     let obs_hour = time.hour() as u8;
-    let obs_minute = (time.minute() as f64 / 24.0) as u8;
-    let obs_second = (time.second() as f64 / 24.0 / 60.0) as f64 + (time.nanosecond() as f64 / 1_000_000_000.0);
+    let obs_minute = time.minute() as u8;
+    let obs_second = time.second() as f64; // + (time.nanosecond() as f64 / 1_000_000_000.0);
 
-    let day_of_month = time::DayOfMonth {
-        day: obs_day,
-        hr: obs_hour,
-        min: obs_minute,
-        sec: obs_second,
-        time_zone: 0.0,
-    };
+    let decimal_day_calc = obs_day as f64 + obs_hour as f64 / 24.0 + obs_minute as f64 / 60.0 / 24.0 + obs_second as f64 / 24.0 / 60.0 / 60.0;
+
     let date = time::Date {
         year: obs_year,
         month: obs_month,
-        decimal_day: time::decimal_day(&day_of_month),
+        decimal_day: decimal_day_calc,
         cal_type: time::CalType::Gregorian,
     };
 

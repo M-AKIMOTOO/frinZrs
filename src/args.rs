@@ -3,9 +3,9 @@ pub use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "frinZ-1.0",
+    name = "frinZ",
     version = "1.0",
-    author = "AKIMOTO",
+    author = "Masanori AKIMOTO",
     about = "A Rust implementation of the frinZ fringe-fitting tool.",
     after_help = "(c) M.AKIMOTO with Gemini in 2025/08/04
 This program is licensed under the MIT License
