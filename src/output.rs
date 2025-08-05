@@ -151,7 +151,7 @@ pub fn format_freq_output(results: &AnalysisResults, label: &[&str]) -> String {
         results.freq_phase,
         results.freq_freq,
         results.freq_noise * 100.0,
-        results.residual_rate * 1000.0,
+        results.residual_rate,
         results.ant1_az,
         results.ant1_el,
         results.ant1_hgt,
