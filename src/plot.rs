@@ -513,6 +513,8 @@ pub fn cumulate_plot(
     chart.configure_mesh()
         .x_desc("Integration Time [s]")
         .y_desc("S/N ")
+        .x_label_formatter(&|v| format!("{:.0}", v))
+        .y_label_formatter(&|v| format!("{:.0}", v))
         .x_labels(10)
         .x_labels(10)
         .label_style(("sans-serif", 25).into_font())
