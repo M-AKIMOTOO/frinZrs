@@ -3,13 +3,11 @@ name = "frinZ-rs"
 version = "1.0.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-# [[bin]]
-# name = "frinZrs"
-# path = "src/main.rs"
-
 [[bin]]
 name = "frinZ"
+path = "src/main.rs"
+[[bin]]
+name = "frinZ-rs"
 path = "src/main.rs"
 
 [dependencies]
