@@ -72,7 +72,7 @@ pub fn delay_plane(
         .axis_style(BLACK.stroke_width(1))
         .x_label_formatter(&|v| format!("{:.0}", v))
         .y_label_formatter(&|v| format!("{:.1e}", v))
-        .label_style(("sans-serif", 30))
+        .label_style(("sans-serif ", 30))
         .draw()?;
 
     chart1.draw_series(LineSeries::new(delay_profile.iter().cloned(), GREEN))?;
@@ -101,7 +101,7 @@ pub fn delay_plane(
         .axis_style(BLACK.stroke_width(1))
         //.x_label_formatter(&|v| format!("{:.1}", v))
         .y_label_formatter(&|v| format!("{:.1e}", v))
-        .label_style(("sans-serif", 30))
+        .label_style(("sans-serif ", 30))
         .draw()?;
 
     chart2.draw_series(LineSeries::new(rate_profile.iter().cloned(), GREEN))?;
@@ -123,12 +123,12 @@ pub fn delay_plane(
         .y_desc("Rate [Hz]")
         .x_labels(7)
         .y_labels(10)
-        .label_style(("sans-serif", 30))
+        .label_style(("sans-serif ", 30))
         .x_label_formatter(&|v| format!("{:.0}", v))
         .y_label_formatter(&|v| format!("{:.2e}", v))
         .draw()?;
 
-    let resolution = 300; // Increased resolution for a smoother heatmap
+    let resolution = 600; // Increased resolution for a smoother heatmap
     let (delay_min, delay_max_hm) = (heatmap_delay_min, heatmap_delay_max);
     let (rate_min_hm, rate_max_hm) = (heatmap_rate_min, heatmap_rate_max);
     let mut heatmap_data = Vec::new();
@@ -195,12 +195,12 @@ pub fn delay_plane(
         .disable_y_mesh()
         .disable_x_axis()
         .y_labels(7)
-        .y_label_style(("sans-serif", 30))
+        .y_label_style(("sans-serif ", 30))
         .y_label_formatter(&|v| format!("{:.1e}", v))
         .draw()?;
 
     // 5. Stats
-    let font = ("sans-serif", 35).into_font();
+    let font = ("sans-serif ", 35).into_font();
     let left_x = 30;
     let right_x = 670;
     let mut y = 20;
@@ -259,7 +259,7 @@ pub fn frequency_plane(
         .y_desc("Phase")
         .y_label_formatter(&|y| format!("{:.0}", y))
         .y_labels(6)
-        .label_style(("sans-serif", 30))
+        .label_style(("sans-serif ", 30))
         .draw()?;
     phase_chart.draw_series(LineSeries::new(freq_phase_profile.iter().cloned(), GREEN.stroke_width(1)))?;
 
@@ -282,7 +282,7 @@ pub fn frequency_plane(
         .x_labels(7)
         .y_labels(7)
         .axis_style(BLACK.stroke_width(1))
-        .label_style(("sans-serif", 30))
+        .label_style(("sans-serif ", 30))
         .x_label_formatter(&|y| format!("{:.0}", y))
         .y_label_formatter(&|y| format!("{:.1e}", y))
         .draw()?;
@@ -308,7 +308,7 @@ pub fn frequency_plane(
         .x_labels(7)
         //.y_labels(7)
         .axis_style(BLACK.stroke_width(1))
-        .label_style(("sans-serif", 30))
+        .label_style(("sans-serif ", 30))
         .y_label_formatter(&|y| format!("{:.1e}", y))
         .draw()?;
     rate_chart.draw_series(LineSeries::new(rate_profile.iter().cloned(), GREEN.stroke_width(1)))?;
@@ -330,16 +330,16 @@ pub fn frequency_plane(
         .x_labels(7)
         .y_labels(7)
         .x_label_formatter(&|y| format!("{:.0}", y))
-        .label_style(("sans-serif", 30))
+        .label_style(("sans-serif ", 30))
         .draw()?;
 
-    let resolution = 300;
+    let resolution = 600;
     let mut heatmap_values = Vec::new();
     let mut heatmap_data_max_val = f64::NEG_INFINITY;
-    for i in 0..=resolution {
-        let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / resolution as f64;
-        for j in 0..=resolution {
-            let x = 0.0 + bw * j as f64 / resolution as f64;
+    for i in 0..resolution {
+        let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / (resolution - 1) as f64;
+        for j in 0..resolution {
+            let x = 0.0 + bw * j as f64 / (resolution - 1) as f64;
             let val = heatmap_func(x, y);
             heatmap_values.push(val);
             if val > heatmap_data_max_val { heatmap_data_max_val = val; }
@@ -347,12 +347,12 @@ pub fn frequency_plane(
     }
 
     for (idx, val) in heatmap_values.iter().enumerate() {
-        let i = idx / (resolution + 1);
-        let j = idx % (resolution + 1);
-        let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / resolution as f64;
-        let x = 0.0 + bw * j as f64 / resolution as f64;
-        let x_step = bw / resolution as f64;
-        let y_step = (rate_max_x - rate_min_x) / resolution as f64;
+        let i = idx / resolution;
+        let j = idx % resolution;
+        let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / (resolution - 1) as f64;
+        let x = 0.0 + bw * j as f64 / (resolution - 1) as f64;
+        let x_step = bw / (resolution - 1) as f64;
+        let y_step = (rate_max_x - rate_min_x) / (resolution - 1) as f64;
         let normalized_val = if heatmap_data_max_val > 0.0 { *val / heatmap_data_max_val } else { 0.0 };
         heatmap_chart.draw_series(std::iter::once(Rectangle::new(
             [(x, y), (x + x_step, y + y_step)],
@@ -385,12 +385,12 @@ pub fn frequency_plane(
         .disable_y_mesh()
         .disable_x_axis()
         .y_labels(7)
-        .y_label_style(("sans-serif", 30))
-        .y_label_formatter(&|v| format!("{:.1e}", v))
+        .y_label_style(("sans-serif ", 30))
+        .y_label_formatter(&|v| format!("{:.1E}", v))
         .draw()?;
 
     // 5. Stats
-    let font = ("sans-serif", 35).into_font();
+    let font = ("sans-serif ", 35).into_font();
     let left_x = 30;
     let right_x = stats_area.get_pixel_range().0.len() as i32 - 30;
     let mut y = 20;
@@ -418,13 +418,13 @@ pub fn add_plot(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let plots = vec![
         (amp, "Amplitude [%]", "amp"),
-        (snr, "S/N", "snr"),
+        (snr, "SNR", "snr"),
         (phase, "Phase [deg]", "phase"),
         (noise, "Noise Level [%]", "noise"),
     ];
 
     for (data, y_label, filename_suffix) in plots {
-        let file_path = format!("{}_{}.png", output_path, filename_suffix);
+        let file_path = format!("{}_{}{}", output_path, filename_suffix, ".png");
         let root = BitMapBackend::new(&file_path, (900, 600)).into_drawing_area();
         root.fill(&WHITE)?;
 
@@ -441,7 +441,7 @@ pub fn add_plot(
         }
 
         let mut chart = ChartBuilder::on(&root)
-            .caption(format!("{}, length: {} s", source_name, len_val), ("sans-serif", 25).into_font())
+            .caption(format!("{}, length: {} s", source_name, len_val), ("sans-serif ", 25).into_font())
             .margin(10)
             .x_label_area_size(60)
             .y_label_area_size(100)
@@ -461,7 +461,7 @@ pub fn add_plot(
                 }
             })
             .y_labels(if filename_suffix == "phase" { 7 } else { 5 })
-            .label_style(("sans-serif", 25).into_font())
+            .label_style(("sans-serif ", 25).into_font())
             .draw()?;
 
         chart.draw_series(PointSeries::of_element(
@@ -517,7 +517,7 @@ pub fn cumulate_plot(
         .y_label_formatter(&|v| format!("{:.0}", v))
         .x_labels(10)
         .x_labels(10)
-        .label_style(("sans-serif", 25).into_font())
+        .label_style(("sans-serif ", 25).into_font())
         .x_max_light_lines(3)
         .y_max_light_lines(3)
         .draw()?;

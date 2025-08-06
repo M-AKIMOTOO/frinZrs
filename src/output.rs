@@ -53,8 +53,8 @@ pub fn output_header_info(header: &CorHeader, output_dir: &Path, basename: &str)
         header.observing_frequency as f32 / 1e6,
         header.fft_point,
         header.number_of_sector,
-        header.sampling_speed as f32 / 2.0,
-        (header.sampling_speed as f32 / 2.0) / header.fft_point as f32 * 2.0,
+        header.sampling_speed as f32 / 2.0 / 1e6,
+        (header.sampling_speed as f32 / 2.0 / 1e6) / header.fft_point as f32 * 2.0,
         
         header.station1_name,
         header.station1_code,
@@ -116,12 +116,11 @@ pub fn generate_output_names(
 }
 
 pub fn format_delay_output(results: &AnalysisResults, label: &[&str]) -> String {
-    format!(
-        " {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.8}   {:>+4.8}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}\n",
+    format!(" {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.8}   {:>+4.8}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}",
         results.yyyydddhhmmss1,
         label[3],
         results.source_name,
-        results.length_f32,
+        results.length_f32.ceil(),
         results.delay_max_amp * 100.0,
         results.delay_snr,
         results.delay_phase,
@@ -140,12 +139,11 @@ pub fn format_delay_output(results: &AnalysisResults, label: &[&str]) -> String 
 
 
 pub fn format_freq_output(results: &AnalysisResults, label: &[&str]) -> String {
-    format!(
-        " {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}\n",
+    format!(" {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}",
         results.yyyydddhhmmss1,
         label[3],
         results.source_name,
-        results.length_f32,
+        results.length_f32.ceil(),
         results.freq_max_amp * 100.0,
         results.freq_snr,
         results.freq_phase,

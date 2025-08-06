@@ -268,7 +268,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let (final_freq_rate_array, padding_length) = process_fft(&corrected_complex_vec, current_length, header.fft_point, &rfi_ranges);
             let final_delay_rate_2d_data_comp = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
             analysis_results = analyze_results(&final_freq_rate_array, &final_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &args);
-            analysis_results.length_f32 = current_length as f32 * effective_integ_time;
+            analysis_results.length_f32 = (current_length as f32 * effective_integ_time).ceil();
             freq_rate_array = final_freq_rate_array;
             delay_rate_2d_data_comp = final_delay_rate_2d_data_comp;
         }
@@ -279,7 +279,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         if !args.frequency {
             let delay_output_line = format_delay_output(&analysis_results, &label);
             if l1 == 0 {
-                                let header_str = "".to_string() 
+                        let header_str = "".to_string() 
                            + "#************************************************************************************************************************************************************************************\n"
                            + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD      \n"
                            + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]                \n"
@@ -287,7 +287,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 print!("{}", header_str);
                 delay_output_str += &header_str;
             }
-            print!("{}", delay_output_line);
+            print!("{}\n", delay_output_line);
             delay_output_str += &delay_output_line;
 
             if args.cumulate != 0 {
@@ -322,7 +322,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 print!("{}", header_str);
                 freq_output_str += &header_str;
             }
-            print!("{}", freq_output_line);
+            print!("{}\n", freq_output_line);
             freq_output_str += &freq_output_line;
 
             if l1 == loop_count - 1 && args.output {
