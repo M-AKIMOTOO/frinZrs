@@ -162,22 +162,30 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         if args.search {
             // --- SEARCH MODE ---
-            // 1. Initial coarse analysis on raw data
+            // 1. Initial coarse analysis on raw data. This search respects the user-defined window if provided.
             let (coarse_freq_rate_array, padding_length) = process_fft(&complex_vec, current_length, header.fft_point, &rfi_ranges);
             let coarse_delay_rate_2d_data_comp = process_ifft(&coarse_freq_rate_array, header.fft_point, padding_length);
             let coarse_results = analyze_results(&coarse_freq_rate_array, &coarse_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &args);
-            
 
-            // 2. Initialize total corrections with coarse peak values
+            // 2. Initialize total corrections with the coarse peak values found.
             let mut total_delay_correct = coarse_results.residual_delay;
             let mut total_rate_correct = coarse_results.residual_rate;
 
-            // 3. Iteration loop to refine corrections
+            // 3. Iteration loop to refine corrections.
+            // For the iterative part, we search in a small, fixed window around the zero-point,
+            // because the coarse correction should have moved the peak of interest there.
+            // This prevents the search from latching onto other, stronger peaks during refinement.
+            let mut iter_args = args.clone();
+            iter_args.delay_window = vec![-16.0, 16.0]; // Use a small, fixed window for refinement
+            iter_args.rate_window = vec![-0.05, 0.05];   // Use a small, fixed window for refinement
+
             for _ in 0..args.iter {
-                let mut current_args = args.clone();
+                // We pass the *total* correction calculated so far to the analysis functions.
+                let mut current_args = iter_args.clone();
                 current_args.delay_correct = total_delay_correct;
                 current_args.rate_correct = total_rate_correct;
 
+                // Apply the total correction to the original complex data.
                 let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
                     .chunks(header.fft_point as usize / 2)
                     .map(|chunk| chunk.iter().map(|&c| Complex::new(c.re as f64, c.im as f64)).collect())
@@ -193,19 +201,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 let temp_complex_vec: Vec<C32> = temp_complex_vec_2d.into_iter().flatten().map(|v| Complex::new(v.re as f32, v.im as f32)).collect();
 
+                // Analyze the corrected data to find the *offset* from the new zero-point.
                 let (iter_freq_rate_array, padding_length) = process_fft(&temp_complex_vec, current_length, header.fft_point, &rfi_ranges);
                 let iter_delay_rate_2d_data_comp = process_ifft(&iter_freq_rate_array, header.fft_point, padding_length);
                 let iter_results = analyze_results(&iter_freq_rate_array, &iter_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &current_args);
                 
+                // Add the found offset to the total correction for the next iteration.
                 total_delay_correct += iter_results.delay_offset;
                 total_rate_correct += iter_results.rate_offset;
-                
             }
 
-            // 4. Final analysis with the refined total corrections
+            // 4. Final analysis is complete. The total_delay_correct and total_rate_correct are the refined values.
+            // We need to run the analysis one last time to get the final statistics (SNR, etc.) for the corrected data.
             let mut final_args = args.clone();
             final_args.delay_correct = total_delay_correct;
             final_args.rate_correct = total_rate_correct;
+            // For the final analysis, we don't need a window, as the peak is at zero.
+            final_args.delay_window = Vec::new();
+            final_args.rate_window = Vec::new();
 
             let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
                 .chunks(header.fft_point as usize / 2)
@@ -223,13 +236,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             let final_complex_vec: Vec<C32> = final_complex_vec_2d.into_iter().flatten().map(|v| Complex::new(v.re as f32, v.im as f32)).collect();
             let (final_freq_rate_array, padding_length) = process_fft(&final_complex_vec, current_length, header.fft_point, &rfi_ranges);
             let final_delay_rate_2d_data_comp = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
+            
+            // The analysis_results will have stats for the corrected data (peak at zero).
             analysis_results = analyze_results(&final_freq_rate_array, &final_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &final_args);
+            
+            // But we must report the *total* corrected delay and rate that we found.
             analysis_results.length_f32 = current_length as f32 * effective_integ_time;
             analysis_results.residual_delay = total_delay_correct;
             analysis_results.residual_rate = total_rate_correct;
             freq_rate_array = final_freq_rate_array;
             delay_rate_2d_data_comp = final_delay_rate_2d_data_comp;
-
         } else {
             // --- NORMAL MODE ---
             let mut corrected_complex_vec: Vec<C32> = complex_vec.clone();

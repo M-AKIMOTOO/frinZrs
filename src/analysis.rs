@@ -79,14 +79,15 @@ pub fn analyze_results(
     
 
     let (peak_rate_idx, peak_delay_idx) = if !args.delay_window.is_empty() && !args.rate_window.is_empty() {
+        // Case 3: Window options are specified, search within them.
         let delay_win_low = args.delay_window[0];
         let delay_win_high = args.delay_window[1];
         let rate_win_low = args.rate_window[0];
         let rate_win_high = args.rate_window[1];
 
         let mut max_val_in_window = 0.0f32;
-        let mut temp_peak_rate_idx = padding_length_half; // Default to center if no peak found in window
-        let mut temp_peak_delay_idx = fft_point_half; // Default to center if no peak found in window
+        let mut temp_peak_rate_idx = padding_length_half;
+        let mut temp_peak_delay_idx = fft_point_half;
 
         for r_idx in 0..rate_range.len() {
             if rate_range[r_idx] >= rate_win_low && rate_range[r_idx] <= rate_win_high {
@@ -103,8 +104,22 @@ pub fn analyze_results(
             }
         }
         (temp_peak_rate_idx, temp_peak_delay_idx)
+    } else if args.search {
+        // Case 2: --search is specified, no window. Find the global maximum.
+        let (mut max_val, mut max_r_idx, mut max_d_idx) = (0.0f32, 0, 0);
+        for r_idx in 0..delay_rate_2d_data_array.shape()[0] {
+            for d_idx in 0..delay_rate_2d_data_array.shape()[1] {
+                let current_val = delay_rate_2d_data_array[[r_idx, d_idx]];
+                if current_val > max_val {
+                    max_val = current_val;
+                    max_r_idx = r_idx;
+                    max_d_idx = d_idx;
+                }
+            }
+        }
+        (max_r_idx, max_d_idx)
     } else {
-        // Default to the center if no window is specified
+        // Case 1: No window and no --search. Use the center point (delay=0, rate=0).
         (padding_length_half, fft_point_half - 1)
     };
     
@@ -153,6 +168,7 @@ pub fn analyze_results(
     let freq_rate_2d_data_array = freq_rate_array.clone().mapv(|x| x.norm());
 
     let (peak_freq_row_idx, peak_rate_col_idx) = if !args.rate_window.is_empty() {
+        // Case 3: Window option is specified.
         let rate_win_low = args.rate_window[0];
         let rate_win_high = args.rate_window[1];
 
@@ -173,7 +189,22 @@ pub fn analyze_results(
             }
         }
         (temp_peak_freq_row_idx, temp_peak_rate_col_idx)
+    } else if args.search {
+        // Case 2: --search is specified, no window. Find the global maximum.
+        let (mut max_val, mut max_f_idx, mut max_r_idx) = (0.0f32, 0, 0);
+        for f_idx in 0..freq_rate_2d_data_array.shape()[0] {
+            for r_idx in 0..freq_rate_2d_data_array.shape()[1] {
+                let current_val = freq_rate_2d_data_array[[f_idx, r_idx]];
+                if current_val > max_val {
+                    max_val = current_val;
+                    max_f_idx = f_idx;
+                    max_r_idx = r_idx;
+                }
+            }
+        }
+        (max_f_idx, max_r_idx)
     } else {
+        // Case 1: No window and no --search. Use the center point (rate=0) and find max frequency.
         let cross_power_slice = freq_rate_2d_data_array.column(padding_length_half);
         let (max_f_idx, _) = cross_power_slice.iter().enumerate().fold((0, 0.0f32), |(i_max, v_max), (i, &v)| {
             if v > v_max { (i, v) } else { (i_max, v_max) }
@@ -291,5 +322,3 @@ pub fn analyze_results(
         rate_range,
     }
 }
-
-
