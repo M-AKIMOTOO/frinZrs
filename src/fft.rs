@@ -10,7 +10,7 @@ pub fn process_fft(
     length: i32,
     fft_point: i32,
     rfi_ranges: &[(usize, usize)],
-) -> (Array2<C32>, Array2<f32>, usize) {
+) -> (Array2<C32>, usize) {
     let length_usize = length as usize;
     let fft_point_half = (fft_point / 2) as usize;
     let padding_length = (length as u32).next_power_of_two() as usize * 2;
@@ -21,7 +21,6 @@ pub fn process_fft(
 
     let complex_array = Array::from_shape_vec((length_usize, fft_point_half), complex_vec.to_vec()).unwrap();
     let mut freq_rate_array = Array2::<C32>::zeros((fft_point_half, padding_length));
-    let mut freq_rate_data = Array2::<f32>::zeros((fft_point_half, padding_length));
 
     for i in 0..fft_point_half {
         let mut fft_in = vec![C32::new(0.0, 0.0); padding_length];
@@ -32,6 +31,13 @@ pub fn process_fft(
                 fft_in[j] = *val;
             }
         }
+
+        // ここから変更
+        // DC成分（FFTシフト前のインデックス0）を0+0jに設定
+        if i == 0 { // i が 0 の場合、それは DC 成分に対応するチャネル
+            fft_in[0] = C32::new(0.0, 0.0);
+        }
+        // ここまで変更
 
         let mut fft_out = fft_in.clone();
         fft.process(&mut fft_out);
@@ -48,20 +54,17 @@ pub fn process_fft(
             .map(|val| *val * (fft_point as f32 / length as f32))
             .collect();
 
-        let shifted_norm: Vec<f32> = scaled_shifted_out.iter().map(|val| val.norm()).collect();
-
         freq_rate_array.row_mut(i).assign(&ArrayView::from(&scaled_shifted_out));
-        freq_rate_data.row_mut(i).assign(&ArrayView::from(&shifted_norm));
     }
 
-    (freq_rate_array, freq_rate_data, padding_length)
+    (freq_rate_array, padding_length)
 }
 
 pub fn process_ifft(
     freq_rate_array: &Array2<C32>,
     fft_point: i32,
     padding_length: usize,
-) -> (Array2<C32>, Array2<C32>) {
+) -> Array2<C32> {
     let fft_point_usize = fft_point as usize;
     let fft_point_half = fft_point_usize / 2;
 
@@ -71,19 +74,33 @@ pub fn process_ifft(
     let mut delay_rate_array = Array2::<C32>::zeros((padding_length, fft_point_usize));
 
     for i in 0..freq_rate_array.dim().1 {
-        let mut ifft_in = vec![C32::new(0.0, 0.0); fft_point_usize];
         let freq_data_col = freq_rate_array.column(i);
 
-        ifft_in[..fft_point_half].copy_from_slice(&freq_data_col.slice(s![..fft_point_half]).to_vec());
+        // IFFTの入力として rustfft に渡すためのベクトルを準備
+        let mut ifft_input_for_rustfft = vec![C32::new(0.0, 0.0); fft_point_usize];
 
-        ifft.process(&mut ifft_in);
+        // freq_data_col (fftshift されたデータ) を ifft_input_for_rustfft の先頭にコピーし、残りをゼロで埋める
+        // Pythonの scipy.fft.ifft のゼロ埋め挙動に合わせる
+        ifft_input_for_rustfft[..fft_point_half].copy_from_slice(&freq_data_col.slice(s![..fft_point_half]).to_vec());
 
-        // IFFT shift and normalization
+        // rustfft の IFFT はシフトされていない入力を期待するので、
+        // ifft_input_for_rustfft を ifftshift する (DC成分を先頭に移動)
+        let mut temp_shifted_back = vec![C32::new(0.0, 0.0); fft_point_usize];
+        let (first_half_input, second_half_input) = ifft_input_for_rustfft.split_at(fft_point_usize / 2);
+        temp_shifted_back[..fft_point_usize / 2].copy_from_slice(second_half_input);
+        temp_shifted_back[fft_point_usize / 2..].copy_from_slice(first_half_input);
+
+        // IFFTを実行
+        ifft.process(&mut temp_shifted_back);
+
+        // ifft.process の出力はシフトされていないので、
+        // Pythonの np.fft.ifftshift に合わせて、shifted_out を作る際に ifftshift を適用する
         let mut shifted_out = vec![C32::new(0.0, 0.0); fft_point_usize];
-        let (first_half, second_half) = ifft_in.split_at(fft_point_half);
-        shifted_out[..fft_point_half].copy_from_slice(second_half);
-        shifted_out[fft_point_half..].copy_from_slice(first_half);
+        let (first_half_output, second_half_output) = temp_shifted_back.split_at(fft_point_usize / 2);
+        shifted_out[..fft_point_usize / 2].copy_from_slice(second_half_output);
+        shifted_out[fft_point_usize / 2..].copy_from_slice(first_half_output);
 
+        // 正規化
         for val in &mut shifted_out {
             *val /= fft_point as f32;
         }
@@ -95,7 +112,7 @@ pub fn process_ifft(
     for mut row in delay_rate_array.rows_mut() {
         row.as_slice_mut().unwrap().reverse();
     }
-    (delay_rate_array.clone(), delay_rate_array)
+    delay_rate_array
 }
 
 /// Applies phase correction to input data

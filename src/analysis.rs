@@ -53,7 +53,6 @@ pub struct AnalysisResults {
 pub fn analyze_results(
     freq_rate_array: &Array2<C32>,
     delay_rate_array: &Array2<C32>,
-    delay_rate_2d_data_comp: &Array2<C32>,
     header: &CorHeader,
     length: i32,
     effective_integ_time: f32,
@@ -75,7 +74,7 @@ pub fn analyze_results(
 
     // --- Delay Analysis ---
     let delay_rate_2d_data_array = delay_rate_array.clone().mapv(|x| x.norm());
-    let delay_noise = noise_level(delay_rate_2d_data_comp.view(), delay_rate_2d_data_comp.mean().unwrap(), padding_length, fft_point_usize);
+    let delay_noise = noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap(), padding_length, fft_point_usize);
 
     
 
@@ -110,7 +109,7 @@ pub fn analyze_results(
     };
     
     let delay_max_amp = delay_rate_2d_data_array[[peak_rate_idx, peak_delay_idx]];
-    let delay_phase = delay_rate_2d_data_comp[[peak_rate_idx, peak_delay_idx]].arg().to_degrees();
+    let delay_phase = delay_rate_array[[peak_rate_idx, peak_delay_idx]].arg().to_degrees();
     let delay_rate_slice = delay_rate_2d_data_array.column(peak_delay_idx).to_owned();
 
     let mut residual_delay_val: f32 = delay_range[peak_delay_idx];
@@ -231,7 +230,7 @@ pub fn analyze_results(
                 let current_idx = peak_rate_idx as isize + i;
                 if current_idx >= 0 && current_idx < rate_range.len() as isize {
                     x_coords.push(rate_range[current_idx as usize] as f64);
-                    y_values.push(delay_rate_2d_data_array[[current_idx as usize, peak_delay_idx]] as f64);
+                    y_values.push(delay_rate_array[[current_idx as usize, peak_delay_idx]].norm() as f64);
                 }
             }
 

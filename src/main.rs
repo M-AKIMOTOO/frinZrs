@@ -163,9 +163,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         if args.search {
             // --- SEARCH MODE ---
             // 1. Initial coarse analysis on raw data
-            let (coarse_freq_rate_array, _, padding_length) = process_fft(&complex_vec, current_length, header.fft_point, &rfi_ranges);
-            let (_coarse_delay_rate_array, coarse_delay_rate_2d_data_comp) = process_ifft(&coarse_freq_rate_array, header.fft_point, padding_length);
-            let coarse_results = analyze_results(&coarse_freq_rate_array, &coarse_delay_rate_2d_data_comp, &coarse_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &args);
+            let (coarse_freq_rate_array, padding_length) = process_fft(&complex_vec, current_length, header.fft_point, &rfi_ranges);
+            let coarse_delay_rate_2d_data_comp = process_ifft(&coarse_freq_rate_array, header.fft_point, padding_length);
+            let coarse_results = analyze_results(&coarse_freq_rate_array, &coarse_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &args);
             
 
             // 2. Initialize total corrections with coarse peak values
@@ -193,9 +193,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 let temp_complex_vec: Vec<C32> = temp_complex_vec_2d.into_iter().flatten().map(|v| Complex::new(v.re as f32, v.im as f32)).collect();
 
-                let (iter_freq_rate_array, _, padding_length) = process_fft(&temp_complex_vec, current_length, header.fft_point, &rfi_ranges);
-                let (_iter_delay_rate_array, iter_delay_rate_2d_data_comp) = process_ifft(&iter_freq_rate_array, header.fft_point, padding_length);
-                let iter_results = analyze_results(&iter_freq_rate_array, &iter_delay_rate_2d_data_comp, &iter_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &current_args);
+                let (iter_freq_rate_array, padding_length) = process_fft(&temp_complex_vec, current_length, header.fft_point, &rfi_ranges);
+                let iter_delay_rate_2d_data_comp = process_ifft(&iter_freq_rate_array, header.fft_point, padding_length);
+                let iter_results = analyze_results(&iter_freq_rate_array, &iter_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &current_args);
                 
                 total_delay_correct += iter_results.delay_offset;
                 total_rate_correct += iter_results.rate_offset;
@@ -221,9 +221,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 header.fft_point as u32,
             );
             let final_complex_vec: Vec<C32> = final_complex_vec_2d.into_iter().flatten().map(|v| Complex::new(v.re as f32, v.im as f32)).collect();
-            let (final_freq_rate_array, _, padding_length) = process_fft(&final_complex_vec, current_length, header.fft_point, &rfi_ranges);
-            let (_final_delay_rate_array, final_delay_rate_2d_data_comp) = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
-            analysis_results = analyze_results(&final_freq_rate_array, &final_delay_rate_2d_data_comp, &final_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &final_args);
+            let (final_freq_rate_array, padding_length) = process_fft(&final_complex_vec, current_length, header.fft_point, &rfi_ranges);
+            let final_delay_rate_2d_data_comp = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
+            analysis_results = analyze_results(&final_freq_rate_array, &final_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &final_args);
             analysis_results.length_f32 = current_length as f32 * effective_integ_time;
             analysis_results.residual_delay = total_delay_correct;
             analysis_results.residual_rate = total_rate_correct;
@@ -249,9 +249,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 corrected_complex_vec = corrected_complex_vec_2d.into_iter().flatten().map(|v| Complex::new(v.re as f32, v.im as f32)).collect();
             }
-            let (final_freq_rate_array, _, padding_length) = process_fft(&corrected_complex_vec, current_length, header.fft_point, &rfi_ranges);
-            let (_final_delay_rate_array, final_delay_rate_2d_data_comp) = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
-            analysis_results = analyze_results(&final_freq_rate_array, &final_delay_rate_2d_data_comp, &final_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &args);
+            let (final_freq_rate_array, padding_length) = process_fft(&corrected_complex_vec, current_length, header.fft_point, &rfi_ranges);
+            let final_delay_rate_2d_data_comp = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
+            analysis_results = analyze_results(&final_freq_rate_array, &final_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &args);
             analysis_results.length_f32 = current_length as f32 * effective_integ_time;
             freq_rate_array = final_freq_rate_array;
             delay_rate_2d_data_comp = final_delay_rate_2d_data_comp;
