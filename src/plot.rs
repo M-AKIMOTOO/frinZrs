@@ -132,20 +132,7 @@ pub fn delay_plane(
     let (delay_min, delay_max_hm) = (heatmap_delay_min, heatmap_delay_max);
     let (rate_min_hm, rate_max_hm) = (heatmap_rate_min, heatmap_rate_max);
     let mut heatmap_data = Vec::new();
-    let heatmap_data_max_val = {
-        let mut max_val = f64::NEG_INFINITY;
-        for xi in 0..resolution {
-            for yi in 0..resolution {
-                let x = delay_min + (delay_max_hm - delay_min) * xi as f64 / (resolution - 1) as f64;
-                let y = rate_min_hm + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution - 1) as f64;
-                let val = heatmap_func(x, y);
-                if val > max_val {
-                    max_val = val;
-                }
-            }
-        }
-        max_val
-    };
+    let mut heatmap_data_max_val = f64::NEG_INFINITY;
 
     for xi in 0..resolution {
         for yi in 0..resolution {
@@ -153,6 +140,7 @@ pub fn delay_plane(
             let y = rate_min_hm + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution - 1) as f64;
             let val = heatmap_func(x, y);
             heatmap_data.push(val);
+            if val > heatmap_data_max_val { heatmap_data_max_val = val; }
         }
     }
 
@@ -333,12 +321,12 @@ pub fn frequency_plane(
         .label_style(("sans-serif ", 30))
         .draw()?;
 
-    let resolution = 600;
+    let resolution = 400;
     let mut heatmap_values = Vec::new();
     let mut heatmap_data_max_val = f64::NEG_INFINITY;
     for i in 0..resolution {
-        let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / (resolution - 1) as f64;
         for j in 0..resolution {
+            let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / (resolution - 1) as f64;
             let x = 0.0 + bw * j as f64 / (resolution - 1) as f64;
             let val = heatmap_func(x, y);
             heatmap_values.push(val);
@@ -386,7 +374,7 @@ pub fn frequency_plane(
         .disable_x_axis()
         .y_labels(7)
         .y_label_style(("sans-serif ", 30))
-        .y_label_formatter(&|v| format!("{:.1E}", v))
+        .y_label_formatter(&|v| format!("{:.1e}", v))
         .draw()?;
 
     // 5. Stats

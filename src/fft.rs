@@ -22,30 +22,22 @@ pub fn process_fft(
     let complex_array = Array::from_shape_vec((length_usize, fft_point_half), complex_vec.to_vec()).unwrap();
     let mut freq_rate_array = Array2::<C32>::zeros((fft_point_half, padding_length));
 
-    for i in 0..fft_point_half {
-        let mut fft_in = vec![C32::new(0.0, 0.0); padding_length];
+    for i in 1..fft_point_half { // DC成分（FFTシフト前のインデックス0）を0+0jに設定
+        let mut fft_exe = vec![C32::new(0.0, 0.0); padding_length];
         let is_rfi_channel = rfi_ranges.iter().any(|(min, max)| i >= *min && i <= *max);
 
         if !is_rfi_channel {
             for (j, val) in complex_array.column(i).iter().enumerate() {
-                fft_in[j] = *val;
+                fft_exe[j] = *val;
             }
         }
 
-        // ここから変更
-        // DC成分（FFTシフト前のインデックス0）を0+0jに設定
-        if i == 0 { // i が 0 の場合、それは DC 成分に対応するチャネル
-            fft_in[0] = C32::new(0.0, 0.0);
-        }
-        // ここまで変更
-
-        let mut fft_out = fft_in.clone();
-        fft.process(&mut fft_out);
+        fft.process(&mut fft_exe);
 
         let mut shifted_out = vec![C32::new(0.0, 0.0); padding_length];
 
         // FFT shift
-        let (first_half, second_half) = fft_out.split_at(padding_length_half);
+        let (first_half, second_half) = fft_exe.split_at(padding_length_half);
         shifted_out[..padding_length_half].copy_from_slice(second_half);
         shifted_out[padding_length_half..].copy_from_slice(first_half);
 
@@ -77,28 +69,21 @@ pub fn process_ifft(
         let freq_data_col = freq_rate_array.column(i);
 
         // IFFTの入力として rustfft に渡すためのベクトルを準備
-        let mut ifft_input_for_rustfft = vec![C32::new(0.0, 0.0); fft_point_usize];
+        let mut ifft_exe = vec![C32::new(0.0, 0.0); fft_point_usize];
 
-        // freq_data_col (fftshift されたデータ) を ifft_input_for_rustfft の先頭にコピーし、残りをゼロで埋める
+        // freq_data_col (fftshift されたデータ) を ifft_exe の先頭にコピーし、残りをゼロで埋める
         // Pythonの scipy.fft.ifft のゼロ埋め挙動に合わせる
-        ifft_input_for_rustfft[..fft_point_half].copy_from_slice(&freq_data_col.slice(s![..fft_point_half]).to_vec());
-
-        // rustfft の IFFT はシフトされていない入力を期待するので、
-        // ifft_input_for_rustfft を ifftshift する (DC成分を先頭に移動)
-        let mut temp_shifted_back = vec![C32::new(0.0, 0.0); fft_point_usize];
-        let (first_half_input, second_half_input) = ifft_input_for_rustfft.split_at(fft_point_usize / 2);
-        temp_shifted_back[..fft_point_usize / 2].copy_from_slice(second_half_input);
-        temp_shifted_back[fft_point_usize / 2..].copy_from_slice(first_half_input);
+        ifft_exe[..fft_point_half].copy_from_slice(&freq_data_col.slice(s![..fft_point_half]).to_vec());
 
         // IFFTを実行
-        ifft.process(&mut temp_shifted_back);
+        ifft.process(&mut ifft_exe);
 
         // ifft.process の出力はシフトされていないので、
         // Pythonの np.fft.ifftshift に合わせて、shifted_out を作る際に ifftshift を適用する
         let mut shifted_out = vec![C32::new(0.0, 0.0); fft_point_usize];
-        let (first_half_output, second_half_output) = temp_shifted_back.split_at(fft_point_usize / 2);
-        shifted_out[..fft_point_usize / 2].copy_from_slice(second_half_output);
-        shifted_out[fft_point_usize / 2..].copy_from_slice(first_half_output);
+        let (first_half_output, second_half_output) = ifft_exe.split_at(fft_point_half);
+        shifted_out[..fft_point_half].copy_from_slice(second_half_output);
+        shifted_out[fft_point_half..].copy_from_slice(first_half_output);
 
         // 正規化
         for val in &mut shifted_out {
