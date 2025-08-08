@@ -41,6 +41,10 @@ pub fn fit_quadratic_least_squares(
         return Err(Box::new(FittingError("Input vectors must be of the same size and contain at least 3 points for least squares.".to_string()))); // Changed error return
     }
 
+    // Shift x-coordinates by the central value to improve numerical stability.
+    let x_center = x_coords[n / 2];
+    let shifted_x_coords: Vec<f64> = x_coords.iter().map(|&x| x - x_center).collect();
+
     let s0 = n as f64;
     let mut s1 = 0.0;
     let mut s2 = 0.0;
@@ -51,7 +55,7 @@ pub fn fit_quadratic_least_squares(
     let mut t2 = 0.0;
 
     for i in 0..n {
-        let x = x_coords[i];
+        let x = shifted_x_coords[i]; // Use shifted coordinates
         let y = y_values[i];
         let x_sq = x * x;
         s1 += x;
@@ -94,7 +98,8 @@ pub fn fit_quadratic_least_squares(
         return Err(Box::new(FittingError("Coefficient 'a' is positive. Quadratic function is convex downwards, no maximum exists.".to_string()))); // Changed error return
     }
 
-    let peak_x = -b / (2.0 * a);
+    let peak_x_shifted = -b / (2.0 * a);
+    let peak_x = peak_x_shifted + x_center; // Add the offset back
 
     Ok(QuadraticFitResult {
         peak_x,

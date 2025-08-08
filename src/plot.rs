@@ -476,7 +476,7 @@ pub fn cumulate_plot(
     obs_time: &chrono::DateTime<chrono::Utc>,
     cumulate_arg: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let base_filename = crate::output::generate_output_names(header, obs_time, label, false, false, cumulate_arg);
+    let base_filename = crate::output::generate_output_names(header, obs_time, label, false, false, false, cumulate_arg);
     let cumulate_filename = format!("{}_{}_cumulate{}.png", base_filename, header.source_name, cumulate_arg);
     let cumulate_filepath = cumulate_path.join(cumulate_filename);
     

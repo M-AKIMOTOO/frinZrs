@@ -82,6 +82,16 @@ pub struct Args {
     #[arg(long)]
     pub search: bool,
 
+    
+
+    /// Path to the bandpass calibration file.
+    #[arg(long)]
+    pub bandpass: Option<PathBuf>,
+
+    /// Output the bandpass-corrected complex spectrum to a .txt file.
+    #[arg(long)]
+    pub bandpass_output: bool,
+
     /// Number of iterations for precise search.
     #[arg(long, default_value_t = 3)]
     pub iter: i32,

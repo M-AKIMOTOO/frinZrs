@@ -52,6 +52,24 @@ pub fn process_fft(
     (freq_rate_array, padding_length)
 }
 
+pub fn apply_bandpass_correction(
+    freq_rate_array: &mut Array2<C32>,
+    bandpass_data: &[C32],
+) {
+    let bandpass_mean = bandpass_data.iter().map(|c| c.norm()).sum::<f32>() / bandpass_data.len() as f32;
+
+    for (i, mut row) in freq_rate_array.rows_mut().into_iter().enumerate() {
+        if i < bandpass_data.len() {
+            let bp_val = bandpass_data[i];
+            if bp_val.norm() > 1e-9 { // Avoid division by zero
+                for elem in row.iter_mut() {
+                    *elem = (*elem / bp_val) * bandpass_mean;
+                }
+            }
+        }
+    }
+}
+
 pub fn process_ifft(
     freq_rate_array: &Array2<C32>,
     fft_point: i32,

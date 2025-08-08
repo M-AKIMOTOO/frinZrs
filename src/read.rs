@@ -1,7 +1,8 @@
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, BufReader};
+use std::fs::File;
 use chrono::{DateTime, Utc, TimeZone};
 use num_complex::Complex;
-use byteorder::ReadBytesExt;
+use byteorder::{ReadBytesExt, LittleEndian};
 
 use crate::header::CorHeader;
 
@@ -62,4 +63,33 @@ pub fn read_visibility_data(
     cursor.set_position(current_cursor_pos);
 
     Ok((complex_vec, obs_time, effective_integ_time))
+}
+
+pub fn read_bandpass_file(path: &std::path::Path) -> io::Result<Vec<C32>> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    
+    // Read the FFT points header (as i32)
+    let _fft_points = reader.read_i32::<LittleEndian>()?;
+
+    let mut bandpass_data = Vec::new();
+    loop {
+        let real = match reader.read_f32::<LittleEndian>() {
+            Ok(val) => val,
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break, // End of file
+            Err(e) => return Err(e),
+        };
+        let imag = match reader.read_f32::<LittleEndian>() {
+            Ok(val) => val,
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                // This case (real part read but imaginary part is EOF) should ideally not happen
+                // in a correctly formatted file, but we handle it defensively.
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "Incomplete complex number at end of file"));
+            },
+            Err(e) => return Err(e),
+        };
+        bandpass_data.push(C32::new(real, imag));
+    }
+
+    Ok(bandpass_data)
 }

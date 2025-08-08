@@ -21,9 +21,9 @@ mod fitting;
 use args::Args;
 use header::parse_header;
 use rfi::parse_rfi_ranges;
-use output::{output_header_info, generate_output_names, format_delay_output, format_freq_output};
-use read::read_visibility_data;
-use fft::{process_fft, process_ifft};
+use output::{output_header_info, generate_output_names, format_delay_output, format_freq_output, write_complex_spectrum_binary};
+use read::{read_visibility_data, read_bandpass_file};
+use fft::{process_fft, process_ifft, apply_bandpass_correction};
 use analysis::analyze_results;
 use plot::{delay_plane, frequency_plane, add_plot, cumulate_plot};
 use image::ImageBuffer;
@@ -73,6 +73,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         output_path = Some(path);
     }
 
+    let mut bandpass_output_path: Option<PathBuf> = None;
+    if args.bandpass_output {
+        let path = frinz_dir.join("bandpass_output");
+        fs::create_dir_all(&path)?;
+        bandpass_output_path = Some(path);
+    }
+
     let mut cumulate_path: Option<PathBuf> = None;
     if args.cumulate != 0 {
         let path = frinz_dir.join(format!("cumulate/len{}s", args.cumulate));
@@ -98,6 +105,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // --- RFI Handling ---
     let rfi_ranges = parse_rfi_ranges(&args.rfi, rbw)?;
+
+    // --- Bandpass Handling ---
+    let bandpass_data = if let Some(bp_path) = &args.bandpass {
+        Some(read_bandpass_file(bp_path)?)
+    } else {
+        None
+    };
 
     // --- Output Header Information ---
     if args.output || args.header {
@@ -163,7 +177,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         if args.search {
             // --- SEARCH MODE ---
             // 1. Initial coarse analysis on raw data. This search respects the user-defined window if provided.
-            let (coarse_freq_rate_array, padding_length) = process_fft(&complex_vec, current_length, header.fft_point, &rfi_ranges);
+            let (mut coarse_freq_rate_array, padding_length) = process_fft(&complex_vec, current_length, header.fft_point, &rfi_ranges);
+            if let Some(bp_data) = &bandpass_data {
+                apply_bandpass_correction(&mut coarse_freq_rate_array, bp_data);
+            }
             let coarse_delay_rate_2d_data_comp = process_ifft(&coarse_freq_rate_array, header.fft_point, padding_length);
             let coarse_results = analyze_results(&coarse_freq_rate_array, &coarse_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &args);
 
@@ -202,7 +219,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let temp_complex_vec: Vec<C32> = temp_complex_vec_2d.into_iter().flatten().map(|v| Complex::new(v.re as f32, v.im as f32)).collect();
 
                 // Analyze the corrected data to find the *offset* from the new zero-point.
-                let (iter_freq_rate_array, padding_length) = process_fft(&temp_complex_vec, current_length, header.fft_point, &rfi_ranges);
+                let (mut iter_freq_rate_array, padding_length) = process_fft(&temp_complex_vec, current_length, header.fft_point, &rfi_ranges);
+                if let Some(bp_data) = &bandpass_data {
+                    apply_bandpass_correction(&mut iter_freq_rate_array, bp_data);
+                }
                 let iter_delay_rate_2d_data_comp = process_ifft(&iter_freq_rate_array, header.fft_point, padding_length);
                 let iter_results = analyze_results(&iter_freq_rate_array, &iter_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &current_args);
                 
@@ -234,7 +254,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 header.fft_point as u32,
             );
             let final_complex_vec: Vec<C32> = final_complex_vec_2d.into_iter().flatten().map(|v| Complex::new(v.re as f32, v.im as f32)).collect();
-            let (final_freq_rate_array, padding_length) = process_fft(&final_complex_vec, current_length, header.fft_point, &rfi_ranges);
+            let (mut final_freq_rate_array, padding_length) = process_fft(&final_complex_vec, current_length, header.fft_point, &rfi_ranges);
+            if let Some(bp_data) = &bandpass_data {
+                apply_bandpass_correction(&mut final_freq_rate_array, bp_data);
+            }
             let final_delay_rate_2d_data_comp = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
             
             // The analysis_results will have stats for the corrected data (peak at zero).
@@ -265,7 +288,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 corrected_complex_vec = corrected_complex_vec_2d.into_iter().flatten().map(|v| Complex::new(v.re as f32, v.im as f32)).collect();
             }
-            let (final_freq_rate_array, padding_length) = process_fft(&corrected_complex_vec, current_length, header.fft_point, &rfi_ranges);
+            let (mut final_freq_rate_array, padding_length) = process_fft(&corrected_complex_vec, current_length, header.fft_point, &rfi_ranges);
+            if let Some(bp_data) = &bandpass_data {
+                apply_bandpass_correction(&mut final_freq_rate_array, bp_data);
+            }
             let final_delay_rate_2d_data_comp = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
             analysis_results = analyze_results(&final_freq_rate_array, &final_delay_rate_2d_data_comp, &header, current_length, effective_integ_time, &current_obs_time, padding_length, &args);
             analysis_results.length_f32 = (current_length as f32 * effective_integ_time).ceil();
@@ -274,7 +300,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         // --- Output and Plotting ---
-        let base_filename = generate_output_names(&header, &obs_time.as_ref().unwrap(), &label, !rfi_ranges.is_empty(), args.frequency, current_length);
+        let base_filename = generate_output_names(&header, &current_obs_time, &label, !rfi_ranges.is_empty(), args.frequency, args.bandpass.is_some(), current_length);
+
+        if args.bandpass_output {
+            if let Some(path) = &bandpass_output_path {
+                let output_file_path = path.join(format!("{}_complex_spectrum.bin", base_filename));
+                write_complex_spectrum_binary(&output_file_path, &analysis_results.freq_rate_spectrum.to_vec(), header.fft_point)?;
+            }
+        }
 
         if !args.frequency {
             let delay_output_line = format_delay_output(&analysis_results, &label);
@@ -525,7 +558,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if args.add_plot {
         if let Some(path) = add_plot_path {
-            let base_filename = generate_output_names(&header, &obs_time.unwrap(), &label, false, false, args.length);
+            let base_filename = generate_output_names(&header, &obs_time.unwrap(), &label, false, false, args.bandpass.is_some(), args.length);
             let add_plot_filename = format!("{}_{}", base_filename, header.source_name);
             let add_plot_filepath = path.join(add_plot_filename);
             add_plot(

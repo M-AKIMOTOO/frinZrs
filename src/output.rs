@@ -1,9 +1,14 @@
-use std::io;
+use std::io::{self, BufWriter};
 use std::path::{Path};
+use std::fs::File;
 use chrono::{DateTime, Utc};
+use num_complex::Complex;
+use byteorder::{WriteBytesExt, LittleEndian};
 
 use crate::header::CorHeader;
 use crate::analysis::AnalysisResults;
+
+type C32 = Complex<f32>;
 
 pub fn output_header_info(header: &CorHeader, output_dir: &Path, basename: &str) -> io::Result<String> {
     let header_file_path = output_dir.join(format!("{}_header.txt", basename));
@@ -86,20 +91,19 @@ pub fn output_header_info(header: &CorHeader, output_dir: &Path, basename: &str)
     Ok(header_info)
 }
 
-
-
-
 pub fn generate_output_names(
     header: &CorHeader,
     obs_time: &DateTime<Utc>,
     label: &[&str],
     is_rfi_filtered: bool,
     is_frequency_mode: bool,
+    is_bandpass_corrected: bool,
     length: i32,
 ) -> String {
     let yyyydddhhmmss2 = obs_time.format("%Y%j%H%M%S").to_string();
     let rfi_suffix = if is_rfi_filtered { "_rfi" } else { "" };
-    let mode_suffix = if is_frequency_mode { "_freq" } else { "_time" };
+    let bp_suffix = if is_bandpass_corrected { "_bp" } else { "" };
+    let _mode_suffix = if is_frequency_mode { "_freq" } else { "_time" };
     let observing_band = if (6600.0..=7112.0).contains(&(header.observing_frequency as f32 / 1e6)) {
         "c"
     } else if (8192.0..=8704.0).contains(&(header.observing_frequency as f32 / 1e6)) {
@@ -109,8 +113,8 @@ pub fn generate_output_names(
     };
 
     let base = format!(
-        "{}_{}_{}_{}_{}_len{}s{}",
-        header.station1_name, header.station2_name, yyyydddhhmmss2, label[3], observing_band, length, rfi_suffix
+        "{}_{}_{}_{}_{}_len{}s{}{}",
+        header.station1_name, header.station2_name, yyyydddhhmmss2, label[3], observing_band, length, rfi_suffix, bp_suffix
     );
     base
 }
@@ -137,7 +141,6 @@ pub fn format_delay_output(results: &AnalysisResults, label: &[&str]) -> String 
     )
 }
 
-
 pub fn format_freq_output(results: &AnalysisResults, label: &[&str]) -> String {
     format!(" {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}",
         results.yyyydddhhmmss1,
@@ -158,4 +161,23 @@ pub fn format_freq_output(results: &AnalysisResults, label: &[&str]) -> String {
         results.ant2_hgt,
         results.mjd
     )
+}
+
+pub fn write_complex_spectrum_binary(
+    path: &Path,
+    spectrum: &[C32],
+    fft_points: i32,
+) -> io::Result<()> {
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+
+    // Write the number of FFT points as the header
+    writer.write_f32::<LittleEndian>(fft_points as f32)?;
+
+    // Write the complex spectrum data (interleaved real and imaginary parts)
+    for val in spectrum {
+        writer.write_f32::<LittleEndian>(val.re)?;
+        writer.write_f32::<LittleEndian>(val.im)?;
+    }
+    Ok(())
 }
