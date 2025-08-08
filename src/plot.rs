@@ -401,7 +401,6 @@ pub fn add_plot(
     phase: &[f32],
     noise: &[f32],
     source_name: &str,
-    obs_time: &str,
     len_val: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let plots = vec![
@@ -436,7 +435,7 @@ pub fn add_plot(
             .build_cartesian_2d(*length.first().unwrap()..*length.last().unwrap(), y_min..y_max)?;
 
         chart.configure_mesh()
-            .x_desc(&format!("The elapsed time since {} UT", obs_time))
+            .x_desc(&format!("The elapsed time UT"))
             .y_desc(y_label)
             .x_label_formatter(&|v| format!("{:.0}", v))
             .y_label_formatter(&|v| {
@@ -477,7 +476,7 @@ pub fn cumulate_plot(
     obs_time: &chrono::DateTime<chrono::Utc>,
     cumulate_arg: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (base_filename, _) = crate::output::generate_output_names(header, obs_time, label, false, false, cumulate_arg);
+    let base_filename = crate::output::generate_output_names(header, obs_time, label, false, false, cumulate_arg);
     let cumulate_filename = format!("{}_{}_cumulate{}.png", base_filename, header.source_name, cumulate_arg);
     let cumulate_filepath = cumulate_path.join(cumulate_filename);
     

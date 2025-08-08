@@ -96,7 +96,7 @@ pub fn generate_output_names(
     is_rfi_filtered: bool,
     is_frequency_mode: bool,
     length: i32,
-) -> (String, String) {
+) -> String {
     let yyyydddhhmmss2 = obs_time.format("%Y%j%H%M%S").to_string();
     let rfi_suffix = if is_rfi_filtered { "_rfi" } else { "" };
     let mode_suffix = if is_frequency_mode { "_freq" } else { "_time" };
@@ -112,7 +112,7 @@ pub fn generate_output_names(
         "{}_{}_{}_{}_{}_len{}s{}",
         header.station1_name, header.station2_name, yyyydddhhmmss2, label[3], observing_band, length, rfi_suffix
     );
-    (base, mode_suffix.to_string())
+    base
 }
 
 pub fn format_delay_output(results: &AnalysisResults, label: &[&str]) -> String {

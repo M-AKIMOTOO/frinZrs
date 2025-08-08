@@ -274,7 +274,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         // --- Output and Plotting ---
-        let (base_filename, _) = generate_output_names(&header, &obs_time.as_ref().unwrap(), &label, !rfi_ranges.is_empty(), args.frequency, current_length);
+        let base_filename = generate_output_names(&header, &obs_time.as_ref().unwrap(), &label, !rfi_ranges.is_empty(), args.frequency, current_length);
 
         if !args.frequency {
             let delay_output_line = format_delay_output(&analysis_results, &label);
@@ -525,7 +525,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if args.add_plot {
         if let Some(path) = add_plot_path {
-            let (base_filename, obs_time_str) = generate_output_names(&header, &obs_time.unwrap(), &label, false, false, args.length);
+            let base_filename = generate_output_names(&header, &obs_time.unwrap(), &label, false, false, args.length);
             let add_plot_filename = format!("{}_{}", base_filename, header.source_name);
             let add_plot_filepath = path.join(add_plot_filename);
             add_plot(
@@ -536,7 +536,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &add_plot_phase,
                 &add_plot_noise,
                 &header.source_name,
-                &obs_time_str,
                 length,
             )?;
         }
