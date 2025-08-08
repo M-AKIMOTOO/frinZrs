@@ -74,8 +74,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let mut bandpass_output_path: Option<PathBuf> = None;
-    if args.bandpass_output {
-        let path = frinz_dir.join("bandpass_output");
+    if args.bandpass_table {
+        let path = frinz_dir.join("bandpass_table");
         fs::create_dir_all(&path)?;
         bandpass_output_path = Some(path);
     }
@@ -302,10 +302,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         // --- Output and Plotting ---
         let base_filename = generate_output_names(&header, &current_obs_time, &label, !rfi_ranges.is_empty(), args.frequency, args.bandpass.is_some(), current_length);
 
-        if args.bandpass_output {
-            if let Some(path) = &bandpass_output_path {
-                let output_file_path = path.join(format!("{}_complex_spectrum.bin", base_filename));
+        if args.bandpass_table {
+            if let Some(path) = &bandpass_output_path {                                                                                                        
+                println!("Bandpass binary file format:");                                                                                                       
+                println!("  - The first 4 bytes (i32, LittleEndian) represent the FFT point count.");                                                           
+                println!("  - Subsequent data consists of interleaved real and imaginary parts of complex spectra.");                                           
+                println!("  - Each real and imaginary part is a 4-byte f32 (LittleEndian).");                                                                   
+                println!("  - File extension should be .bin");                                                                                                                                                                                                                        
+                let output_file_path = path.join(format!("{}_bandpass_table.bin", base_filename));
                 write_complex_spectrum_binary(&output_file_path, &analysis_results.freq_rate_spectrum.to_vec(), header.fft_point)?;
+                println!("  - Output to {:?}", output_file_path);
+                println!("Net step:");
+                println!("  - Add --bandpass {:?} to the commandline argument in this program.", output_file_path);
+                return Ok(());         
             }
         }
 
