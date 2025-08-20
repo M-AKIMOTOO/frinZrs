@@ -1,5 +1,4 @@
-![](./src/frinZlogo.png)
-<img src="./src/frinZlogo.png" width=45% > <img src="./src/frinZlogo.png">
+<img src="./src/frinZlogo1.png" width=45% > <img src="./src/frinZlogo2.png" width=45% >
 
 # frinZrs
 Rust version of frinZ.py  
