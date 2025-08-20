@@ -1,14 +1,15 @@
 [package]
 name = "frinZ-rs"
-version = "1.0.0"
+version = "3.0.0"
 edition = "2021"
 
 [[bin]]
 name = "frinZ"
-path = "src/main.rs"
+path = "src/frinZmain/main.rs"
+
 [[bin]]
-name = "frinZ-rs"
-path = "src/main.rs"
+name = "cormerge"
+path = "src/cormerge/main.rs"
 
 [dependencies]
 chrono        = "0.4.22"
@@ -32,6 +33,7 @@ imageproc     = "0.25.0"
 #egui_plot = "0.33.0"
 #anyhow = "1"
 terminal_size = "0.4"
+rayon = "1.10"
 
 [profile.release]
 opt-level = 3
