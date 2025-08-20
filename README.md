@@ -1,8 +1,8 @@
+![](./src/frinZlogo.png)
+
 # frinZrs
 Rust version of frinZ.py  
 https://github.com/M-AKIMOTOO/frinZ.py
-
-
 
 # Compile
 ```
