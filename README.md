@@ -1,4 +1,5 @@
 ![](./src/frinZlogo.png)
+<img src="./src/frinZlogo.png"> <img src="./src/frinZlogo.png">
 
 # frinZrs
 Rust version of frinZ.py  
