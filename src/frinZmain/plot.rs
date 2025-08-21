@@ -403,6 +403,7 @@ pub fn add_plot(
     noise: &[f32],
     source_name: &str,
     len_val: i32,
+    obs_start_time: &DateTime<Utc>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let plots = vec![
         (amp, "Amplitude [%]", "amp"),
@@ -436,7 +437,7 @@ pub fn add_plot(
             .build_cartesian_2d(*length.first().unwrap()..*length.last().unwrap(), y_min..y_max)?;
 
         chart.configure_mesh()
-            .x_desc(&format!("The elapsed time UT"))
+            .x_desc(&format!("The elapsed time since {} UT", obs_start_time.format("%Y/%j %H:%M:%S")))
             .y_desc(y_label)
             .x_label_formatter(&|v| format!("{:.0}", v))
             .y_label_formatter(&|v| {

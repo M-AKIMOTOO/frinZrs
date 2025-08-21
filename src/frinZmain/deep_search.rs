@@ -52,6 +52,7 @@ pub fn run_deep_search(
     current_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
+    obs_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
     bandpass_data: &Option<Vec<C32>>,
     args: &Args,
@@ -60,6 +61,8 @@ pub fn run_deep_search(
 ) -> Result<DeepSearchResult, Box<dyn Error>> {
     
     println!("[DEEP SEARCH] Starting deep hierarchical search algorithm");
+    
+    let start_time_offset_sec = (*current_obs_time - obs_time).num_seconds() as f32;
     
     // Step 1: 粗い遅延・レート推定
     let (coarse_delay, coarse_rate) = get_coarse_estimates(
@@ -127,6 +130,7 @@ pub fn run_deep_search(
             delay_step,
             rate_step,
             effective_cpu_count,
+            start_time_offset_sec,
         )?;
         
         // 結果を更新
@@ -153,6 +157,7 @@ pub fn run_deep_search(
             args,
             current_delay,
             current_rate,
+            start_time_offset_sec,
         )?;
     
     Ok(DeepSearchResult {
@@ -264,6 +269,7 @@ fn parallel_grid_search(
     delay_step: f32,
     rate_step: f32,
     effective_cpu_count: usize,
+    start_time_offset_sec: f32,
 ) -> Result<(f32, f32, f32), Box<dyn Error>> {
     
     // 探索グリッドを生成
@@ -302,6 +308,7 @@ fn parallel_grid_search(
                 args,
                 delay,
                 rate,
+                start_time_offset_sec,
             ) {
                 let mut best = best_result.lock().unwrap();
                 if snr > best.2 {
@@ -327,6 +334,7 @@ fn evaluate_delay_rate_snr(
     args: &Args,
     delay: f32,
     rate: f32,
+    start_time_offset_sec: f32,
 ) -> Result<f32, Box<dyn Error>> {
     
     // 位相補正を適用
@@ -334,8 +342,10 @@ fn evaluate_delay_rate_snr(
         complex_vec, 
         rate, 
         delay, 
+        args.acel_correct, 
         effective_integ_time, 
-        header
+        header,
+        start_time_offset_sec
     )?;
     
     // FFT処理
@@ -382,6 +392,7 @@ fn perform_final_analysis(
     args: &Args,
     final_delay: f32,
     final_rate: f32,
+    start_time_offset_sec: f32,
 ) -> Result<(AnalysisResults, Array2<C32>, Array2<C32>), Box<dyn Error>> {
     
     // 最適解で最終的な処理を実行
@@ -389,8 +400,10 @@ fn perform_final_analysis(
         complex_vec, 
         final_rate, 
         final_delay, 
+        args.acel_correct, 
         effective_integ_time, 
-        header
+        header,
+        start_time_offset_sec
     )?;
     
     let (mut final_freq_rate_array, padding_length) = process_fft(
@@ -469,8 +482,10 @@ fn apply_corrections(
     complex_vec: &[C32],
     rate: f32,
     delay: f32,
+    acel: f32,
     effective_integ_time: f32,
     header: &CorHeader,
+    start_time_offset_sec: f32,
 ) -> Result<Vec<C32>, Box<dyn Error>> {
     
     if rate == 0.0 && delay == 0.0 {
@@ -491,9 +506,11 @@ fn apply_corrections(
         &input_data_2d,
         rate,
         delay,
+        acel,
         effective_integ_time,
         header.sampling_speed as u32,
         header.fft_point as u32,
+        start_time_offset_sec,
     );
     
     let corrected_vec = corrected_complex_vec_2d

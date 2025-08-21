@@ -68,6 +68,10 @@ pub struct Args {
     #[arg(long, aliases = ["rate"], default_value_t = 0.0, allow_negative_numbers = true)]
     pub rate_correct: f32,
 
+    /// Acceleration correction value.
+    #[arg(long, aliases = ["acel"], default_value_t = 0.0, allow_negative_numbers = true)]
+    pub acel_correct: f32,
+
     /// Delay window for fringe search (min, max).
     #[arg(long, aliases = ["delay-w", "delay-wi", "delay-win", "delay-wind", "delay-windo"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
     pub delay_window: Vec<f32>,
@@ -82,8 +86,11 @@ pub struct Args {
     #[arg(long, aliases = ["cu", "cum", "cumu", "cumul", "cumula", "cumulat"], default_value_t = 0)]
     pub cumulate: i32,
 
-    /// Add plot.
-    #[arg(long, aliases = ["add", "add", "add-p", "add-pl", "add-plo"])]
+    /// Generate additional plots for amplitude, SNR, phase, and noise level over time.
+    /// These plots are useful for visualizing the time-series behavior of fringe parameters.
+    /// Best used in conjunction with --length (to specify integration time per point)
+    /// and --loop (to specify the number of points).
+    #[arg(long, aliases = ["add", "add-p", "add-pl", "add-plo"])]
     pub add_plot: bool,
 
     /// Output header information to console and file.
@@ -98,6 +105,17 @@ pub struct Args {
     #[arg(long)]
     pub search_deep: bool,
 
+    /// Perform acceleration search with specified fitting degrees (e.g., --acel-search 2 1 1 2).
+    /// 2 for quadratic fit, 1 for linear fit.
+    ///
+    /// Note: --length (must be > 0) and --loop (recommended > 1) are essential for this analysis.
+    #[arg(long, num_args = 0.., value_name = "DEGREE")]
+    pub acel_search: Option<Vec<i32>>,
+
+    /// Number of iterations for the precise search mode (--search).
+    #[arg(long, default_value_t = 1)]
+    pub iter: u32,
+
     /// Generate dynamic spectrum plot.
     #[arg(long)]
     pub dynamic_spectrum: bool,
@@ -110,14 +128,10 @@ pub struct Args {
     #[arg(long)]
     pub bandpass_table: bool,
 
-    /// Number of iterations for precise search.
-    #[arg(long, default_value_t = 3)]
-    pub iter: i32,
-
     /// Number of CPU cores to use for parallel processing. Only effective with `--search-deep`.
     /// If 0, automatically determines the number of cores.
     /// If specified value is greater than available CPU cores, it defaults to half of available cores.
     #[arg(long, default_value_t = 0)]
     pub cpu: u32,
     
-}
+    }

@@ -5,7 +5,7 @@ use std::io;
 #[derive(Debug)]
 pub enum FrinZError {
     Io(io::Error),
-    ParseError(String),
+    
     // Add other custom error types as needed
 }
 
@@ -13,7 +13,6 @@ impl fmt::Display for FrinZError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             FrinZError::Io(ref err) => write!(f, "IO error: {}", err),
-            FrinZError::ParseError(ref msg) => write!(f, "Parse error: {}", msg),
         }
     }
 }

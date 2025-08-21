@@ -190,3 +190,31 @@ pub fn write_phase_corrected_spectrum_binary(
     }
     Ok(())
 }
+
+pub fn write_add_plot_data_to_file(
+    output_dir: &Path,
+    base_filename: &str,
+    elapsed_times: &[f32],
+    amp: &[f32],
+    snr: &[f32],
+    phase: &[f32],
+    noise: &[f32],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let output_file_path = output_dir.join(format!("{}_add_plot_data.txt", base_filename));
+    let file = File::create(&output_file_path)?;
+    let mut writer = BufWriter::new(file);
+
+    // Write header
+    writeln!(writer, "#{:<15} {:<15} {:<15} {:<15} {:<15}",
+             "Elapsed Time [s]", "Amplitude [%]", "SNR", "Phase [deg]", "Noise Level [%]")?;
+
+    // Write data
+    for i in 0..elapsed_times.len() {
+        writeln!(writer, "{:<15} {:<15.6} {:<15.6} {:<15.6} {:<15.6}",
+                 elapsed_times[i], amp[i], snr[i], phase[i], noise[i])?;
+    }
+
+    writer.flush()?;
+    //println!("Add plot data written to: {:?}", output_file_path);
+    Ok(())
+}

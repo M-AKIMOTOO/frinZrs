@@ -105,9 +105,11 @@ pub fn apply_phase_correction(
     input_data: &[Vec<Complex<f64>>],
     rate_hz_for_correction: f32,
     delay_samples_for_correction: f32,
+    acel_hz_for_correction: f32,
     effective_integration_length: f32,
     sampling_speed: u32,
     fft_point: u32,
+    start_time_offset_sec: f32,
 ) -> Vec<Vec<Complex<f64>>> {
     let mut corrected_data = input_data.to_vec();
 
@@ -121,8 +123,8 @@ pub fn apply_phase_correction(
         let stop_val_for_linspace_mhz = (py_equiv_sampling_speed_mhz / 2.0).floor() - 1.0;
 
         for r_orig in 0..n_rows_original {
-            let time_for_rate_corr_sec = r_orig as f64 * effective_integration_length as f64;
-            let rate_corr_factor = Complex::new(0.0, -2.0 * PI * rate_hz_for_correction as f64 * time_for_rate_corr_sec).exp();
+            let time_for_rate_corr_sec = (r_orig as f64 * effective_integration_length as f64) + start_time_offset_sec as f64;
+            let rate_corr_factor = Complex::new(0.0, -2.0 * PI * rate_hz_for_correction as f64 * time_for_rate_corr_sec).exp() * Complex::new(0.0, -1.0 * PI * acel_hz_for_correction as f64 * time_for_rate_corr_sec.powi(2)).exp();
 
             for c_orig in 0..n_cols_original {
                 let mut original_val = corrected_data[r_orig][c_orig];

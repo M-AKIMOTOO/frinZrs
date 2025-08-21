@@ -46,6 +46,9 @@ pub struct AnalysisResults {
     pub residual_rate: f32,
     pub corrected_rate: f32,
     pub rate_offset: f32,
+    // Add new fields here
+    pub residual_acel: f32,
+    pub corrected_acel: f32,
     // Ranges
     pub rate_range: Vec<f32>,
 }
@@ -344,6 +347,9 @@ pub fn analyze_results(
         residual_rate: residual_rate_val,
         corrected_rate: args.rate_correct,
         rate_offset,
+        // Initialize new fields
+        residual_acel: 0.0, // Placeholder
+        corrected_acel: 0.0, // Placeholder
         rate_range,
     }
 }

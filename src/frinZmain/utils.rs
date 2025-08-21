@@ -2,6 +2,8 @@ use ndarray::prelude::*;
 use num_complex::Complex;
 use chrono::{DateTime, Utc, Datelike, Timelike};
 
+
+
 use astro::coords;
 use astro::time;
 use blh::{ellipsoid, GeocentricCoord, GeodeticCoord};
@@ -60,7 +62,7 @@ pub fn radec2azalt(ant_position: [f32; 3], time: DateTime<Utc>, obs_ra: f32, obs
     let mean_sidereal = time::mn_sidr(julian_day);
     let hour_angle = coords::hr_angl_frm_observer_long(mean_sidereal, -longitude_radian, obs_ra as f64);
 
-    let source_az = coords::az_frm_eq(hour_angle, obs_dec as f64, latitude_radian).to_degrees() as f32 +180.0; 
+    let source_az = coords::az_frm_eq(hour_angle, obs_dec as f64, latitude_radian).to_degrees() as f32 +180.0;
     let source_el = coords::alt_frm_eq(hour_angle, obs_dec as f64, latitude_radian).to_degrees() as f32;
 
     (source_az, source_el, height_meter as f32)
@@ -106,3 +108,25 @@ pub fn unwrap_phase(phases: &mut [f32]) {
         original_prev = original_current;
     }
 }
+
+pub fn unwrap_phase_radians(phases: &mut [f32]) {
+    if phases.len() < 2 {
+        return;
+    }
+    let mut offset = 0.0;
+    let mut original_prev = phases[0];
+
+    for i in 1..phases.len() {
+        let original_current = phases[i];
+        let diff = original_current - original_prev;
+        if diff > std::f32::consts::PI {
+            offset -= 2.0 * std::f32::consts::PI;
+        } else if diff < -std::f32::consts::PI {
+            offset += 2.0 * std::f32::consts::PI;
+        }
+        phases[i] += offset;
+        original_prev = original_current;
+    }
+}
+
+
