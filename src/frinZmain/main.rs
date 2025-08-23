@@ -40,7 +40,7 @@ use output::{
     output_header_info,
     write_phase_corrected_spectrum_binary,
 };
-use plot::{add_plot, cumulate_plot, delay_plane, frequency_plane, phase_reference_plot};
+use plot::{add_plot, cumulate_plot, delay_plane, frequency_plane, phase_reference_plot, plot_acel_search_result};
 use read::{read_sector_header, read_visibility_data};
 use rfi::parse_rfi_ranges;
 
@@ -85,6 +85,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
+    if args.raw_visibility {
+        if args.input.is_none() {
+            eprintln!("Error: --raw-visibility requires an --input file.");
+            process::exit(1);
+        }
+        if let Err(e) = run_raw_visibility_plot(&args) {
+            eprintln!("Error during raw visibility plotting: {}", e);
+            process::exit(1);
+        }
+        //process::exit(0);
+    }
+
     // Handle default for acel_search if provided without arguments
     if let Some(ref mut acel_search_vec) = args.acel_search {
         if acel_search_vec.is_empty() {
@@ -92,7 +104,39 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    
+    // --- Time Flagging Setup ---
+    if !args.flag_time.is_empty() && args.flag_time.len() % 2 != 0 {
+        eprintln!("Error: --flag-time requires an even number of arguments (start and end pairs).");
+        process::exit(1);
+    }
+
+    let flag_ranges: Vec<(DateTime<Utc>, DateTime<Utc>)> = args
+        .flag_time
+        .chunks_exact(2)
+        .filter_map(|chunk| {
+            let start = utils::parse_flag_time(&chunk[0]);
+            let end = utils::parse_flag_time(&chunk[1]);
+            match (start, end) {
+                (Some(s), Some(e)) => {
+                    if s >= e {
+                        eprintln!(
+                            "Error: Start time ({}) must be before end time ({}) for --flag-time.",
+                            chunk[0], chunk[1]
+                        );
+                        process::exit(1);
+                    }
+                    Some((s, e))
+                }
+                _ => {
+                    eprintln!(
+                        "Error: Invalid time format in --flag-time arguments: '{}', '{}'. Expected YYYYDDDHHMMSS.",
+                        chunk[0], chunk[1]
+                    );
+                    process::exit(1);
+                }
+            }
+        })
+        .collect();
 
     // --- Argument Validation & Dispatch ---
     if args.acel_search.is_some() { // Check if acel_search was provided by the user
@@ -109,7 +153,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         if args.loop_ == 1 {
             eprintln!("Warning: --acel-search is used, but --loop is not specified or is 1. Multiple loops are usually needed for fitting.");
         }
-        return run_acel_search_analysis(&args, args.acel_search.as_ref().unwrap());
+        return run_acel_search_analysis(
+            &args,
+            args.acel_search.as_ref().unwrap(),
+            &flag_ranges,
+        );
     }
 
     if args.input.is_some() && !args.phase_reference.is_empty() {
@@ -118,11 +166,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if !args.phase_reference.is_empty() {
-        return run_phase_reference_analysis(&args);
+        return run_phase_reference_analysis(&args, &flag_ranges);
     }
 
     if let Some(_) = &args.input {
-        return run_single_file_analysis(&args);
+        return run_single_file_analysis(&args, &flag_ranges);
     }
 
     // If we reach here, no primary mode was selected.
@@ -133,9 +181,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Executes the analysis for a single input file.
-fn run_single_file_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
+fn run_single_file_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)]) -> Result<(), Box<dyn Error>> {
     let input_path = args.input.as_ref().unwrap();
-    let result = process_cor_file(input_path, args)?;
+    let result = process_cor_file(input_path, args, flag_ranges)?;
 
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let frinz_dir = parent_dir.join("frinZ");
@@ -199,11 +247,57 @@ fn run_single_file_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         }
     }
 
+    if args.allan_deviance {
+        if result.add_plot_phase.len() < 3 {
+            eprintln!("Warning: Not enough data points ({}) to calculate Allan deviation. Use --length and --loop to generate a time series. Skipping.", result.add_plot_phase.len());
+        } else {
+            println!("Calculating Allan deviation...");
+            let allan_dir = frinz_dir.join("allan_deviance");
+            fs::create_dir_all(&allan_dir)?;
+
+            // tau0 is the integration time per point, which is length argument.
+            let tau0 = args.length as f32;
+            let adev_data = utils::calculate_allan_deviation(
+                &result.add_plot_phase,
+                tau0,
+                result.header.observing_frequency,
+            );
+
+            let base_filename = generate_output_names(
+                &result.header,
+                &result.obs_time,
+                &result.label.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                !args.rfi.is_empty(),
+                args.frequency,
+                args.bandpass.is_some(),
+                result.length_arg,
+            );
+            let adev_basename = format!("{}_{}_allan", base_filename, result.header.source_name);
+
+            // Write text file
+            let txt_path = allan_dir.join(format!("{}.txt", adev_basename));
+            let mut writer = BufWriter::new(File::create(txt_path)?);
+            writeln!(writer, "# Tau[s] Allan_Deviation")?;
+            for (tau, adev) in &adev_data {
+                writeln!(writer, "{} {:.6e}", tau, adev)?;
+            }
+
+            // Write plot
+            let plot_path = allan_dir.join(format!("{}.png", adev_basename));
+            plot::plot_allan_deviation(
+                plot_path.to_str().unwrap(),
+                &adev_data,
+                &result.header.source_name,
+            )?;
+            println!("Allan deviation plot and data saved in {:?}", allan_dir);
+        }
+    }
+
     Ok(())
 }
 
 /// Executes the phase reference analysis for a calibrator and a target file.
-fn run_phase_reference_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
+fn run_phase_reference_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)]) -> Result<(), Box<dyn Error>> {
     let cal_path = PathBuf::from(&args.phase_reference[0]);
     let target_path = PathBuf::from(&args.phase_reference[1]);
 
@@ -251,10 +345,10 @@ fn run_phase_reference_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         },
         loop_count
     );
-    let mut cal_results = process_cor_file(&cal_path, &cal_args)?;
+    let mut cal_results = process_cor_file(&cal_path, &cal_args, flag_ranges)?;
 
     println!(
-        "Target:     {:?} (length: {}s, loop: {}\n",
+        "Target:     {:?} (length: {}s, loop: {}",
         &target_path,
         if target_length == 0 {
             "all".to_string()
@@ -263,7 +357,8 @@ fn run_phase_reference_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         },
         loop_count
     );
-    let mut target_results = process_cor_file(&target_path, &target_args)?;
+    let mut target_results = process_cor_file(&target_path, &target_args, flag_ranges)?;
+
 
     // --- Phase Unwrapping ---
     utils::unwrap_phase(&mut cal_results.add_plot_phase);
@@ -318,7 +413,7 @@ fn run_phase_reference_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
                 // Calculate fitted_cal_phases
                 fitted_cal_phases = cal_times_f64
-                    .iter()
+                    .iter() 
                     .map(|&t| evaluate_polynomial(t, &coeffs) as f32)
                     .collect();
 
@@ -396,10 +491,10 @@ fn run_phase_reference_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                     let new_basename = parts[..3].join("_");
                     let output_filename_str = format!("{}_phsref.cor", new_basename);
                     let phase_reference_dir = target_path
-                        .parent()
-                        .unwrap_or_else(|| Path::new(""))
-                        .join("frinZ")
-                        .join("phase_reference");
+                        .parent() 
+                        .unwrap_or_else(|| Path::new(""));
+                        //.join("frinZ")
+                        //.join("phase_reference");
                     fs::create_dir_all(&phase_reference_dir)?;
                     let output_path = phase_reference_dir.join(output_filename_str);
 
@@ -422,7 +517,7 @@ fn run_phase_reference_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
     // --- Plotting ---
     let plot_dir = target_path
-        .parent()
+        .parent() 
         .unwrap_or_else(|| Path::new(""))
         .join("frinZ")
         .join("phase_reference");
@@ -459,7 +554,11 @@ fn run_phase_reference_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 }
 
 /// Executes the acceleration search analysis.
-fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<(), Box<dyn Error>> {
+fn run_acel_search_analysis(
+    args: &Args,
+    acel_search_degrees: &[i32],
+    flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
+) -> Result<(), Box<dyn Error>> {
     println!("Starting acceleration search analysis...");
 
     let input_path = args.input.as_ref().unwrap();
@@ -484,25 +583,23 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
     cursor.set_position(0);
     let (_, _, effective_integ_time) = read_visibility_data(&mut cursor, &header, 1, 0, 0, false)?;
 
-    
-
     // Helper function to write data
     let write_fit_data = |path: &Path, times: &[f64], phases: &[f32], coeffs: Option<&[f64]>| -> std::io::Result<()> {
         let file = File::create(path)?;
         let mut writer = std::io::BufWriter::new(file);
-        writeln!(writer, "# Time [s]   Phase [rad]")?;
+        writeln!(writer, "# Time [s]   Unwrapped Phase [rad]")?;
         if let Some(c) = coeffs {
             if c.len() == 3 { // Quadratic
                 writeln!(writer, "# Fitted: y = {:.6e} * x^2 + {:.6e} * x + {:.6e}", c[2], c[1], c[0])?;
-                writeln!(writer, "# Corrected Acel: {:.6e} (from x^2 / PI)", c[2] / std::f64::consts::PI)?;
-                writeln!(writer, "# Corrected Rate: {:.6e} (from x / (2 * PI))", c[1] / (2.0 * std::f64::consts::PI))?;
+                writeln!(writer, "# Corrected Acel (Hz/s): {:.6e} (from x^2 / PI)", c[2] / std::f64::consts::PI)?;
+                writeln!(writer, "# Corrected Rate (Hz): {:.6e} (from x / (2 * PI))", c[1] / (2.0 * std::f64::consts::PI))?;
             } else if c.len() == 2 { // Linear
                 writeln!(writer, "# Fitted: y = {:.6e} * x + {:.6e}", c[1], c[0])?;
                 writeln!(writer, "# Corrected Rate: {:.6e} (from x / (2 * PI))", c[1] / (2.0 * std::f64::consts::PI))?;
             }
         }
         for i in 0..times.len() {
-            writeln!(writer, "{:.6} {:.6}", times[i], phases[i])?;
+            writeln!(writer, "{:.0} {:.6}", times[i], phases[i])?;
         }
         Ok(())
     };
@@ -516,6 +613,7 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
         obs_time_start: DateTime<Utc>,
         current_total_rate_correct: f32,
         current_total_acel_correct: f32,
+        flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
     | -> Result<(Vec<f64>, Vec<f32>), Box<dyn Error>> {
         cursor.set_position(256); // Reset cursor to after header for each data pass
 
@@ -532,6 +630,18 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
 
             if complex_vec.is_empty() {
                 break; // Stop if no data was read
+            }
+
+            let is_flagged = flag_ranges
+                .iter()
+                .any(|(start, end)| current_obs_time >= *start && current_obs_time < *end);
+
+            if is_flagged {
+                println!(
+                    "#INFO: Skipping data at {} due to --flag-time range in acel-search.",
+                    current_obs_time.format("%Y-%m-%d %H:%M:%S")
+                );
+                continue;
             }
 
             let start_time_offset_sec =
@@ -642,6 +752,8 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
     let (_, first_obs_time, _) = read_visibility_data(&mut cursor, &header, args.length, args.skip, 0, false)?;
     let obs_time_start = first_obs_time;
 
+    let mut generated_txt_files: Vec<PathBuf> = Vec::new(); // Add this line
+
     for (step_idx, &degree) in acel_search_degrees.iter().enumerate() {
         println!("Step {}: Fitting with degree {}", step_idx + 1, degree);
 
@@ -654,6 +766,7 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
             obs_time_start,
             total_rate_correct, // Use current total corrections
             total_acel_correct,
+            flag_ranges,
         )?;
         let phases_f64: Vec<f64> = phases_for_fit.iter().map(|&p| p as f64).collect();
 
@@ -677,14 +790,16 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
                 if let Ok(coeffs) = fitting::fit_polynomial_least_squares(&times_for_fit, &phases_f64, 2) {
                     println!("  Quad fit: x^2={:.6e}, x={:.6e}, c={:.6e}", coeffs[2], coeffs[1], coeffs[0]);
 
-                    // Apply the corrections (with PI division, as per paper's model)
+                    // Apply the corrections (with PI division, as per paper\'s model)
                     total_acel_correct += (coeffs[2] / std::f64::consts::PI) as f32;
                     total_rate_correct += (coeffs[1] / (2.0 * std::f64::consts::PI)) as f32;
 
                     write_fit_data(&quad_path, &times_for_fit, &phases_for_fit, Some(&coeffs))?;
+                    generated_txt_files.push(quad_path.clone()); // Add this line
                 } else {
                     eprintln!("Warning: Quadratic fitting failed. Skipping acel and quad-rate update for this step.");
                     write_fit_data(&quad_path, &times_for_fit, &phases_for_fit, None)?;
+                    generated_txt_files.push(quad_path.clone()); // Add this line
                 }
             }
             1 => { // Linear Fit
@@ -694,9 +809,11 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
                     write_fit_data(&linear_path, &times_for_fit, &phases_for_fit, Some(&vec![intercept, slope]))?;
                     println!("  Linear fit: m={:.6e}", slope);
                     total_rate_correct += (slope / (2.0 * std::f64::consts::PI)) as f32;
+                    generated_txt_files.push(linear_path.clone()); // Add this line
                 } else {
                     eprintln!("Warning: Linear fitting failed. Skipping linear-rate update for this step.");
                     write_fit_data(&linear_path, &times_for_fit, &phases_for_fit, None)?;
+                    generated_txt_files.push(linear_path.clone()); // Add this line
                 }
             }
             _ => {
@@ -709,6 +826,15 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
         println!("  Copypaste acel: {:.18} (Hz/s), Updated rate: {:.15} (Hz)", total_acel_correct, total_rate_correct);
     }
 
+    // Add plotting logic here
+    for txt_path in generated_txt_files {
+        let mut png_path = txt_path.clone();
+        png_path.set_extension("png");
+        if let Err(e) = plot_acel_search_result(txt_path.to_str().unwrap(), png_path.to_str().unwrap()) {
+            eprintln!("Error plotting acel search result for {:?}: {}", txt_path, e);
+        }
+    }
+
     Ok(())
 }
 
@@ -716,6 +842,7 @@ fn run_acel_search_analysis(args: &Args, acel_search_degrees: &[i32]) -> Result<
 fn process_cor_file(
     input_path: &Path,
     args: &Args,
+    flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
 ) -> Result<ProcessResult, Box<dyn Error>> {
     // --- File and Path Setup ---
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
@@ -857,14 +984,31 @@ fn process_cor_file(
     // --- Main Processing Loop ---
     for l1 in 0..loop_count {
         let current_length = if args.cumulate != 0 { (l1 + 1) * length } else { length };
-        let (complex_vec, current_obs_time, effective_integ_time) = read_visibility_data(
+        let (complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(
             &mut cursor,
             &header,
             current_length,
             args.skip,
             l1,
             args.cumulate != 0,
-        )?;
+        ) {
+            Ok(data) => data,
+            Err(_) => break, // Stop if we can't read more data
+        };
+
+        // Skip processing if the observation time falls within a flagged range
+        let is_flagged = flag_ranges
+            .iter()
+            .any(|(start, end)| current_obs_time >= *start && current_obs_time < *end);
+
+        if is_flagged {
+            println!(
+                "#INFO: Skipping data at {} due to --flag-time range.",
+                current_obs_time.format("%Y-%m-%d %H:%M:%S")
+            );
+            continue;
+        }
+
         if l1 == 0 {
             obs_time = Some(current_obs_time);
         }
@@ -982,10 +1126,9 @@ fn process_cor_file(
             analysis_results.length_f32 = current_length as f32 * effective_integ_time;
             analysis_results.residual_delay = total_delay_correct;
             analysis_results.residual_rate = total_rate_correct;
-            analysis_results.residual_acel = total_acel_correct;
-            analysis_results.corrected_delay = total_delay_correct;
-            analysis_results.corrected_rate = total_rate_correct;
-            analysis_results.corrected_acel = total_acel_correct;
+            analysis_results.corrected_delay = args.delay_correct;
+            analysis_results.corrected_rate = args.rate_correct;
+            analysis_results.corrected_acel = args.acel_correct;
             freq_rate_array = freq_rate_array_mut.unwrap();
             delay_rate_2d_data_comp = delay_rate_2d_data_comp_mut.unwrap();
         } else {
@@ -1227,7 +1370,7 @@ fn process_cor_file(
                         let q22 = (blurred_img.get_pixel(x_ceil, y_ceil)[0] as f64) / 255.0
                             * (max_norm as f64);
                         let r1 = q11 * (1.0 - fx) + q12 * fx;
-                        let r2 = q21 * (1.0 - fx) + q22 * fx;
+                        let r2 = q21 * (1.0 - fx) + q22 * fy;
                         r1 * (1.0 - fy) + r2 * fy
                     };
                     let stat_keys = vec![
@@ -1380,4 +1523,61 @@ fn process_cor_file(
         add_plot_phase,
         add_plot_noise,
     })
+}
+
+/// Executes the raw visibility plotting.
+fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
+    //println!("# Starting raw visibility plotting...");
+
+    let input_path = args.input.as_ref().unwrap();
+
+    // --- Create Output Directory ---
+    let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
+    let output_dir = parent_dir.join("frinZ").join("raw_visibility");
+    fs::create_dir_all(&output_dir)?;
+    let base_filename = input_path.file_stem().unwrap().to_str().unwrap();
+
+    let mut file = File::open(input_path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    let mut cursor = Cursor::new(buffer.as_slice());
+
+    let header = parse_header(&mut cursor)?;
+
+    let mut all_spectra: Vec<Vec<C32>> = Vec::new();
+    for l1 in 0..header.number_of_sector {
+        let (complex_vec, _, _) = match read_visibility_data(
+            &mut cursor,
+            &header,
+            1, // length in sectors
+            0, // skip in sectors
+            l1, // loop_idx, which acts as sector index here
+            false,
+        ) {
+            Ok(data) => data,
+            Err(_) => break, // Stop if we can't read more data
+        };
+        if complex_vec.is_empty() {
+            eprintln!("Warning: Empty sector {} found, stopping read.", l1);
+            break; 
+        }
+        all_spectra.push(complex_vec);
+    }
+
+    if all_spectra.is_empty() {
+        eprintln!("No visibility data found in the file.");
+        return Ok(());
+    }
+
+    let amp_filename = format!("{}_heatmap_amp.png", base_filename);
+    let phase_filename = format!("{}_heatmap_phs.png", base_filename);
+    let amp_filepath = output_dir.join(amp_filename);
+    let phase_filepath = output_dir.join(phase_filename);
+
+    // Use a default sigma of 0.0 for blurring, as in the original frinZrawvis.
+    plot::plot_spectrum_heatmaps(&amp_filepath, &phase_filepath, &all_spectra, 0.0)?;
+
+    //println!("#Raw visibility heatmaps saved to {} and {}", amp_filepath.display(), phase_filepath.display());
+
+    Ok(())
 }

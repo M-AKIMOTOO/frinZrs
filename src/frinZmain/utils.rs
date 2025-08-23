@@ -1,6 +1,6 @@
 use ndarray::prelude::*;
 use num_complex::Complex;
-use chrono::{DateTime, Utc, Datelike, Timelike};
+use chrono::{DateTime, Utc, Datelike, Timelike, TimeZone};
 
 
 
@@ -127,6 +127,67 @@ pub fn unwrap_phase_radians(phases: &mut [f32]) {
         phases[i] += offset;
         original_prev = original_current;
     }
+}
+
+use chrono::{NaiveDate, NaiveTime, NaiveDateTime};
+
+pub fn parse_flag_time(time_str: &str) -> Option<DateTime<Utc>> {
+    if time_str.len() != 13 {
+        return None;
+    }
+    let year: i32 = time_str.get(0..4)?.parse().ok()?;
+    let doy: u32 = time_str.get(4..7)?.parse().ok()?;
+    let hour: u32 = time_str.get(7..9)?.parse().ok()?;
+    let min: u32 = time_str.get(9..11)?.parse().ok()?;
+    let sec: u32 = time_str.get(11..13)?.parse().ok()?;
+
+    let date = NaiveDate::from_yo_opt(year, doy)?;
+    let time = NaiveTime::from_hms_opt(hour, min, sec)?;
+    let datetime = NaiveDateTime::new(date, time);
+    Some(Utc.from_utc_datetime(&datetime))
+}
+
+pub fn calculate_allan_deviation(phases: &[f32], tau0: f32, obs_freq_hz: f64) -> Vec<(f32, f32)> {
+    let n = phases.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    // Convert phase from degrees to radians for calculation
+    let rad_phases: Vec<f64> = phases.iter().map(|p| (*p as f64).to_radians()).collect();
+    let tau0_f64 = tau0 as f64;
+
+    let mut adev_results = Vec::new();
+    let max_m = n / 3; // Calculate for cluster sizes up to 1/3 of the data length
+
+    for m in 1..=max_m {
+        if m == 0 { continue; }
+        let tau = m as f64 * tau0_f64;
+        let mut sum_sq_diff = 0.0;
+        let num_terms = n - 2 * m;
+
+        if num_terms == 0 {
+            break;
+        }
+
+        for i in 0..num_terms {
+            let diff = rad_phases[i + 2 * m] - 2.0 * rad_phases[i + m] + rad_phases[i];
+            sum_sq_diff += diff * diff;
+        }
+
+        if tau == 0.0 {
+            continue;
+        }
+
+        // Calculate the standard (dimensionless) Allan variance σ_y^2(τ)
+        let allan_variance = sum_sq_diff / (2.0 * tau * tau * (num_terms as f64));
+        let phase_rate_adev = allan_variance.sqrt(); // This is σ_φ_dot in rad/s
+
+        // Normalize by 2*pi*ν₀ to get dimensionless fractional frequency stability
+        let dimensionless_adev = phase_rate_adev / (2.0 * std::f64::consts::PI * obs_freq_hz);
+
+        adev_results.push((tau as f32, dimensionless_adev as f32));
+    }
+    adev_results
 }
 
 

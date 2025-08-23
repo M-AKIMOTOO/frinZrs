@@ -1,6 +1,9 @@
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
 use chrono::{DateTime, Utc, TimeZone};
+use plotters::style::colors::colormaps::ViridisRGB;
+use num_complex::Complex;
+use std::path::Path;
 
 pub fn delay_plane(
     delay_profile: &[(f64, f64)],
@@ -560,7 +563,6 @@ pub fn phase_reference_plot(
     let y_min = all_phases.iter().cloned().fold(f32::INFINITY, f32::min);
     let y_max = all_phases.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let y_range_padding = (y_max - y_min) * 0.1;
-    let y_label = "Phase [deg]"; // Label is now generic
 
     let mut chart = ChartBuilder::on(&root)
         //.caption("Phase Reference Plot", ("sans-serif", 40).into_font())
@@ -571,10 +573,11 @@ pub fn phase_reference_plot(
 
     chart.configure_mesh()
         .x_desc("Time [UTC]")
-        .y_desc(y_label)
+        .y_desc("Phase [deg]")
         .x_label_formatter(&|ts| {
             chrono::Utc.timestamp_opt(*ts as i64, 0).unwrap().format("%H:%M:%S").to_string()
         })
+        .y_label_formatter(&|v| format!("{:.0}", v))
         .y_labels(7)
         .label_style(("sans-serif", 25).into_font())
         .draw()?;
@@ -625,5 +628,335 @@ pub fn phase_reference_plot(
         .draw()?;
 
     root.present()?;
+    Ok(())
+}
+
+pub fn plot_allan_deviation(
+    output_path: &str,
+    data: &[(f32, f32)],
+    source_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = BitMapBackend::new(output_path, (900, 600)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    if data.is_empty() {
+        return Ok(());
+    }
+
+    let (min_tau, max_tau) = data.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), (t, _)| (min.min(*t), max.max(*t)));
+    let (min_adev, max_adev) = data.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), (_, a)| (min.min(*a), max.max(*a)));
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption(format!("Allan Deviation for {}", source_name), ("sans-serif", 25).into_font())
+        .margin(10)
+        .x_label_area_size(60)
+        .y_label_area_size(100)
+        .build_cartesian_2d((min_tau..max_tau).log_scale(), (min_adev..max_adev*1.1).log_scale())?;
+
+    chart.configure_mesh()
+        .x_desc("Averaging Time (τ) [s]")
+        .y_desc("Allan Deviation (σ_y(τ))")
+        .x_labels(10)
+        .y_labels(10)
+        .label_style(("sans-serif", 25).into_font())
+        .draw()?;
+
+    chart.draw_series(LineSeries::new(
+        data.iter().map(|(t, a)| (*t, *a)),
+        &RED,
+    ))?;
+    chart.draw_series(PointSeries::of_element(
+        data.iter().map(|(t, a)| (*t, *a)),
+        5,
+        &RED,
+        &|c, s, st| Circle::new(c, s, st.filled()),
+    ))?;
+
+    root.present()?;
+    Ok(())
+}
+
+pub fn plot_acel_search_result(
+    input_file_path: &str,
+    output_file_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs::File;
+    use std::io::{BufReader, BufRead};
+
+    let file = File::open(input_file_path)?;
+    let reader = BufReader::new(file);
+
+    let mut data = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        if line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() == 2 {
+            let time: f64 = parts[0].parse()?;
+            let phase: f64 = parts[1].parse()?;
+            data.push((time, phase));
+        }
+    }
+
+    if data.is_empty() {
+        println!("Warning: No data to plot in {}.", input_file_path);
+        return Ok(());
+    }
+
+    // Determine min/max for axes
+    let (min_time, max_time) = data.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(min_t, max_t), (t, _)| (min_t.min(*t), max_t.max(*t)));
+    let (min_phase, max_phase) = data.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(min_p, max_p), (_, p)| (min_p.min(*p), max_p.max(*p)));
+
+    let root = BitMapBackend::new(output_file_path, (900, 600)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Acel Search Result: Time vs Phase", ("sans-serif", 25).into_font())
+        .margin(10)
+        .x_label_area_size(60)
+        .y_label_area_size(100)
+        .build_cartesian_2d(min_time..max_time, min_phase..max_phase)?;
+
+    chart.configure_mesh()
+        .x_desc("Time [s]")
+        .y_desc("Unwarnpped Phase [rad]")
+        .x_label_formatter(&|v| format!("{:.0}", v))
+        .y_label_formatter(&|v| format!("{:.2}", v))
+        .x_labels(10)
+        .y_labels(10)
+        .label_style(("sans-serif", 20).into_font())
+        .draw()?;
+
+    chart.draw_series(PointSeries::of_element(
+        data.iter().map(|(t, p)| (*t, *p)),
+        3,
+        &BLUE,
+        &|c, s, st| Circle::new(c, s, st.filled()),
+    ))?;
+
+    root.present()?;
+    Ok(())
+}
+
+
+fn gaussian_blur_2d(data: &Vec<Vec<f32>>, sigma: f32) -> Vec<Vec<f32>> {
+    if sigma <= 0.0 {
+        return data.clone();
+    }
+
+    let rows = data.len();
+    if rows == 0 { return Vec::new(); }
+    let cols = data[0].len();
+    if cols == 0 { return data.clone(); }
+
+    let kernel_radius = (sigma * 3.0).ceil() as usize;
+    let kernel_size = 2 * kernel_radius + 1;
+    let mut kernel = vec![0.0; kernel_size];
+    let mut kernel_sum = 0.0;
+
+    for i in 0..kernel_size {
+        let x = i as f32 - kernel_radius as f32;
+        kernel[i] = (-0.5 * (x / sigma).powi(2)).exp();
+        kernel_sum += kernel[i];
+    }
+
+    for i in 0..kernel_size {
+        kernel[i] /= kernel_sum;
+    }
+
+    let mut blurred_data = vec![vec![0.0; cols]; rows];
+    let mut temp_data = vec![vec![0.0; cols]; rows];
+
+    // Apply horizontal blur
+    for r in 0..rows {
+        for c in 0..cols {
+            let mut sum = 0.0;
+            for k_idx in 0..kernel_size {
+                let col_idx = (c as isize + k_idx as isize - kernel_radius as isize).clamp(0, cols as isize - 1) as usize;
+                sum += data[r][col_idx] * kernel[k_idx];
+            }
+            temp_data[r][c] = sum;
+        }
+    }
+
+    // Apply vertical blur
+    for r in 0..rows {
+        for c in 0..cols {
+            let mut sum = 0.0;
+            for k_idx in 0..kernel_size {
+                let row_idx = (r as isize + k_idx as isize - kernel_radius as isize).clamp(0, rows as isize - 1) as usize;
+                sum += temp_data[row_idx][c] * kernel[k_idx];
+            }
+            blurred_data[r][c] = sum;
+        }
+    }
+
+    blurred_data
+}
+
+pub fn plot_spectrum_heatmaps<P: AsRef<Path>>(
+    output_path_amplitude: P,
+    output_path_phase: P,
+    spectrum_data: &Vec<Vec<Complex<f32>>>,
+    sigma: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let output_path_amplitude = output_path_amplitude.as_ref().to_path_buf();
+    let output_path_phase = output_path_phase.as_ref().to_path_buf();
+    if spectrum_data.is_empty() || spectrum_data[0].is_empty() {
+        return Err("Spectrum data for heatmap is empty".into());
+    }
+
+    let num_sectors = spectrum_data.len();
+    let fft_points = spectrum_data[0].len();
+
+    // --- Amplitude Heatmap ---
+    let color_bar_width = 25;
+    let color_bar_padding = 20; // Padding between chart and color bar
+    let main_chart_width = 500;
+    let total_width_amp = main_chart_width + color_bar_width + color_bar_padding +65;
+    let total_height_amp = 384;
+
+    let root_amp = BitMapBackend::new(&output_path_amplitude, (total_width_amp, total_height_amp));
+    let root_amp_drawing_area = root_amp.into_drawing_area();
+    root_amp_drawing_area.fill(&WHITE)?;
+
+    let (chart_area_amp, color_bar_area_for_amp) = root_amp_drawing_area.split_horizontally(main_chart_width);
+
+    let amplitudes_2d: Vec<Vec<f32>> = spectrum_data.iter().map(|row| row.iter().map(|c| c.norm()).collect()).collect();
+    let blurred_amplitudes = gaussian_blur_2d(&amplitudes_2d, sigma);
+    let max_amp = blurred_amplitudes.iter().flatten().cloned().fold(0.0, f32::max);
+    let min_amp = blurred_amplitudes.iter().flatten().cloned().fold(f32::MAX, f32::min);
+
+    let mut chart_amp = ChartBuilder::on(&chart_area_amp)
+        .margin(10)
+        .x_label_area_size(35)
+        .y_label_area_size(45)
+        .build_cartesian_2d(0..fft_points, 0..num_sectors)?;
+
+    chart_amp.configure_mesh()
+        .x_desc("Channels")
+        .y_desc("PP")
+        .x_label_style(("sans-serif", 18).into_font())
+        .y_label_style(("sans-serif", 18).into_font())
+        .draw()?;
+
+    chart_amp.draw_series(
+        (0..fft_points).flat_map(|x| (0..num_sectors).map(move |y| (x, y)))
+        .map(|(x, y)| {
+            let amp = blurred_amplitudes[y][x];
+            let color_value = if max_amp > min_amp { (amp - min_amp) / (max_amp - min_amp) } else { 0.0 };
+            let color = ViridisRGB.get_color(color_value as f64);
+            Rectangle::new([(x, y), (x + 1, y + 1)], color.filled())
+        })
+    )?;
+
+    // Draw color bar for amplitude
+    let color_bar_height_for_drawing = total_height_amp as i32 - (10 + 10 + 70 -35); // total_height - (top_margin + bottom_margin + x_label_area_size)
+    let color_bar_y_offset_for_drawing = 10; // top_margin
+
+    for i in 0..color_bar_height_for_drawing {
+        let color_value = i as f64 / color_bar_height_for_drawing as f64;
+        let color = ViridisRGB.get_color(color_value);
+        color_bar_area_for_amp.draw(&Rectangle::new(
+            [(0, color_bar_y_offset_for_drawing + i), (color_bar_width as i32, color_bar_y_offset_for_drawing + i + 1)],
+            color.filled(),
+        ))?;
+    }
+
+    // Add labels to the color bar
+    color_bar_area_for_amp.draw_text(
+        "Amplitude (a.u.)",
+        &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK).transform(FontTransform::Rotate270),
+        (80, (total_height_amp / 2) as i32 +20),
+    )?;
+    let num_labels = 5;
+    for i in 0..num_labels {
+        let value = min_amp + (max_amp - min_amp) * (i as f32 / (num_labels - 1) as f32);
+        let y_pos_for_drawing = color_bar_y_offset_for_drawing + color_bar_height_for_drawing - (i as i32 * color_bar_height_for_drawing / (num_labels - 1) as i32);
+        color_bar_area_for_amp.draw_text(
+            &format!("{:.1e}", value),
+            &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK),
+            ((color_bar_width + 5) as i32, y_pos_for_drawing - 7),
+        )?;
+    }
+    
+    root_amp_drawing_area.present()?;
+    
+
+
+    // --- Phase Heatmap ---
+    let color_bar_width = 25;
+    let color_bar_padding = 30; // Padding between chart and color bar
+    let main_chart_width = 500;
+    let total_width_phase = main_chart_width + color_bar_width + color_bar_padding +55;
+    let total_height_phase = 384;
+
+    let root_phase = BitMapBackend::new(&output_path_phase, (total_width_phase, total_height_phase));
+    let root_phase_drawing_area = root_phase.into_drawing_area();
+    root_phase_drawing_area.fill(&WHITE)?;
+
+    let (chart_area_phase, color_bar_area_for_phase) = root_phase_drawing_area.split_horizontally(main_chart_width);
+
+    let mut chart_phase = ChartBuilder::on(&chart_area_phase)
+        .margin(10)
+        .x_label_area_size(35)
+        .y_label_area_size(45)
+        .build_cartesian_2d(0..fft_points, 0..num_sectors)?;
+
+    let phases_2d: Vec<Vec<f32>> = spectrum_data.iter().map(|row| row.iter().map(|c| c.arg().to_degrees()).collect()).collect();
+    let blurred_phases = gaussian_blur_2d(&phases_2d, sigma);
+
+    chart_phase.configure_mesh()
+        .x_desc("Channels")
+        .y_desc("PP")
+        .x_label_style(("sans-serif", 18).into_font())
+        .y_label_style(("sans-serif", 18).into_font())
+        .draw()?;
+
+    chart_phase.draw_series(
+        (0..fft_points).flat_map(|x| (0..num_sectors).map(move |y| (x, y)))
+        .map(|(x, y)| {
+            let phase_deg = blurred_phases[y][x];
+            // Normalize phase from -180..180 to 0..1 for the color map
+            let color_value = (phase_deg + 180.0) / 360.0;
+            let color = ViridisRGB.get_color(color_value as f64);
+            Rectangle::new([(x, y), (x + 1, y + 1)], color.filled())
+        })
+    )?;
+
+    // Draw color bar for phase
+    let color_bar_height_i32 = total_height_phase as i32 - (10 + 10 + 70 - 35); // total_height - (top_margin + bottom_margin + x_label_area_size)
+    let color_bar_y_offset_i32 = 10; // top_margin
+
+    for i in 0..color_bar_height_i32 {
+        let color_value = i as f64 / color_bar_height_i32 as f64;
+        let color = ViridisRGB.get_color(color_value);
+        color_bar_area_for_phase.draw(&Rectangle::new(
+            [(0, color_bar_y_offset_i32 + i), (color_bar_width as i32, color_bar_y_offset_i32 + i + 1)],
+            color.filled(),
+        ))?;
+    }
+
+    // Add labels to the color bar
+    color_bar_area_for_phase.draw_text(
+        "Phase (deg)",
+        &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK).transform(FontTransform::Rotate270),
+        (60, (total_height_phase / 2) as i32 +20),
+    )?;
+    let num_labels = 9;
+    for i in 0..num_labels {
+        let value = -180.0 + (360.0) * (i as f32 / (num_labels - 1) as f32);
+        let y_pos_i32 = color_bar_y_offset_i32 + color_bar_height_i32 - (i as i32 * color_bar_height_i32 / (num_labels - 1) as i32);
+        color_bar_area_for_phase.draw_text(
+            &format!("{:.0}", value),
+            &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK),
+            ((color_bar_width + 5) as i32, y_pos_i32 - 7),
+        )?;
+    }
+
+    root_phase_drawing_area.present()?;
+
     Ok(())
 }

@@ -53,7 +53,7 @@ pub struct Args {
     pub frequency: bool,
 
     /// Output the complex visibility data to a .tsv file.
-    #[arg(long)]
+    #[arg(long, aliases = ["cs","cross"])]
     pub cross_output: bool,
 
     /// Output the analysis results (delay/frequency) to a .txt file.
@@ -61,15 +61,15 @@ pub struct Args {
     pub output: bool,
 
     /// Delay correction value.
-    #[arg(long, aliases = ["delay"], default_value_t = 0.0, allow_negative_numbers = true)]
+    #[arg(long, aliases = ["delay","delay-corr"], default_value_t = 0.0, allow_negative_numbers = true)]
     pub delay_correct: f32,
 
     /// Rate correction value.
-    #[arg(long, aliases = ["rate"], default_value_t = 0.0, allow_negative_numbers = true)]
+    #[arg(long, aliases = ["rate","rate-corr"], default_value_t = 0.0, allow_negative_numbers = true)]
     pub rate_correct: f32,
 
     /// Acceleration correction value.
-    #[arg(long, aliases = ["acel"], default_value_t = 0.0, allow_negative_numbers = true)]
+    #[arg(long, aliases = ["acel","acel-corr"], default_value_t = 0.0, allow_negative_numbers = true)]
     pub acel_correct: f32,
 
     /// Delay window for fringe search (min, max).
@@ -113,7 +113,7 @@ pub struct Args {
     pub acel_search: Option<Vec<i32>>,
 
     /// Number of iterations for the precise search mode (--search).
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 5)]
     pub iter: u32,
 
     /// Generate dynamic spectrum plot.
@@ -121,7 +121,7 @@ pub struct Args {
     pub dynamic_spectrum: bool,
 
     /// Path to the bandpass calibration binary file made by --bandpass-table argument.
-    #[arg(long)]
+    #[arg(long, aliases = ["bp"])]
     pub bandpass: Option<PathBuf>,
 
     /// Output the bandpass-corrected complex spectrum to a binary file.
@@ -133,5 +133,19 @@ pub struct Args {
     /// If specified value is greater than available CPU cores, it defaults to half of available cores.
     #[arg(long, default_value_t = 0)]
     pub cpu: u32,
+
+    /// Time ranges to flag and skip processing (e.g., "2023012090000 2023012100000").
+    /// Must be provided in pairs of start and end times in YYYYDDDHHMMSS format.
+    #[arg(long, aliases = ["ft", "flag"], num_args = 1.., value_name = "YYYYDDDHHMMSS")]
+    pub flag_time: Vec<String>,
+
+    /// Calculate and plot the Allan deviation of the phase data.
+    /// Requires --length and --loop to be set to generate a time series.
+    #[arg(long, aliases = ["allan","allan-dev"])]
+    pub allan_deviance: bool,
     
-    }
+    /// Generate heatmaps of raw visibility data (amplitude and phase).
+    /// Requires --input. The program will exit after plotting.
+    #[arg(long, aliases = ["ra","raw","raw-v","raw-vi","raw-vis","raw-visi","raw-visib","raw-visibi","raw-visibils","raw-visibili","raw-visibilit"])]
+    pub raw_visibility: bool,
+}
