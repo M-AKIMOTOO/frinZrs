@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc, TimeZone};
 use plotters::style::colors::colormaps::ViridisRGB;
 use num_complex::Complex;
 use std::path::Path;
+use ndarray::Array2; // Added for dynamic spectrum
 
 pub fn delay_plane(
     delay_profile: &[(f64, f64)],
@@ -404,6 +405,8 @@ pub fn add_plot(
     snr: &[f32],
     phase: &[f32],
     noise: &[f32],
+    res_delay: &[f32],
+    res_rate: &[f32],
     source_name: &str,
     len_val: i32,
     obs_start_time: &DateTime<Utc>,
@@ -413,9 +416,14 @@ pub fn add_plot(
         (snr, "SNR", "snr"),
         (phase, "Phase [deg]", "phase"),
         (noise, "Noise Level [%]", "noise"),
+        (res_delay, "Residual Delay [sample]", "res_delay"),
+        (res_rate, "Residual Rate [Hz]", "res_rate"),
     ];
 
     for (data, y_label, filename_suffix) in plots {
+        if data.is_empty() {
+            continue;
+        }
         let file_path = format!("{}_{}{}", output_path, filename_suffix, ".png");
         let root = BitMapBackend::new(&file_path, (900, 600)).into_drawing_area();
         root.fill(&WHITE)?;
@@ -432,12 +440,20 @@ pub fn add_plot(
             y_max = 180.0;
         }
 
+        let x_range = if length.len() > 1 {
+            *length.first().unwrap()..*length.last().unwrap()
+        } else {
+            // Handle case with a single data point
+            let center = length.first().unwrap_or(&0.0);
+            (center - 1.0)..(center + 1.0)
+        };
+
         let mut chart = ChartBuilder::on(&root)
             .caption(format!("{}, length: {} s", source_name, len_val), ("sans-serif ", 25).into_font())
             .margin(10)
             .x_label_area_size(60)
             .y_label_area_size(100)
-            .build_cartesian_2d(*length.first().unwrap()..*length.last().unwrap(), y_min..y_max)?;
+            .build_cartesian_2d(x_range, y_min..y_max)?;
 
         chart.configure_mesh()
             .x_desc(&format!("The elapsed time since {} UT", obs_start_time.format("%Y/%j %H:%M:%S")))
@@ -448,6 +464,10 @@ pub fn add_plot(
                     format!("{:.0}", v)
                 } else if filename_suffix == "snr" {
                     format!("{:.0}", v)
+                } else if filename_suffix == "res_delay" {
+                    format!("{:.3}", v)
+                } else if filename_suffix == "res_rate" {
+                    format!("{:.2e}", v)
                 } else {
                     format!("{:.1e}", v)
                 }
@@ -740,6 +760,231 @@ pub fn plot_acel_search_result(
     Ok(())
 }
 
+pub fn plot_sky_map<P: AsRef<Path>>(
+    output_path: P,
+    map_data: &ndarray::Array2<f32>,
+    cell_size_rad: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (height, width) = map_data.dim();
+    let root = BitMapBackend::new(output_path.as_ref(), (width as u32 + 120, height as u32 + 80)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let (main_area, colorbar_area) = root.split_horizontally(width as u32 + 20);
+
+    let max_val = map_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let min_val = map_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+
+    let rad_to_arcsec = 206265.0;
+    // Define coordinate ranges in arcseconds for the chart
+    let l_arcsec_max = (width as f64 / 2.0) * cell_size_rad * rad_to_arcsec;
+    let m_arcsec_max = (height as f64 / 2.0) * cell_size_rad * rad_to_arcsec;
+    let l_range = -l_arcsec_max..l_arcsec_max;
+    let m_range = -m_arcsec_max..m_arcsec_max;
+
+    let mut chart = ChartBuilder::on(&main_area)
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .margin(10)
+        .caption("Fringe Rate Map", ("sans-serif", 30))
+        .build_cartesian_2d(l_range.clone(), m_range.clone())?;
+
+    chart.configure_mesh()
+        .x_desc("ΔRA (arcsec)")
+        .y_desc("ΔDec (arcsec)")
+        .x_label_formatter(&|x| format!("{:.2}", x))
+        .y_label_formatter(&|y| format!("{:.2}", y))
+        .label_style(("sans-serif", 15))
+        .draw()?;
+
+    // Draw the heatmap
+    chart.draw_series(
+        map_data.indexed_iter().map(|((y, x), &val)| {
+            let l_arcsec = ((x as f64) - (width as f64 / 2.0)) * cell_size_rad * rad_to_arcsec;
+            let m_arcsec = (((height as f64 / 2.0) - y as f64)) * cell_size_rad * rad_to_arcsec;
+            let cell_l_arcsec = cell_size_rad * rad_to_arcsec;
+            let cell_m_arcsec = cell_size_rad * rad_to_arcsec;
+
+            let mut norm_val = if max_val > min_val { (val - min_val) / (max_val - min_val) } else { 0.0 };
+            if norm_val.is_nan() { norm_val = 0.0; }
+            norm_val = norm_val.clamp(0.0, 1.0);
+            let color = ViridisRGB.get_color(norm_val as f64);
+            
+            Rectangle::new([(l_arcsec, m_arcsec), (l_arcsec + cell_l_arcsec, m_arcsec + cell_m_arcsec)], color.filled())
+        })
+    )?;
+
+    // Draw color bar
+    let mut colorbar_chart = ChartBuilder::on(&colorbar_area)
+        .margin(20)
+        .set_label_area_size(LabelAreaPosition::Right, 40)
+        .build_cartesian_2d(0f32..1f32, min_val..max_val)?;
+    
+    colorbar_chart.configure_mesh()
+        .disable_x_mesh().disable_x_axis()
+        .y_label_formatter(&|y| format!("{:.1e}", y))
+        .y_label_style(("sans-serif", 15))
+        .draw()?;
+
+    let color_map = ViridisRGB;
+    colorbar_chart.draw_series((0..200).map(|y| {
+        let y_val = min_val + (max_val - min_val) * y as f32 / 199.0;
+        let mut norm_val = if max_val > min_val { (y_val - min_val) / (max_val - min_val) } else { 0.0 };
+        if norm_val.is_nan() { norm_val = 0.0; }
+        norm_val = norm_val.clamp(0.0, 1.0);
+        let color = color_map.get_color(norm_val as f64);
+        Rectangle::new([(0.0, y_val), (1.0, y_val + (max_val-min_val)/199.0)], color.filled())
+    }))?;
+
+    root.present()?;
+    Ok(())
+}
+
+pub fn plot_dynamic_spectrum_freq(
+    output_path: &str,
+    spectrum_array: &Array2<Complex<f32>>,
+    header: &crate::header::CorHeader,
+    obs_time: &DateTime<Utc>,
+    _length: i32,
+    _effective_integration_time: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (time_samples, freq_channels) = spectrum_array.dim();
+
+    let width = 1200;
+    let height = 1000;
+    let root = BitMapBackend::new(output_path, (width, height)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let (upper, lower) = root.split_vertically(height / 2);
+
+    let freq_range = 0..freq_channels;
+    let time_range = 0..time_samples;
+
+    // --- Amplitude Heatmap ---
+    let amplitudes: Vec<f32> = spectrum_array.iter().map(|c| c.norm()).collect();
+    let max_amp = amplitudes.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let min_amp = amplitudes.iter().cloned().fold(f32::INFINITY, f32::min);
+
+    let mut amp_chart = ChartBuilder::on(&upper)
+        .caption(
+            format!(
+                "Dynamic Spectrum (Amplitude) - {} - {}",
+                header.source_name,
+                obs_time.format("%Y-%m-%d %H:%M:%S")
+            ),
+            ("sans-serif", 20),
+        )
+        .margin(10)
+        .x_label_area_size(5)
+        .y_label_area_size(100)
+        .build_cartesian_2d(freq_range.clone(), time_range.clone())?;
+
+    amp_chart
+        .configure_mesh()
+        .y_desc("Time [PP]")
+        //.x_desc("Frequency [channels]")
+        .label_style(("sans-serif", 25).into_font())
+        .draw()?;
+
+    amp_chart.draw_series(spectrum_array.indexed_iter().map(|((t, f), c)| {
+        let norm_val = if max_amp > min_amp {
+            (c.norm() - min_amp) / (max_amp - min_amp)
+        } else {
+            0.0
+        };
+        let color = ViridisRGB.get_color(norm_val as f64);
+        Rectangle::new([(f, t), (f + 1, t + 1)], color.filled())
+    }))?;
+
+    // --- Phase Heatmap ---
+    let mut phase_chart = ChartBuilder::on(&lower)
+        .caption(
+            format!(
+                "Dynamic Spectrum (Phase) - {} - {}",
+                header.source_name,
+                obs_time.format("%Y-%m-%d %H:%M:%S")
+            ),
+            ("sans-serif", 20),
+        )
+        .margin(10)
+        .x_label_area_size(55)
+        .y_label_area_size(100)
+        .build_cartesian_2d(freq_range.clone(), time_range.clone())?;
+
+    phase_chart
+        .configure_mesh()
+        .y_desc("Time [PP]")
+        .x_desc("Frequency [channels]")
+        .label_style(("sans-serif", 25).into_font())
+        .draw()?;
+
+    phase_chart.draw_series(spectrum_array.indexed_iter().map(|((t, f), c)| {
+        let norm_val = (c.arg().to_degrees() + 180.0) / 360.0;
+        let color = ViridisRGB.get_color(norm_val as f64);
+        Rectangle::new([(f, t), (f + 1, t + 1)], color.filled())
+    }))?;
+
+    root.present()?;
+    Ok(())
+}
+
+pub fn plot_dynamic_spectrum_lag(
+    output_path: &str,
+    lag_data: &Array2<f32>,
+    header: &crate::header::CorHeader,
+    obs_time: &DateTime<Utc>,
+    _length: i32,
+    _effective_integration_time: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (time_samples, lag_samples) = lag_data.dim();
+
+    let width = 1200;
+    let height = 600;
+    let root = BitMapBackend::new(output_path, (width, height)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let lag_range_min = -(lag_samples as i32 / 2);
+    let lag_range_max = lag_samples as i32 / 2;
+    let lag_range = lag_range_min..lag_range_max;
+    let time_range = 0..time_samples;
+
+    let max_val = lag_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let min_val = lag_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption(
+            format!(
+                "Dynamic Spectrum (Time Lag) - {} - {}",
+                header.source_name,
+                obs_time.format("%Y-%m-%d %H:%M:%S")
+            ),
+            ("sans-serif", 20),
+        )
+        .margin(10)
+        .x_label_area_size(55)
+        .y_label_area_size(100)
+        .build_cartesian_2d(lag_range.clone(), time_range.clone())?;
+
+    chart
+        .configure_mesh()
+        .y_desc("Time [PP]")
+        .x_desc("Lag [samples]")
+        .label_style(("sans-serif", 25).into_font())
+        .draw()?;
+
+    chart.draw_series(lag_data.indexed_iter().map(|((t, l), &val)| {
+        let x = lag_range_min + l as i32;
+        let norm_val = if max_val > min_val {
+            (val - min_val) / (max_val - min_val)
+        } else {
+            0.0
+        };
+        let color = ViridisRGB.get_color(norm_val as f64);
+        Rectangle::new([(x, t), (x + 1, t + 1)], color.filled())
+    }))?;
+
+    root.present()?;
+    Ok(())
+}
 
 fn gaussian_blur_2d(data: &Vec<Vec<f32>>, sigma: f32) -> Vec<Vec<f32>> {
     if sigma <= 0.0 {
@@ -796,167 +1041,147 @@ fn gaussian_blur_2d(data: &Vec<Vec<f32>>, sigma: f32) -> Vec<Vec<f32>> {
     blurred_data
 }
 
+fn plot_single_heatmap_with_colorbar(
+    output_path: &Path,
+    data: &Vec<Vec<f32>>,
+    title: &str,
+    x_desc: &str,
+    y_desc: &str,
+    color_bar_title: &str,
+    min_val: f32,
+    max_val: f32,
+    num_color_bar_labels: usize,
+    color_value_normalizer: impl Fn(f32) -> f64,
+    color_bar_label_formatter: impl Fn(f32) -> String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (rows, cols) = (data.len(), data[0].len());
+
+    let main_chart_width = 500;
+    let color_bar_area_width = 110;
+    let total_width = main_chart_width + color_bar_area_width;
+    let total_height = 384;
+
+    let root = BitMapBackend::new(output_path, (total_width, total_height)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let (chart_area, color_bar_area) = root.split_horizontally(main_chart_width);
+
+    let top_margin = 10;
+    let bottom_margin = 10;
+    let x_label_area_size = 35;
+    let y_label_area_size = 45;
+
+    let mut chart = ChartBuilder::on(&chart_area)
+        .caption(title, ("sans-serif", 20).into_font())
+        .margin_top(top_margin)
+        .margin_bottom(bottom_margin)
+        .margin_left(10)
+        .margin_right(10)
+        .x_label_area_size(x_label_area_size)
+        .y_label_area_size(y_label_area_size)
+        .build_cartesian_2d(0..cols, 0..rows)?;
+
+    chart.configure_mesh()
+        .x_desc(x_desc)
+        .y_desc(y_desc)
+        .x_label_style(("sans-serif", 18).into_font())
+        .y_label_style(("sans-serif", 18).into_font())
+        .draw()?;
+
+    chart.draw_series(
+        (0..cols).flat_map(|x| (0..rows).map(move |y| (x, y)))
+        .map(|(x, y)| {
+            let val = data[y][x];
+            let color_value = color_value_normalizer(val);
+            let color = ViridisRGB.get_color(color_value);
+            Rectangle::new([(x, y), (x + 1, y + 1)], color.filled())
+        })
+    )?;
+
+    // Draw color bar
+    let color_bar_width = 25;
+    let color_bar_x_offset = 0;
+    let color_bar_y_offset = top_margin as i32;
+    let color_bar_height = total_height as i32 - (top_margin + bottom_margin + x_label_area_size) as i32;
+
+    for i in 0..color_bar_height {
+        let color_value = i as f64 / (color_bar_height - 1) as f64;
+        let color = ViridisRGB.get_color(color_value);
+        color_bar_area.draw(&Rectangle::new(
+            [(color_bar_x_offset, color_bar_y_offset + i), (color_bar_x_offset + color_bar_width, color_bar_y_offset + i + 1)],
+            color.filled(),
+        ))?;
+    }
+
+    // Add labels to the color bar
+    color_bar_area.draw_text(
+        color_bar_title,
+        &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK).transform(FontTransform::Rotate270),
+        (color_bar_area_width as i32 - 25, total_height as i32 / 2),
+    )?;
+
+    for i in 0..num_color_bar_labels {
+        let val_fraction = i as f32 / (num_color_bar_labels - 1) as f32;
+        let value = min_val + (max_val - min_val) * val_fraction;
+        let y_pos = color_bar_y_offset + color_bar_height - (val_fraction * color_bar_height as f32) as i32;
+        color_bar_area.draw_text(
+            &color_bar_label_formatter(value),
+            &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK),
+            (color_bar_x_offset + color_bar_width + 5, y_pos - 7),
+        )?;
+    }
+
+    root.present()?;
+    Ok(())
+}
+
 pub fn plot_spectrum_heatmaps<P: AsRef<Path>>(
     output_path_amplitude: P,
     output_path_phase: P,
     spectrum_data: &Vec<Vec<Complex<f32>>>,
     sigma: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let output_path_amplitude = output_path_amplitude.as_ref().to_path_buf();
-    let output_path_phase = output_path_phase.as_ref().to_path_buf();
     if spectrum_data.is_empty() || spectrum_data[0].is_empty() {
         return Err("Spectrum data for heatmap is empty".into());
     }
 
-    let num_sectors = spectrum_data.len();
-    let fft_points = spectrum_data[0].len();
-
     // --- Amplitude Heatmap ---
-    let color_bar_width = 25;
-    let color_bar_padding = 20; // Padding between chart and color bar
-    let main_chart_width = 500;
-    let total_width_amp = main_chart_width + color_bar_width + color_bar_padding +65;
-    let total_height_amp = 384;
-
-    let root_amp = BitMapBackend::new(&output_path_amplitude, (total_width_amp, total_height_amp));
-    let root_amp_drawing_area = root_amp.into_drawing_area();
-    root_amp_drawing_area.fill(&WHITE)?;
-
-    let (chart_area_amp, color_bar_area_for_amp) = root_amp_drawing_area.split_horizontally(main_chart_width);
-
     let amplitudes_2d: Vec<Vec<f32>> = spectrum_data.iter().map(|row| row.iter().map(|c| c.norm()).collect()).collect();
     let blurred_amplitudes = gaussian_blur_2d(&amplitudes_2d, sigma);
     let max_amp = blurred_amplitudes.iter().flatten().cloned().fold(0.0, f32::max);
     let min_amp = blurred_amplitudes.iter().flatten().cloned().fold(f32::MAX, f32::min);
 
-    let mut chart_amp = ChartBuilder::on(&chart_area_amp)
-        .margin(10)
-        .x_label_area_size(35)
-        .y_label_area_size(45)
-        .build_cartesian_2d(0..fft_points, 0..num_sectors)?;
-
-    chart_amp.configure_mesh()
-        .x_desc("Channels")
-        .y_desc("PP")
-        .x_label_style(("sans-serif", 18).into_font())
-        .y_label_style(("sans-serif", 18).into_font())
-        .draw()?;
-
-    chart_amp.draw_series(
-        (0..fft_points).flat_map(|x| (0..num_sectors).map(move |y| (x, y)))
-        .map(|(x, y)| {
-            let amp = blurred_amplitudes[y][x];
-            let color_value = if max_amp > min_amp { (amp - min_amp) / (max_amp - min_amp) } else { 0.0 };
-            let color = ViridisRGB.get_color(color_value as f64);
-            Rectangle::new([(x, y), (x + 1, y + 1)], color.filled())
-        })
-    )?;
-
-    // Draw color bar for amplitude
-    let color_bar_height_for_drawing = total_height_amp as i32 - (10 + 10 + 70 -35); // total_height - (top_margin + bottom_margin + x_label_area_size)
-    let color_bar_y_offset_for_drawing = 10; // top_margin
-
-    for i in 0..color_bar_height_for_drawing {
-        let color_value = i as f64 / color_bar_height_for_drawing as f64;
-        let color = ViridisRGB.get_color(color_value);
-        color_bar_area_for_amp.draw(&Rectangle::new(
-            [(0, color_bar_y_offset_for_drawing + i), (color_bar_width as i32, color_bar_y_offset_for_drawing + i + 1)],
-            color.filled(),
-        ))?;
-    }
-
-    // Add labels to the color bar
-    color_bar_area_for_amp.draw_text(
+    plot_single_heatmap_with_colorbar(
+        output_path_amplitude.as_ref(),
+        &blurred_amplitudes,
+        "Amplitude Spectrum",
+        "Channels",
+        "PP",
         "Amplitude (a.u.)",
-        &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK).transform(FontTransform::Rotate270),
-        (80, (total_height_amp / 2) as i32 +20),
+        min_amp,
+        max_amp,
+        5,
+        |v| if max_amp > min_amp { ((v - min_amp) / (max_amp - min_amp)) as f64 } else { 0.0 },
+        |v| format!("{:.1e}", v),
     )?;
-    let num_labels = 5;
-    for i in 0..num_labels {
-        let value = min_amp + (max_amp - min_amp) * (i as f32 / (num_labels - 1) as f32);
-        let y_pos_for_drawing = color_bar_y_offset_for_drawing + color_bar_height_for_drawing - (i as i32 * color_bar_height_for_drawing / (num_labels - 1) as i32);
-        color_bar_area_for_amp.draw_text(
-            &format!("{:.1e}", value),
-            &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK),
-            ((color_bar_width + 5) as i32, y_pos_for_drawing - 7),
-        )?;
-    }
-    
-    root_amp_drawing_area.present()?;
-    
-
 
     // --- Phase Heatmap ---
-    let color_bar_width = 25;
-    let color_bar_padding = 30; // Padding between chart and color bar
-    let main_chart_width = 500;
-    let total_width_phase = main_chart_width + color_bar_width + color_bar_padding +55;
-    let total_height_phase = 384;
-
-    let root_phase = BitMapBackend::new(&output_path_phase, (total_width_phase, total_height_phase));
-    let root_phase_drawing_area = root_phase.into_drawing_area();
-    root_phase_drawing_area.fill(&WHITE)?;
-
-    let (chart_area_phase, color_bar_area_for_phase) = root_phase_drawing_area.split_horizontally(main_chart_width);
-
-    let mut chart_phase = ChartBuilder::on(&chart_area_phase)
-        .margin(10)
-        .x_label_area_size(35)
-        .y_label_area_size(45)
-        .build_cartesian_2d(0..fft_points, 0..num_sectors)?;
-
     let phases_2d: Vec<Vec<f32>> = spectrum_data.iter().map(|row| row.iter().map(|c| c.arg().to_degrees()).collect()).collect();
     let blurred_phases = gaussian_blur_2d(&phases_2d, sigma);
 
-    chart_phase.configure_mesh()
-        .x_desc("Channels")
-        .y_desc("PP")
-        .x_label_style(("sans-serif", 18).into_font())
-        .y_label_style(("sans-serif", 18).into_font())
-        .draw()?;
-
-    chart_phase.draw_series(
-        (0..fft_points).flat_map(|x| (0..num_sectors).map(move |y| (x, y)))
-        .map(|(x, y)| {
-            let phase_deg = blurred_phases[y][x];
-            // Normalize phase from -180..180 to 0..1 for the color map
-            let color_value = (phase_deg + 180.0) / 360.0;
-            let color = ViridisRGB.get_color(color_value as f64);
-            Rectangle::new([(x, y), (x + 1, y + 1)], color.filled())
-        })
-    )?;
-
-    // Draw color bar for phase
-    let color_bar_height_i32 = total_height_phase as i32 - (10 + 10 + 70 - 35); // total_height - (top_margin + bottom_margin + x_label_area_size)
-    let color_bar_y_offset_i32 = 10; // top_margin
-
-    for i in 0..color_bar_height_i32 {
-        let color_value = i as f64 / color_bar_height_i32 as f64;
-        let color = ViridisRGB.get_color(color_value);
-        color_bar_area_for_phase.draw(&Rectangle::new(
-            [(0, color_bar_y_offset_i32 + i), (color_bar_width as i32, color_bar_y_offset_i32 + i + 1)],
-            color.filled(),
-        ))?;
-    }
-
-    // Add labels to the color bar
-    color_bar_area_for_phase.draw_text(
+    plot_single_heatmap_with_colorbar(
+        output_path_phase.as_ref(),
+        &blurred_phases,
+        "Phase Spectrum",
+        "Channels",
+        "PP",
         "Phase (deg)",
-        &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK).transform(FontTransform::Rotate270),
-        (60, (total_height_phase / 2) as i32 +20),
+        -180.0,
+        180.0,
+        9,
+        |v| ((v + 180.0) / 360.0) as f64,
+        |v| format!("{:.0}", v),
     )?;
-    let num_labels = 9;
-    for i in 0..num_labels {
-        let value = -180.0 + (360.0) * (i as f32 / (num_labels - 1) as f32);
-        let y_pos_i32 = color_bar_y_offset_i32 + color_bar_height_i32 - (i as i32 * color_bar_height_i32 / (num_labels - 1) as i32);
-        color_bar_area_for_phase.draw_text(
-            &format!("{:.0}", value),
-            &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK),
-            ((color_bar_width + 5) as i32, y_pos_i32 - 7),
-        )?;
-    }
-
-    root_phase_drawing_area.present()?;
 
     Ok(())
 }

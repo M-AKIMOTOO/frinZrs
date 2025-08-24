@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::header::CorHeader;
 use crate::args::Args;
-use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal};
+use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal, uvw_cal, rate_delay_to_lm};
 use crate::fitting;
 
 type C32 = Complex<f32>;
@@ -51,6 +51,9 @@ pub struct AnalysisResults {
     pub corrected_acel: f32,
     // Ranges
     pub rate_range: Vec<f32>,
+    // Sky Coordinates
+    pub l_coord: f64,
+    pub m_coord: f64,
 }
 
 pub fn analyze_results(
@@ -304,6 +307,26 @@ pub fn analyze_results(
     }
 
 
+     // --- Sky Coordinate Calculation ---
+    let (u, v, _w, du_dt, dv_dt) = uvw_cal(
+        header.station1_position,
+        header.station2_position,
+        *obs_time,
+        header.source_position_ra,
+        header.source_position_dec,
+    );
+
+    let (l_coord, m_coord) = rate_delay_to_lm(
+        residual_rate_val as f64,
+        residual_delay_val as f64,
+        header,
+        u,
+        v,
+        du_dt,
+        dv_dt,
+    );
+
+
     // --- Antenna Az/El Calculation ---
     let (ant1_az, ant1_el, ant1_hgt) = radec2azalt(
         [header.station1_position[0] as f32, header.station1_position[1] as f32, header.station1_position[2] as f32],
@@ -351,5 +374,7 @@ pub fn analyze_results(
         // residual_acel: 0.0, // Placeholder
         corrected_acel: args.acel_correct,
         rate_range,
+        l_coord,
+        m_coord,
     }
 }

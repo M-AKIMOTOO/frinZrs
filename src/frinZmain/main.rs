@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use clap::{CommandFactory, Parser};
 use image::ImageBuffer;
 use imageproc::filter;
+use rustfft::FftPlanner;
 use num_complex::Complex;
 use ndarray::Array;
 
@@ -26,6 +27,7 @@ mod plot;
 mod read;
 mod rfi;
 mod utils;
+mod imaging;
 
 use crate::utils::unwrap_phase_radians;
 use args::Args;
@@ -33,6 +35,7 @@ use analysis::analyze_results;
 use bandpass::{apply_bandpass_correction, read_bandpass_file, write_complex_spectrum_binary};
 use fft::{apply_phase_correction, process_fft, process_ifft};
 use header::{parse_header, CorHeader};
+use imaging::create_map;
 use output::{
     format_delay_output,
     format_freq_output,
@@ -40,7 +43,7 @@ use output::{
     output_header_info,
     write_phase_corrected_spectrum_binary,
 };
-use plot::{add_plot, cumulate_plot, delay_plane, frequency_plane, phase_reference_plot, plot_acel_search_result};
+use plot::{add_plot, cumulate_plot, delay_plane, frequency_plane, phase_reference_plot, plot_acel_search_result, plot_dynamic_spectrum_freq, plot_dynamic_spectrum_lag};
 use read::{read_sector_header, read_visibility_data};
 use rfi::parse_rfi_ranges;
 
@@ -60,6 +63,8 @@ struct ProcessResult {
     add_plot_snr: Vec<f32>,
     add_plot_phase: Vec<f32>,
     add_plot_noise: Vec<f32>,
+    add_plot_res_delay: Vec<f32>,
+    add_plot_res_rate: Vec<f32>,
 }
 
 // --- Main Application Logic ---
@@ -95,6 +100,42 @@ fn main() -> Result<(), Box<dyn Error>> {
             process::exit(1);
         }
         //process::exit(0);
+    }
+
+    let flag_ranges: Vec<(DateTime<Utc>, DateTime<Utc>)> = args
+        .flag_time
+        .chunks_exact(2)
+        .filter_map(|chunk| {
+            let start = utils::parse_flag_time(&chunk[0]);
+            let end = utils::parse_flag_time(&chunk[1]);
+            match (start, end) {
+                (Some(s), Some(e)) => {
+                    if s >= e {
+                        eprintln!(
+                            "Error: Start time ({}) must be before end time ({}) for --flag-time.",
+                            chunk[0], chunk[1]
+                        );
+                        process::exit(1);
+                    }
+                    Some((s, e))
+                }
+                _ => {
+                    eprintln!(
+                        "Error: Invalid time format in --flag-time arguments: '{}', '{}'. Expected YYYYDDDHHMMSS.",
+                        chunk[0], chunk[1]
+                    );
+                    process::exit(1);
+                }
+            }
+        })
+        .collect();
+
+    if args.fringe_rate_map {
+        if args.input.is_none() {
+            eprintln!("Error: --fringe-rate-map requires an --input file.");
+            process::exit(1);
+        }
+        return run_fringe_rate_map_analysis(&args, &flag_ranges);
     }
 
     // Handle default for acel_search if provided without arguments
@@ -230,6 +271,8 @@ fn run_single_file_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, DateTime
                 &result.add_plot_snr,
                 &result.add_plot_phase,
                 &result.add_plot_noise,
+                &result.add_plot_res_delay,
+                &result.add_plot_res_rate,
                 &result.header.source_name,
                 result.length_arg,
                 &result.obs_time, // Added this line
@@ -243,6 +286,8 @@ fn run_single_file_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, DateTime
                 &result.add_plot_snr,
                 &result.add_plot_phase,
                 &result.add_plot_noise,
+                &result.add_plot_res_delay,
+                &result.add_plot_res_rate,
             )?;
         }
     }
@@ -979,6 +1024,8 @@ fn process_cor_file(
     let mut add_plot_snr: Vec<f32> = Vec::new();
     let mut add_plot_noise: Vec<f32> = Vec::new();
     let mut add_plot_times: Vec<DateTime<Utc>> = Vec::new();
+    let mut add_plot_res_delay: Vec<f32> = Vec::new();
+    let mut add_plot_res_rate: Vec<f32> = Vec::new();
     let mut obs_time: Option<chrono::DateTime<chrono::Utc>> = None;
 
     // --- Main Processing Loop ---
@@ -1233,18 +1280,87 @@ fn process_cor_file(
                     add_plot_snr,
                     add_plot_phase,
                     add_plot_noise,
+                    add_plot_res_delay,
+                    add_plot_res_rate,
                 });
             }
+        }
+
+        if args.dynamic_spectrum {
+            let dynamic_spectrum_dir = frinz_dir.join("dynamic_spectrum");
+            fs::create_dir_all(&dynamic_spectrum_dir)?;
+
+            let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
+            let base_filename = generate_output_names(
+                &header,
+                &current_obs_time,
+                &label_str,
+                !rfi_ranges.is_empty(),
+                args.frequency,
+                args.bandpass.is_some(),
+                current_length,
+            );
+
+            let fft_point_half = (header.fft_point / 2) as usize;
+            let time_samples = complex_vec.len() / fft_point_half;
+            let spectrum_array = Array::from_shape_vec((time_samples, fft_point_half), complex_vec.clone()).unwrap();
+            
+            let output_path_freq = dynamic_spectrum_dir.join(format!("{}_dynamic_spectrum_frequency.png", base_filename));
+            plot::plot_dynamic_spectrum_freq(
+                output_path_freq.to_str().unwrap(),
+                &spectrum_array,
+                &header,
+                &current_obs_time,
+                current_length,
+                effective_integ_time,
+            )?;
+
+            let mut lag_data = Array::zeros((time_samples, header.fft_point as usize));
+            let mut planner = FftPlanner::new();
+            let ifft = planner.plan_fft_inverse(header.fft_point as usize);
+            let fft_point_usize = header.fft_point as usize;
+
+            for (i, row) in spectrum_array.rows().into_iter().enumerate() {
+                let mut ifft_input = vec![C32::new(0.0, 0.0); fft_point_usize];
+                ifft_input[..fft_point_half].copy_from_slice(&row.to_vec());
+                
+                ifft.process(&mut ifft_input);
+
+                let mut shifted_out = vec![C32::new(0.0, 0.0); fft_point_usize];
+                let (first_half, second_half) = ifft_input.split_at(fft_point_half);
+                shifted_out[..fft_point_half].copy_from_slice(second_half);
+                shifted_out[fft_point_half..].copy_from_slice(first_half);
+
+                for val in &mut shifted_out {
+                    *val /= header.fft_point as f32;
+                }
+
+                shifted_out.reverse();
+
+                for (j, val) in shifted_out.iter().enumerate() {
+                    lag_data[[i, j]] = val.norm();
+                }
+            }
+
+            let output_path_lag = dynamic_spectrum_dir.join(format!("{}_dynamic_spectrum_time_lag.png", base_filename));
+            plot::plot_dynamic_spectrum_lag(
+                output_path_lag.to_str().unwrap(),
+                &lag_data,
+                &header,
+                &current_obs_time,
+                current_length,
+                effective_integ_time,
+            )?;
         }
 
         if !args.frequency {
             let delay_output_line = format_delay_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
                 let header_str = "".to_string()
-                    + "#************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD \n"
-                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]          \n"
-                    + "#************************************************************************************************************************************************************************************";
+                    + "#********************************************************************************************************************************************************************************************************************\n"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD          l_coord        m_coord\n"
+                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]                       [rad]          [rad]\n"
+                    + "#********************************************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
                 delay_output_str += &header_str;
             }
@@ -1263,6 +1379,8 @@ fn process_cor_file(
                 add_plot_amp.push(analysis_results.delay_max_amp * 100.0);
                 add_plot_snr.push(analysis_results.delay_snr);
                 add_plot_noise.push(analysis_results.delay_noise * 100.0);
+                add_plot_res_delay.push(analysis_results.residual_delay);
+                add_plot_res_rate.push(analysis_results.residual_rate);
             }
 
             if l1 == loop_count - 1 && args.output {
@@ -1276,10 +1394,10 @@ fn process_cor_file(
             let freq_output_line = format_freq_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
                 let header_str = "".to_string()
-                    + "#******************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD      \n"
-                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                \n"
-                    + "#******************************************************************************************************************************************************************************************";
+                    + "#**************************************************************************************************************************************************************************************************************************\n"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD          l_coord        m_coord\n"
+                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                       [rad]          [rad]\n"
+                    + "#**************************************************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
                 freq_output_str += &header_str;
             }
@@ -1292,6 +1410,16 @@ fn process_cor_file(
                         path.join(format!("{}.txt", format!("{}_freq", base_filename)));
                     fs::write(output_file_path, &freq_output_str)?;
                 }
+            }
+
+            if args.add_plot {
+                add_plot_times.push(current_obs_time);
+                add_plot_amp.push(analysis_results.freq_max_amp * 100.0);
+                add_plot_snr.push(analysis_results.freq_snr);
+                add_plot_phase.push(analysis_results.freq_phase);
+                add_plot_noise.push(analysis_results.freq_noise * 100.0);
+                add_plot_res_delay.push(analysis_results.residual_delay);
+                add_plot_res_rate.push(analysis_results.residual_rate);
             }
         }
 
@@ -1370,7 +1498,7 @@ fn process_cor_file(
                         let q22 = (blurred_img.get_pixel(x_ceil, y_ceil)[0] as f64) / 255.0
                             * (max_norm as f64);
                         let r1 = q11 * (1.0 - fx) + q12 * fx;
-                        let r2 = q21 * (1.0 - fx) + q22 * fy;
+                        let r2 = q21 * (1.0 - fx) + q22 * fx;
                         r1 * (1.0 - fy) + r2 * fy
                     };
                     let stat_keys = vec![
@@ -1522,7 +1650,142 @@ fn process_cor_file(
         add_plot_snr,
         add_plot_phase,
         add_plot_noise,
+        add_plot_res_delay,
+        add_plot_res_rate,
     })
+}
+
+/// Executes the fringe-rate map analysis.
+fn run_fringe_rate_map_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)]) -> Result<(), Box<dyn Error>> {
+    println!("Starting fringe-rate map analysis...");
+
+    let input_path = args.input.as_ref().unwrap();
+
+    // --- File and Path Setup ---
+    let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
+    let frinz_dir = parent_dir.join("frinZ").join("fringe_rate_maps");
+    fs::create_dir_all(&frinz_dir)?;
+
+    // --- Read .cor File ---
+    let mut file = File::open(input_path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    let mut cursor = Cursor::new(buffer.as_slice());
+
+    // --- Parse Header ---
+    let header = parse_header(&mut cursor)?;
+
+    // --- Pre-computation for UV coverage and B_max ---
+    println!("Pre-calculating UV coverage to determine optimal cell size...");
+    let mut max_b = 0.0f64;
+    let mut temp_cursor = cursor.clone();
+    temp_cursor.set_position(256);
+    let temp_pp = header.number_of_sector;
+    for l1 in 0..temp_pp {
+        let (_, current_obs_time, _) = match read_visibility_data(&mut temp_cursor, &header, 1, l1, 0, false) {
+            Ok(data) => data,
+            Err(_) => break,
+        };
+        let (u, v, _, _, _) = utils::uvw_cal(
+            header.station1_position,
+            header.station2_position,
+            current_obs_time,
+            header.source_position_ra,
+            header.source_position_dec,
+        );
+        let b = (u.powi(2) + v.powi(2)).sqrt();
+        if b > max_b {
+            max_b = b;
+        }
+    }
+    println!("Max baseline: {:.2} m", max_b);
+
+    // --- Image Parameters ---
+    let image_size = 768; // pixels
+    let lambda = 299792458.0 / header.observing_frequency;
+    // Set cell size to 1/5th of the angular resolution (lambda / B_max)
+    let cell_size_rad = (lambda / max_b) / 5.0;
+    println!("Calculated cell size: {:.4e} rad ({:.4} mas)", cell_size_rad, cell_size_rad * 206265e3);
+
+    // --- Map Accumulator ---
+    let mut total_map = ndarray::Array2::<f32>::zeros((image_size, image_size));
+
+    // --- Loop Setup ---
+    cursor.set_position(0);
+    let (_, _, effective_integ_time) = read_visibility_data(&mut cursor, &header, 1, 0, 0, false)?;
+    cursor.set_position(256);
+
+    let pp = header.number_of_sector;
+    let length_in_sectors = if args.length == 0 {
+        1 // Process one sector at a time if no length is specified
+    } else {
+        (args.length as f32 / effective_integ_time).ceil() as i32
+    };
+
+    let total_segments_available = (pp - args.skip) / length_in_sectors;
+    let loop_count = if args.loop_ == 1 { // Default loop is 1, so if user doesn't specify, process all
+        total_segments_available
+    } else {
+        total_segments_available.min(args.loop_)
+    };
+
+    // --- Main Processing Loop ---
+    for l1 in 0..loop_count {
+        let (complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(&mut cursor, &header, length_in_sectors, args.skip, l1, false) {
+            Ok(data) => data,
+            Err(_) => break,
+        };
+
+        if complex_vec.is_empty() {
+            break;
+        }
+
+        let is_flagged = flag_ranges.iter().any(|(start, end)| current_obs_time >= *start && current_obs_time < *end);
+        if is_flagged {
+            continue;
+        }
+
+        // 1. Get delay-rate map
+        let (freq_rate_array, padding_length) = process_fft(&complex_vec, length_in_sectors, header.fft_point, &[]);
+        let delay_rate_array = process_ifft(&freq_rate_array, header.fft_point, padding_length);
+
+        // 2. Get axis ranges
+        let rate_range_vec = utils::rate_cal(padding_length as f32, effective_integ_time);
+        let rate_range = Array::from_vec(rate_range_vec);
+        let delay_range = Array::linspace(-(header.fft_point as f32 / 2.0) + 1.0, header.fft_point as f32 / 2.0, header.fft_point as usize);
+
+        // 3. Get UVW and derivatives
+        let (u, v, _w, du_dt, dv_dt) = utils::uvw_cal(
+            header.station1_position,
+            header.station2_position,
+            current_obs_time, // Use the timestamp from the start of the segment
+            header.source_position_ra, // Already in radians
+            header.source_position_dec, // Already in radians
+        );
+
+        // 4. Create map for this segment
+        let segment_map = create_map(
+            &delay_rate_array,
+            u, v, du_dt, dv_dt,
+            &header,
+            &rate_range.view(),
+            &delay_range.view(),
+            image_size,
+            cell_size_rad,
+        );
+
+        // 5. Add to total map
+        total_map = total_map + segment_map;
+        println!("Processed segment {}/{}", l1 + 1, loop_count);
+    }
+
+    // --- Save Final Map ---
+    println!("Finished processing. Saving map...");
+    let output_filename = frinz_dir.join(format!("{}_fringe_rate_map.png", input_path.file_stem().unwrap().to_str().unwrap()));
+    plot::plot_sky_map(&output_filename, &total_map, cell_size_rad)?;
+    println!("Map saved to: {:?}", output_filename);
+
+    Ok(())
 }
 
 /// Executes the raw visibility plotting.

@@ -121,7 +121,7 @@ pub fn generate_output_names(
 
 pub fn format_delay_output(results: &AnalysisResults, label: &[&str], args_length: i32) -> String {
     let display_length = if args_length != 0 { args_length as f32 } else { results.length_f32.ceil() };
-    format!(" {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.8}   {:>+4.8}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}",
+    format!(" {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.8}   {:>+4.8}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5} {:>+10.6} {:>+10.6}",
         results.yyyydddhhmmss1,
         label[3],
         results.source_name,
@@ -138,13 +138,15 @@ pub fn format_delay_output(results: &AnalysisResults, label: &[&str], args_lengt
         results.ant2_az,
         results.ant2_el,
         results.ant2_hgt,
-        results.mjd
+        results.mjd,
+        results.l_coord,
+        results.m_coord
     )
 }
 
 pub fn format_freq_output(results: &AnalysisResults, label: &[&str], args_length: i32) -> String {
     let display_length = if args_length != 0 { args_length as f32 } else { results.length_f32.ceil() };
-    format!(" {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}",
+    format!(" {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5} {:>+10.6} {:>+10.6}",
         results.yyyydddhhmmss1,
         label[3],
         results.source_name,
@@ -161,7 +163,9 @@ pub fn format_freq_output(results: &AnalysisResults, label: &[&str], args_length
         results.ant2_az,
         results.ant2_el,
         results.ant2_hgt,
-        results.mjd
+        results.mjd,
+        results.l_coord,
+        results.m_coord
     )
 }
 
@@ -199,19 +203,21 @@ pub fn write_add_plot_data_to_file(
     snr: &[f32],
     phase: &[f32],
     noise: &[f32],
+    res_delay: &[f32],
+    res_rate: &[f32],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let output_file_path = output_dir.join(format!("{}_add_plot_data.txt", base_filename));
     let file = File::create(&output_file_path)?;
     let mut writer = BufWriter::new(file);
 
     // Write header
-    writeln!(writer, "#{:<15} {:<15} {:<15} {:<15} {:<15}",
-             "Elapsed Time [s]", "Amplitude [%]", "SNR", "Phase [deg]", "Noise Level [%]")?;
+    writeln!(writer, "#{:<18} {:<18} {:<18} {:<18} {:<18} {:<18} {:<18}",
+             "Elapsed Time [s]", "Amplitude [%]", "SNR", "Phase [deg]", "Noise Level [%]", "Res Delay [samp]", "Res Rate [Hz]")?;
 
     // Write data
     for i in 0..elapsed_times.len() {
-        writeln!(writer, "{:<15} {:<15.6} {:<15.6} {:<15.6} {:<15.6}",
-                 elapsed_times[i], amp[i], snr[i], phase[i], noise[i])?;
+        writeln!(writer, "{:<18.3} {:<18.6} {:<18.2} {:<18.3} {:<18.6} {:<18.6} {:<18.6e}",
+                 elapsed_times[i], amp[i], snr[i], phase[i], noise[i], res_delay[i], res_rate[i])?;
     }
 
     writer.flush()?;

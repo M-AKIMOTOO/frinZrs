@@ -117,7 +117,7 @@ pub struct Args {
     pub iter: u32,
 
     /// Generate dynamic spectrum plot.
-    #[arg(long)]
+    #[arg(long, aliases = ["ds","dynamic"])]
     pub dynamic_spectrum: bool,
 
     /// Path to the bandpass calibration binary file made by --bandpass-table argument.
@@ -148,4 +148,8 @@ pub struct Args {
     /// Requires --input. The program will exit after plotting.
     #[arg(long, aliases = ["ra","raw","raw-v","raw-vi","raw-vis","raw-visi","raw-visib","raw-visibi","raw-visibils","raw-visibili","raw-visibilit"])]
     pub raw_visibility: bool,
+
+    /// Generate a fringe-rate map (experimental).
+    #[arg(long, aliases = ["frmap"])]
+    pub fringe_rate_map: bool,
 }
