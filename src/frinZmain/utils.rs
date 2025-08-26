@@ -3,7 +3,7 @@ use num_complex::Complex;
 use chrono::{DateTime, Utc, Datelike, Timelike, TimeZone};
 use astro::coords;
 use astro::time;
-use blh::{ellipsoid, GeocentricCoord, GeodeticCoord};
+use nav_types::{ECEF, WGS84};
 
 use crate::header::CorHeader;
 
@@ -61,11 +61,11 @@ pub fn radec2azalt(ant_position: [f32; 3], time: DateTime<Utc>, obs_ra: f32, obs
         cal_type: time::CalType::Gregorian,
     };
 
-    let geocentric_coord = GeocentricCoord::new(ant_position[0] as f64, ant_position[1] as f64, ant_position[2] as f64);
-    let geodetic_coord: GeodeticCoord<ellipsoid::WGS84> = geocentric_coord.into();
-    let longitude_radian = geodetic_coord.lon.0;
-    let latitude_radian = geodetic_coord.lat.0;
-    let height_meter = geodetic_coord.hgt;
+    let ecef_position = ECEF::new(ant_position[0] as f64, ant_position[1] as f64, ant_position[2] as f64);
+    let wgs84_position: WGS84<f64> = ecef_position.into();
+    let longitude_radian = wgs84_position.longitude_radians();
+    let latitude_radian = wgs84_position.latitude_radians();
+    let height_meter = wgs84_position.altitude();
 
     let julian_day = time::julian_day(&date);
     let mean_sidereal = time::mn_sidr(julian_day);
@@ -226,10 +226,9 @@ pub fn uvw_cal(
     let b_z = ant1_pos[2] - ant2_pos[2];
 
     // Get geodetic longitude for hour angle calculation (using antenna 1's position)
-    let geocentric_coord = GeocentricCoord::new(ant1_pos[0], ant1_pos[1], ant1_pos[2]);
-    let geodetic_coord: GeodeticCoord<ellipsoid::WGS84> = geocentric_coord.into();
-    let longitude_rad = geodetic_coord.lon.0;
-
+    let ecef_position = ECEF::new(ant1_pos[0], ant1_pos[1], ant1_pos[2]);
+    let wgs84_position: WGS84<f64> = ecef_position.into();
+    let longitude_rad = wgs84_position.longitude_radians();
     // Calculate Hour Angle (H)
     let date = time::Date {
         year: time.year() as i16,

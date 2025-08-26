@@ -227,7 +227,7 @@ pub fn frequency_plane(
     let (left_area, right_area) = root.split_horizontally(width / 2 );
     let (top_left_area, rate_area) = left_area.split_vertically(height / 2 +50);
     let (phase_area, amp_area) = top_left_area.split_vertically(top_left_area.get_pixel_range().1.len() as u32 / 4 -10);
-    let (heatmap_and_colorbar_area, stats_area) = right_area.split_vertically(height / 2);
+    let (heatmap_and_colorbar_area, stats_area) = right_area.split_vertically(height / 2 +50);
     let (heatmap_area, colorbar_area) = heatmap_and_colorbar_area.split_horizontally(heatmap_and_colorbar_area.get_pixel_range().0.len() as u32 - 120);
 
     // --- Determine axis ranges ---
@@ -316,7 +316,7 @@ pub fn frequency_plane(
     let mut heatmap_chart = ChartBuilder::on(&heatmap_area)
         .margin(20)
         .x_label_area_size(55)
-        .y_label_area_size(120)
+        .y_label_area_size(85)
         .build_cartesian_2d(0.0..bw, rate_min_x..rate_max_x)?;
     heatmap_chart.configure_mesh()
         .x_desc("Frequency [MHz]")
@@ -324,6 +324,7 @@ pub fn frequency_plane(
         .x_labels(7)
         .y_labels(7)
         .x_label_formatter(&|y| format!("{:.0}", y))
+        .y_label_formatter(&|y| format!("{:.1}", y))
         .label_style(("sans-serif ", 30))
         .draw()?;
 
@@ -767,10 +768,13 @@ pub fn plot_sky_map<P: AsRef<Path>>(
     cell_size_rad: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (height, width) = map_data.dim();
-    let root = BitMapBackend::new(output_path.as_ref(), (width as u32 + 120, height as u32 + 80)).into_drawing_area();
+    // Define a fixed output image size for consistent plot appearance
+    let backend_width = 1024;
+    let backend_height = 800;
+    let root = BitMapBackend::new(output_path.as_ref(), (backend_width, backend_height)).into_drawing_area();
     root.fill(&WHITE)?;
 
-    let (main_area, colorbar_area) = root.split_horizontally(width as u32 + 20);
+    let (main_area, colorbar_area) = root.split_horizontally(backend_width - 120);
 
     let max_val = map_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     let min_val = map_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
@@ -1184,5 +1188,60 @@ pub fn plot_spectrum_heatmaps<P: AsRef<Path>>(
         |v| format!("{:.0}", v),
     )?;
 
+    Ok(())
+}
+
+pub fn plot_cross_section(
+    output_path: &str,
+    horizontal_data: &[(f64, f32)], // (RA offset, Intensity)
+    vertical_data: &[(f64, f32)],   // (Dec offset, Intensity)
+    max_intensity: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = BitMapBackend::new(output_path, (1000, 700)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let (h_min, h_max) = horizontal_data.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), (x, _)| (min.min(*x), max.max(*x)));
+    let (v_min, v_max) = vertical_data.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), (x, _)| (min.min(*x), max.max(*x)));
+    let x_min = h_min.min(v_min);
+    let x_max = h_max.max(v_max);
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Fringe Rate Map Cross-section at Peak", ("sans-serif", 25).into_font())
+        .margin(10)
+        .x_label_area_size(60)
+        .y_label_area_size(80)
+        .build_cartesian_2d(x_min..x_max, 0.0..1.1f64)? // Y-axis is normalized intensity
+        ;
+
+    chart.configure_mesh()
+        .x_desc("Offset (arcsec)")
+        .y_desc("Normalized Intensity")
+        .x_label_formatter(&|v| format!("{:.1}", v))
+        .y_label_formatter(&|v| format!("{:.1}", v))
+        .label_style(("sans-serif", 20).into_font())
+        .draw()?;
+
+    // Draw horizontal cross-section (RA)
+    chart.draw_series(LineSeries::new(
+        horizontal_data.iter().map(|(x, y)| (*x, (*y / max_intensity) as f64)),
+        &BLUE,
+    ))?
+    .label("RA Cross-section")
+    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE.filled()));
+
+    // Draw vertical cross-section (Dec)
+    chart.draw_series(LineSeries::new(
+        vertical_data.iter().map(|(x, y)| (*x, (*y / max_intensity) as f64)),
+        &RED,
+    ))?
+    .label("Dec Cross-section")
+    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED.filled()));
+
+    chart.configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .draw()?;
+
+    root.present()?;
     Ok(())
 }

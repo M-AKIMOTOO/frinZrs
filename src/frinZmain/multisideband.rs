@@ -331,14 +331,72 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
 
     // --- Calculate weighted average delay ---
-    let wc = c_band_analysis_results.delay_snr.powi(2);
-    let wx = x_band_analysis_results.delay_snr.powi(2);
+    // Weighting is proportional to SNR^2 and frequency variance, as per documentation.
+    // w_b ∝ ρ_b^2 * Σ_ν,b
+    // where Σ_ν,b = Σ_k w_k * (ν_k - ν̄_b)^2
+    // and w_k is the channel weight (using power/norm_sqr).
+
+    // For C-band
+    let c_weights: Vec<f32> = c_band_analysis_results.freq_rate_spectrum.iter().map(|c| c.norm_sqr()).collect();
+    let c_total_weight: f32 = c_weights.iter().sum();
+    let c_mean_freq: f64 = if c_total_weight > 1e-9 {
+        c_band_analysis_results.freq_range.iter()
+            .zip(c_weights.iter())
+            .map(|(&freq, &w)| freq as f64 * w as f64)
+            .sum::<f64>() / c_total_weight as f64
+    } else {
+        0.0
+    };
+    let sigma_nu_c: f64 = if c_total_weight > 1e-9 {
+        c_band_analysis_results.freq_range.iter()
+            .zip(c_weights.iter())
+            .map(|(&freq, &w)| w as f64 * (freq as f64 - c_mean_freq).powi(2))
+            .sum()
+    } else {
+        0.0
+    };
+
+    // For X-band
+    let x_weights: Vec<f32> = x_band_analysis_results.freq_rate_spectrum.iter().map(|c| c.norm_sqr()).collect();
+    let x_total_weight: f32 = x_weights.iter().sum();
+    let x_mean_freq: f64 = if x_total_weight > 1e-9 {
+        x_band_analysis_results.freq_range.iter()
+            .zip(x_weights.iter())
+            .map(|(&freq, &w)| freq as f64 * w as f64)
+            .sum::<f64>() / x_total_weight as f64
+    } else {
+        0.0
+    };
+    let sigma_nu_x: f64 = if x_total_weight > 1e-9 {
+        x_band_analysis_results.freq_range.iter()
+            .zip(x_weights.iter())
+            .map(|(&freq, &w)| w as f64 * (freq as f64 - x_mean_freq).powi(2))
+            .sum()
+    } else {
+        0.0
+    };
+
+    let wc = c_band_analysis_results.delay_snr.powi(2) * sigma_nu_c as f32;
+    let wx = x_band_analysis_results.delay_snr.powi(2) * sigma_nu_x as f32;
 
     let tau_c = c_band_analysis_results.residual_delay;
     let tau_x = x_band_analysis_results.residual_delay;
 
-    let tau_0 = (wc * tau_c + wx * tau_x) / (wc + wx);
+    let tau_0 = if (wc + wx) > 1e-9 {
+        (wc * tau_c + wx * tau_x) / (wc + wx)
+    } else {
+        // Fallback to simple SNR weighting if frequency variance is zero for both
+        let wc_simple = c_band_analysis_results.delay_snr.powi(2);
+        let wx_simple = x_band_analysis_results.delay_snr.powi(2);
+        if (wc_simple + wx_simple) > 1e-9 {
+            (wc_simple * tau_c + wx_simple * tau_x) / (wc_simple + wx_simple)
+        } else {
+            0.0 // All weights are zero, cannot determine a weighted average
+        }
+    };
 
+    writeln!(tee_writer, "C-band weight (SNR^2 * FreqVar): {:.2} * {:.2e} = {:.2e}", c_band_analysis_results.delay_snr.powi(2), sigma_nu_c, wc)?;
+    writeln!(tee_writer, "X-band weight (SNR^2 * FreqVar): {:.2} * {:.2e} = {:.2e}", x_band_analysis_results.delay_snr.powi(2), sigma_nu_x, wx)?;
     writeln!(tee_writer, "Weighted average delay (tau_0): {:.6} samples", tau_0)?;
 
     // --- Calculate delay corrections ---
