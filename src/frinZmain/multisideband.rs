@@ -59,22 +59,19 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     // --- Generate output filename and create directory ---
     let parent_dir = c_band_path.parent().unwrap_or_else(|| Path::new(""));
     let output_dir = parent_dir.to_path_buf();
-    fs::create_dir_all(&output_dir)?;
+    let plot_output_dir = output_dir.join("frinZ").join("multisideband"); // Create a specific plot directory
+    fs::create_dir_all(&plot_output_dir)?;
+    // /fs::create_dir_all(&output_dir)?;
 
     let c_band_file_stem = c_band_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    let parts: Vec<&str> = c_band_file_stem.split('_').collect();
-    let base_filename_prefix = if parts.len() >= 3 {
-        format!("{}_{}_{}", parts[0], parts[1], parts[2])
-    } else {
-        c_band_file_stem.to_string()
-    };
+    let base_filename_prefix = c_band_file_stem.to_string();
 
     let mut filename_suffix = String::new();
     if !args.rfi.is_empty() {
         filename_suffix.push_str("_rfi");
     }
 
-    let freq_plot_filename = output_dir.join("frinZ").join("multisideband").join(format!("{}_msb_freq_rate{}.png", base_filename_prefix, filename_suffix));
+    let freq_plot_filename = output_dir.join("frinZ").join("multisideband").join(format!("{}_msbc2x_freq_rate{}.png", base_filename_prefix, filename_suffix));
     let log_file_path = freq_plot_filename.with_extension("log");
     let log_file = File::create(&log_file_path)?;
 
@@ -589,9 +586,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             0.0
         }
     };
-
-    let plot_output_dir = output_dir.join("frinZ").join("multisideband"); // Create a specific plot directory
-    fs::create_dir_all(&plot_output_dir)?;
 
     let freq_plot_filename = plot_output_dir.join(format!("{}_msb_freq_rate{}.png", base_filename_prefix, filename_suffix));
 
