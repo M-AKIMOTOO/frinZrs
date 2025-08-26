@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::header::CorHeader;
 use crate::args::Args;
-use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal, uvw_cal, rate_delay_to_lm};
+use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal, uvw_cal, rate_delay_to_lm, safe_arg};
 use crate::fitting;
 
 type C32 = Complex<f32>;
@@ -130,7 +130,7 @@ pub fn analyze_results(
     };
     
     let delay_max_amp = delay_rate_2d_data_array[[peak_rate_idx, peak_delay_idx]];
-    let delay_phase = delay_rate_array[[peak_rate_idx, peak_delay_idx]].arg().to_degrees();
+    let delay_phase = safe_arg(&delay_rate_array[[peak_rate_idx, peak_delay_idx]]).to_degrees();
     let delay_rate_slice = delay_rate_2d_data_array.column(peak_delay_idx).to_owned();
 
     let mut residual_delay_val: f32 = delay_range[peak_delay_idx];
@@ -215,7 +215,7 @@ pub fn analyze_results(
     };
 
     let freq_max_amp = freq_rate_2d_data_array[[peak_freq_row_idx, peak_rate_col_idx]];
-    let freq_phase = freq_rate_array[[peak_freq_row_idx, peak_rate_col_idx]].arg().to_degrees();
+    let freq_phase = safe_arg(&freq_rate_array[[peak_freq_row_idx, peak_rate_col_idx]]).to_degrees();
     let freq_freq = freq_range[peak_freq_row_idx];
 
     // Calculate noise from regions away from the peak rate

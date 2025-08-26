@@ -5,6 +5,8 @@ use byteorder::{ReadBytesExt, LittleEndian, WriteBytesExt};
 use ndarray::prelude::*;
 use plotters::prelude::*;
 
+use crate::utils::safe_arg;
+
 type C32 = Complex<f32>;
 
 pub fn read_bandpass_file(path: &std::path::Path) -> io::Result<Vec<C32>> {
@@ -78,7 +80,7 @@ pub fn plot_bandpass_spectrum(
 ) -> io::Result<()> {
     const PLOT_WIDTH: u32 = 800;
     const PLOT_HEIGHT: u32 = 600;
-    const UPPER_PLOT_HEIGHT: u32 = 300;
+    const UPPER_PLOT_HEIGHT: u32 = 180;
     const FONT_STYLE: (&str, i32) = ("sans-serif", 25);
 
     // Helper to convert plotters error to io::Error, reducing boilerplate
@@ -109,7 +111,7 @@ pub fn plot_bandpass_spectrum(
 
     phase_chart
         .draw_series(LineSeries::new(
-            spectrum.iter().enumerate().map(|(i, c)| (i as i32, c.arg().to_degrees())),
+            spectrum.iter().enumerate().map(|(i, c)| (i as i32, safe_arg(c).to_degrees())),
             &RED,
         ))
         .map_err(to_io_error)?;

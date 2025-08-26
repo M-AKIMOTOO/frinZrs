@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "frinZ",
-    version = "2.0",
+    version = "4.0.0",
     author = "Masanori AKIMOTO",
     about = "A Rust implementation of the frinZ fringe-fitting tool.",
     after_help = "(c) M.AKIMOTO with Gemini in 2025/08/04
@@ -152,4 +152,15 @@ pub struct Args {
     /// Generate a fringe-rate map (experimental).
     #[arg(long, aliases = ["frmap"])]
     pub fringe_rate_map: bool,
+
+    /// Perform multi-sideband analysis.
+    /// Arguments:
+    /// 1. C_BAND_DATA: Path to the C-band .cor file.
+    /// 2. C_BAND_BP: Path to the C-band bandpass file. Use -1 to disable.
+    /// 3. C_BAND_DELAY: Delay for C-band in seconds.
+    /// 4. X_BAND_DATA: Path to the X-band .cor file.
+    /// 5. X_BAND_BP: Path to the X-band bandpass file. Use -1 to disable.
+    /// 6. X_BAND_DELAY: Delay for X-band in seconds.
+    #[arg(long, num_args = 6, value_names = ["C_BAND_DATA", "C_BAND_BP", "C_BAND_DELAY", "X_BAND_DATA", "X_BAND_BP", "X_BAND_DELAY"], aliases = ["msb"], allow_negative_numbers = true)]
+    pub multi_sideband: Vec<String>,
 }

@@ -9,8 +9,11 @@ pub fn process_fft(
     complex_vec: &[C32],
     length: i32,
     fft_point: i32,
+    sampling_speed: i32,
     rfi_ranges: &[(usize, usize)],
 ) -> (Array2<C32>, usize) {
+    let bandwidth = sampling_speed as f32 / 2.0 / 1_000_000.0; // [MHz]
+
     let length_usize = length as usize;
     let fft_point_half = (fft_point / 2) as usize;
     let padding_length = (length as u32).next_power_of_two() as usize * 2;
@@ -43,7 +46,7 @@ pub fn process_fft(
 
         let scaled_shifted_out: Vec<C32> = shifted_out
             .iter_mut()
-            .map(|val| *val * (fft_point as f32 / length as f32))
+            .map(|val| *val * (fft_point as f32 / length as f32) * (512.0 / bandwidth))
             .collect();
 
         freq_rate_array.row_mut(i).assign(&ArrayView::from(&scaled_shifted_out));

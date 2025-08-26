@@ -1,9 +1,6 @@
 use ndarray::prelude::*;
 use num_complex::Complex;
 use chrono::{DateTime, Utc, Datelike, Timelike, TimeZone};
-
-
-
 use astro::coords;
 use astro::time;
 use blh::{ellipsoid, GeocentricCoord, GeodeticCoord};
@@ -13,6 +10,14 @@ use crate::header::CorHeader;
 const C: f64 = 299792458.0; // Speed of light in m/s
 
 type C32 = Complex<f32>;
+
+pub fn safe_arg(z: &C32) -> f32 { // An argument of the complex 0+0j in Rust is 180 deg = pi
+    if z.re == 0.0 && z.im == 0.0 {
+        0.0  // Python の仕様に合わせる
+    } else {
+        z.arg()
+    }
+}
 
 pub fn rate_cal(n: f32, d: f32) -> Vec<f32> {
     let mut rate: Vec<f32> = Vec::with_capacity(n as usize);

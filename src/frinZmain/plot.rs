@@ -5,6 +5,7 @@ use plotters::style::colors::colormaps::ViridisRGB;
 use num_complex::Complex;
 use std::path::Path;
 use ndarray::Array2; // Added for dynamic spectrum
+use crate::utils::safe_arg;
 
 pub fn delay_plane(
     delay_profile: &[(f64, f64)],
@@ -918,7 +919,7 @@ pub fn plot_dynamic_spectrum_freq(
         .draw()?;
 
     phase_chart.draw_series(spectrum_array.indexed_iter().map(|((t, f), c)| {
-        let norm_val = (c.arg().to_degrees() + 180.0) / 360.0;
+        let norm_val = (safe_arg(c).to_degrees() + 180.0) / 360.0;
         let color = ViridisRGB.get_color(norm_val as f64);
         Rectangle::new([(f, t), (f + 1, t + 1)], color.filled())
     }))?;
@@ -1166,7 +1167,7 @@ pub fn plot_spectrum_heatmaps<P: AsRef<Path>>(
     )?;
 
     // --- Phase Heatmap ---
-    let phases_2d: Vec<Vec<f32>> = spectrum_data.iter().map(|row| row.iter().map(|c| c.arg().to_degrees()).collect()).collect();
+    let phases_2d: Vec<Vec<f32>> = spectrum_data.iter().map(|row| row.iter().map(|c| safe_arg(c).to_degrees()).collect()).collect();
     let blurred_phases = gaussian_blur_2d(&phases_2d, sigma);
 
     plot_single_heatmap_with_colorbar(

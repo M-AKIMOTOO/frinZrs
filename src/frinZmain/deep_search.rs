@@ -187,6 +187,7 @@ fn get_coarse_estimates(
             complex_vec,
             current_length,
             header.fft_point,
+            header.sampling_speed,
             rfi_ranges,
         );
         
@@ -223,6 +224,7 @@ fn get_coarse_estimates(
             complex_vec,
             current_length,
             header.fft_point,
+            header.sampling_speed,
             rfi_ranges,
         );
         
@@ -353,6 +355,7 @@ fn evaluate_delay_rate_snr(
         &corrected_complex_vec,
         current_length,
         header.fft_point,
+        header.sampling_speed,
         rfi_ranges,
     );
     
@@ -410,6 +413,7 @@ fn perform_final_analysis(
         &corrected_complex_vec,
         current_length,
         header.fft_point,
+        header.sampling_speed,
         rfi_ranges,
     );
     
