@@ -6,6 +6,7 @@ use num_complex::Complex;
 use std::path::Path;
 use ndarray::Array2; // Added for dynamic spectrum
 use crate::utils::safe_arg;
+use std::f64::consts::PI;
 
 pub fn delay_plane(
     delay_profile: &[(f64, f64)],
@@ -766,6 +767,8 @@ pub fn plot_sky_map<P: AsRef<Path>>(
     output_path: P,
     map_data: &ndarray::Array2<f32>,
     cell_size_rad: f64,
+    max_x_idx: usize,
+    max_y_idx: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (height, width) = map_data.dim();
     // Define a fixed output image size for consistent plot appearance
@@ -779,26 +782,26 @@ pub fn plot_sky_map<P: AsRef<Path>>(
     let max_val = map_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     let min_val = map_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
 
-    let rad_to_arcsec = 206265.0;
+    let rad_to_arcsec = 180.0 / PI * 3600.0;
     // Define coordinate ranges in arcseconds for the chart
     let l_arcsec_max = (width as f64 / 2.0) * cell_size_rad * rad_to_arcsec;
     let m_arcsec_max = (height as f64 / 2.0) * cell_size_rad * rad_to_arcsec;
-    let l_range = -l_arcsec_max..l_arcsec_max;
+    let l_range = l_arcsec_max..-l_arcsec_max; // Invert RA axis
     let m_range = -m_arcsec_max..m_arcsec_max;
 
     let mut chart = ChartBuilder::on(&main_area)
-        .x_label_area_size(40)
-        .y_label_area_size(60)
+        .x_label_area_size(65)
+        .y_label_area_size(80)
         .margin(10)
-        .caption("Fringe Rate Map", ("sans-serif", 30))
+        .caption("Fringe Rate Map", ("sans-serif", 25))
         .build_cartesian_2d(l_range.clone(), m_range.clone())?;
 
     chart.configure_mesh()
         .x_desc("ΔRA (arcsec)")
         .y_desc("ΔDec (arcsec)")
-        .x_label_formatter(&|x| format!("{:.2}", x))
-        .y_label_formatter(&|y| format!("{:.2}", y))
-        .label_style(("sans-serif", 15))
+        .x_label_formatter(&|x| format!("{:.0}", x))
+        .y_label_formatter(&|y| format!("{:.0}", y))
+        .label_style(("sans-serif", 30))
         .draw()?;
 
     // Draw the heatmap
@@ -818,6 +821,27 @@ pub fn plot_sky_map<P: AsRef<Path>>(
         })
     )?;
 
+    // Add a white 'X' mark at (0,0)
+    chart.draw_series(PointSeries::of_element(
+        vec![(0.0, 0.0)], // Center of the 'X'
+        10, // Size of the 'X'
+        &WHITE, // Color of the 'X'
+        &|c, s, st| Cross::new(c, s, st.stroke_width(2)), // Draw a cross
+    ))?;
+
+    // Add a red 'X' mark at the maximum value position
+    let (height, width) = map_data.dim(); // Get dimensions for calculation
+    let rad_to_arcsec: f64 = 180.0 / PI * 3600.0; // Re-define rad_to_arcsec for local use
+    let l_arcsec_max_val = ((max_x_idx as f64) - (width as f64 / 2.0)) * cell_size_rad * rad_to_arcsec;
+    let m_arcsec_max_val = (((height as f64 / 2.0) - max_y_idx as f64)) * cell_size_rad * rad_to_arcsec;
+
+    chart.draw_series(PointSeries::of_element(
+        vec![(l_arcsec_max_val, m_arcsec_max_val)], // Center of the 'X'
+        10, // Size of the 'X'
+        &RED, // Color of the 'X'
+        &|c, s, st| Cross::new(c, s, st.stroke_width(2)), // Draw a cross
+    ))?;
+
     // Draw color bar
     let mut colorbar_chart = ChartBuilder::on(&colorbar_area)
         .margin(20)
@@ -827,7 +851,7 @@ pub fn plot_sky_map<P: AsRef<Path>>(
     colorbar_chart.configure_mesh()
         .disable_x_mesh().disable_x_axis()
         .y_label_formatter(&|y| format!("{:.1e}", y))
-        .y_label_style(("sans-serif", 15))
+        .y_label_style(("sans-serif", 20))
         .draw()?;
 
     let color_map = ViridisRGB;
@@ -1196,6 +1220,8 @@ pub fn plot_cross_section(
     horizontal_data: &[(f64, f32)], // (RA offset, Intensity)
     vertical_data: &[(f64, f32)],   // (Dec offset, Intensity)
     max_intensity: f32,
+    delta_ra_arcsec: f64,
+    delta_dec_arcsec: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let root = BitMapBackend::new(output_path, (1000, 700)).into_drawing_area();
     root.fill(&WHITE)?;
@@ -1210,15 +1236,15 @@ pub fn plot_cross_section(
         .margin(10)
         .x_label_area_size(60)
         .y_label_area_size(80)
-        .build_cartesian_2d(x_min..x_max, 0.0..1.1f64)? // Y-axis is normalized intensity
+        .build_cartesian_2d(x_max..x_min, 0.0..1.1f64)? // Y-axis is normalized intensity
         ;
 
     chart.configure_mesh()
         .x_desc("Offset (arcsec)")
         .y_desc("Normalized Intensity")
-        .x_label_formatter(&|v| format!("{:.1}", v))
+        .x_label_formatter(&|v| format!("{:.0}", v))
         .y_label_formatter(&|v| format!("{:.1}", v))
-        .label_style(("sans-serif", 20).into_font())
+        .label_style(("sans-serif", 30).into_font())
         .draw()?;
 
     // Draw horizontal cross-section (RA)
@@ -1241,6 +1267,60 @@ pub fn plot_cross_section(
         .background_style(&WHITE.mix(0.8))
         .border_style(&BLACK)
         .draw()?;
+
+    // Add Delta RA/Dec to legend
+    let font = ("sans-serif", 35).into_font();
+    let text_style = TextStyle::from(font.clone()).color(&BLACK);
+    let x_pos = root.get_pixel_range().0.end as i32 - 300;
+    let mut y_pos = root.get_pixel_range().1.start as i32 + 20;
+
+    root.draw(&Text::new(format!("ΔRA: {:.3} arcsec", delta_ra_arcsec), (x_pos, y_pos), text_style.clone()))?;
+    y_pos += 25;
+    root.draw(&Text::new(format!("ΔDec: {:.3} arcsec", delta_dec_arcsec), (x_pos, y_pos), text_style.clone()))?;
+
+    root.present()?;
+    Ok(())
+}
+
+pub fn plot_uv_coverage<P: AsRef<Path>>(
+    output_path: P,
+    uv_data: &[(f32, f32)], // Data is (u, v) in meters
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = BitMapBackend::new(output_path.as_ref(), (800, 800)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    if uv_data.is_empty() {
+        return Ok(());
+    }
+
+    // Find range for u and v, then make the plot symmetrical
+    let u_max = uv_data.iter().map(|(u, _)| u.abs()).fold(0.0, f32::max);
+    let v_max = uv_data.iter().map(|(_, v)| v.abs()).fold(0.0, f32::max);
+    let max_abs = u_max.max(v_max) * 1.1; // Add 10% padding
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("UV Coverage", ("sans-serif", 30))
+        .margin(10)
+        .x_label_area_size(60)
+        .y_label_area_size(80)
+        .build_cartesian_2d(-max_abs..max_abs, -max_abs..max_abs)?;
+
+    chart.configure_mesh()
+        .x_desc("U (meters)")
+        .y_desc("V (meters)")
+        .x_label_formatter(&|x| format!("{:.0}", x))
+        .y_label_formatter(&|y| format!("{:.0}", y))
+        .label_style(("sans-serif", 25))
+        .draw()?;
+
+    chart.draw_series(
+        uv_data.iter().map(|(u, v)| Circle::new((*u, *v), 2, BLUE.filled()))
+    )?;
+    
+    // Also plot the symmetrical points
+    chart.draw_series(
+        uv_data.iter().map(|(u, v)| Circle::new((-*u, -*v), 2, RED.filled()))
+    )?;
 
     root.present()?;
     Ok(())

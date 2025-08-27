@@ -11,7 +11,7 @@ mod analysis;
 mod args;
 mod bandpass;
 mod deep_search;
-mod error;
+//mod error;
 mod fft;
 mod fitting;
 mod fringe_rate_map;
