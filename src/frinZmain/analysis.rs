@@ -52,8 +52,8 @@ pub struct AnalysisResults {
     // Ranges
     pub rate_range: Vec<f32>,
     // Sky Coordinates
-    pub l_coord: f64,
-    pub m_coord: f64,
+    //pub l_coord: f64,
+    //pub m_coord: f64,
 }
 
 pub fn analyze_results(
@@ -316,7 +316,7 @@ pub fn analyze_results(
         header.source_position_dec,
     );
 
-    let (l_coord, m_coord) = rate_delay_to_lm(
+    let (_l_coord, _m_coord) = rate_delay_to_lm(
         residual_rate_val as f64,
         residual_delay_val as f64,
         header,
@@ -374,7 +374,7 @@ pub fn analyze_results(
         // residual_acel: 0.0, // Placeholder
         corrected_acel: args.acel_correct,
         rate_range,
-        l_coord,
-        m_coord,
+        //l_coord,
+        //m_coord,
     }
 }

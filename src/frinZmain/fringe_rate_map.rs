@@ -31,7 +31,7 @@ pub fn run_fringe_rate_map_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, 
 
     // --- File and Path Setup ---
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
-    let frinz_dir = parent_dir.join("frinZ").join("fringe_rate_maps");
+    let frinz_dir = parent_dir.join("frinZ").join("frmap");
     fs::create_dir_all(&frinz_dir)?;
     let file_stem = input_path.file_stem().unwrap().to_str().unwrap();
 

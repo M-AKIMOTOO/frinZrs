@@ -4,7 +4,7 @@ use terminal_size::{terminal_size, Height, Width};
 use std::error::Error;
 
 // The logo PNG is placed in the assets/ directory directly under the project.
-const LOGO_PNG: &[u8] = include_bytes!("./frinZlogo1.png");
+const LOGO_PNG: &[u8] = include_bytes!("./logo1.png");
 
 // ===== Default Parameters (rewrite only the numbers if necessary) =====
 const SCALE: f32 = 0.5;        // Scale factor for the maximum size that fits in the terminal (fixed at 0.5 = half)

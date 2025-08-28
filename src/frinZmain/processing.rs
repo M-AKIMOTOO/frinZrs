@@ -72,7 +72,7 @@ pub fn process_cor_file(
 
     let mut bandpass_output_path: Option<PathBuf> = None;
     if args.bandpass_table {
-        let path = frinz_dir.join("bandpass_table");
+        let path = frinz_dir.join("bptable");
         fs::create_dir_all(&path)?;
         bandpass_output_path = Some(path);
     }
@@ -89,6 +89,13 @@ pub fn process_cor_file(
     if args.add_plot {
         let path = frinz_dir.join("add_plot");
         fs::create_dir_all(&path)?;
+    }
+
+    let mut spectrum_path: Option<PathBuf> = None;
+    if args.spectrum {
+        let path = frinz_dir.join("crossspectrum");
+        fs::create_dir_all(&path)?;
+        spectrum_path = Some(path);
     }
 
     // --- Read .cor File ---
@@ -414,6 +421,7 @@ pub fn process_cor_file(
                     &output_file_path,
                     &analysis_results.freq_rate_spectrum.to_vec(),
                     header.fft_point,
+                    0,
                 )?;
                 println!("Bandpass binary file written to {:?}", output_file_path);
                 println!("Bandpass binary file format:");
@@ -517,10 +525,10 @@ pub fn process_cor_file(
             let delay_output_line = format_delay_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
                 let header_str = "".to_string()
-                    + "#********************************************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD          l_coord        m_coord\n"
-                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]                       [rad]          [rad]\n"
-                    + "#********************************************************************************************************************************************************************************************************************";
+                    + "#*******************************************************************************************************************************************************************************************\n"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD      \n"
+                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]                \n"
+                    + "#*******************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
                 delay_output_str += &header_str;
             }
@@ -554,10 +562,10 @@ pub fn process_cor_file(
             let freq_output_line = format_freq_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
                 let header_str = "".to_string()
-                    + "#**************************************************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD          l_coord        m_coord\n"
-                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                       [rad]          [rad]\n"
-                    + "#**************************************************************************************************************************************************************************************************************************";
+                    + "#******************************************************************************************************************************************************************************************\n"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD    \n"
+                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]               \n"
+                    + "#******************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
                 freq_output_str += &header_str;
             }
@@ -580,6 +588,18 @@ pub fn process_cor_file(
                 add_plot_noise.push(analysis_results.freq_noise * 100.0);
                 add_plot_res_delay.push(analysis_results.residual_delay);
                 add_plot_res_rate.push(analysis_results.residual_rate);
+            }
+
+            if args.spectrum {
+                if let Some(path) = &spectrum_path {
+                    let output_file_path = path.join(format!("{}_cross.spec", base_filename));
+                    write_complex_spectrum_binary(
+                        &output_file_path,
+                        &analysis_results.freq_rate_spectrum.to_vec(),
+                        header.fft_point,
+                        1,
+                    )?;
+                }
             }
         }
 

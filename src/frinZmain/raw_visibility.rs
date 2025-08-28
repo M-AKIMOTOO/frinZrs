@@ -18,7 +18,7 @@ pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
 
     // --- Create Output Directory ---
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
-    let output_dir = parent_dir.join("frinZ").join("raw_visibility");
+    let output_dir = parent_dir.join("frinZ").join("rawvis");
     fs::create_dir_all(&output_dir)?;
     let base_filename = input_path.file_stem().unwrap().to_str().unwrap();
 

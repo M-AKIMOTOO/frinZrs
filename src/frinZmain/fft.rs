@@ -122,25 +122,18 @@ pub fn apply_phase_correction(
     let can_phase_correct = sampling_speed > 0 && fft_point >= 2 && (effective_integration_length as f64).abs() > 1e-9 && n_cols_original > 0;
 
     if can_phase_correct {
-        let py_equiv_sampling_speed_mhz = sampling_speed as f64 / 1.0e6;
-        let stop_val_for_linspace_mhz = (py_equiv_sampling_speed_mhz / 2.0).floor() - 1.0;
+        let freq_resolution_hz = sampling_speed as f64 / fft_point as f64;
+        let delay_seconds = delay_samples_for_correction as f64 / sampling_speed as f64;
 
         for r_orig in 0..n_rows_original {
             let time_for_rate_corr_sec = (r_orig as f64 * effective_integration_length as f64) + start_time_offset_sec as f64;
             let rate_corr_factor = Complex::new(0.0, -2.0 * PI * rate_hz_for_correction as f64 * time_for_rate_corr_sec).exp() * Complex::new(0.0, -1.0 * PI * acel_hz_for_correction as f64 * time_for_rate_corr_sec.powi(2)).exp();
 
             for c_orig in 0..n_cols_original {
-                let mut original_val = corrected_data[r_orig][c_orig];
-
-                // Delay correction factor
-                let freq_k_hz_for_delay_corr = if n_cols_original > 1 {
-                    (c_orig as f64 * stop_val_for_linspace_mhz / (n_cols_original - 1) as f64) * 1.0e6
-                } else { 0.0 };
-                let delay_seconds = delay_samples_for_correction as f64 / sampling_speed as f64;
+                let freq_k_hz_for_delay_corr = c_orig as f64 * freq_resolution_hz;
                 let delay_corr_factor = Complex::new(0.0, -2.0 * PI * delay_seconds * freq_k_hz_for_delay_corr).exp();
                 
-                original_val *= rate_corr_factor * delay_corr_factor;
-                corrected_data[r_orig][c_orig] = original_val;
+                corrected_data[r_orig][c_orig] *= rate_corr_factor * delay_corr_factor;
             }
         }
     }
