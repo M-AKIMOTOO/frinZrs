@@ -1,4 +1,4 @@
-<img src="./src/frinZmain/frinZlogo1.png" width=45%>  <img src="./src/frinZmain/frinZlogo2.png" width=45%>
+<img src="./src/frinZmain/logo1.png" width=45%>  <img src="./src/frinZmain/logo2.png" width=45%>
 
 # frinZrs
 
