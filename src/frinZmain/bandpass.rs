@@ -35,6 +35,7 @@ pub fn write_complex_spectrum_binary(
     path: &std::path::Path,
     spectrum: &[C32],
     fft_points: i32,
+    color_flag: i32,
 ) -> io::Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
@@ -46,7 +47,7 @@ pub fn write_complex_spectrum_binary(
     }
 
     // Plot the spectrum
-    plot_bandpass_spectrum(path, spectrum, fft_points)?;
+    plot_bandpass_spectrum(path, spectrum, fft_points, color_flag)?;
 
     Ok(())
 }
@@ -77,6 +78,7 @@ pub fn plot_bandpass_spectrum(
     path: &std::path::Path,
     spectrum: &[C32],
     fft_points: i32,
+    color_flag: i32,
 ) -> io::Result<()> {
     const PLOT_WIDTH: u32 = 800;
     const PLOT_HEIGHT: u32 = 600;
@@ -94,6 +96,8 @@ pub fn plot_bandpass_spectrum(
 
     let (upper, lower) = root.split_vertically(UPPER_PLOT_HEIGHT);
 
+    let color = if color_flag == 0 { &RED } else { &MAGENTA };
+
     // --- Phase Plot (Top) ---
     let mut phase_chart = ChartBuilder::on(&upper)
         .margin(10)
@@ -105,6 +109,9 @@ pub fn plot_bandpass_spectrum(
         .configure_mesh()
         .y_desc("Phase (deg)")
         .label_style(FONT_STYLE)
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
+        .y_labels(4)
         .y_label_formatter(&|y| format!("{:.0}", y))
         .draw()
         .map_err(to_io_error)?;
@@ -112,14 +119,14 @@ pub fn plot_bandpass_spectrum(
     phase_chart
         .draw_series(LineSeries::new(
             spectrum.iter().enumerate().map(|(i, c)| (i as i32, safe_arg(c).to_degrees())),
-            &RED,
+            color,
         ))
         .map_err(to_io_error)?;
 
     // --- Amplitude Plot ---
     let max_amp = spectrum.iter().map(|c| c.norm()).fold(0.0f32, f32::max);
     // Add a small epsilon to the max amplitude to avoid a zero-range in case of all-zero spectrum
-    let y_range_amp = 0.0f32..(max_amp * 1.1).max(1e-9);
+    let y_range_amp = 0.0f32..(max_amp * 1.0).max(1e-9);
 
     let mut amp_chart = ChartBuilder::on(&lower)
         .margin(10)
@@ -133,6 +140,9 @@ pub fn plot_bandpass_spectrum(
         .x_desc("Channels")
         .y_desc("Amplitude")
         .label_style(FONT_STYLE)
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
+        .y_labels(5)
         .y_label_formatter(&|y| format!("{:.1e}", y))
         .draw()
         .map_err(to_io_error)?;
@@ -140,7 +150,7 @@ pub fn plot_bandpass_spectrum(
     amp_chart
         .draw_series(LineSeries::new(
             spectrum.iter().enumerate().map(|(i, c)| (i as i32, c.norm())),
-            &RED,
+            color,
         ))
         .map_err(to_io_error)?;
 

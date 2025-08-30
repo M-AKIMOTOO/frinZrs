@@ -7,9 +7,10 @@ use std::process;
 use chrono::{DateTime, Utc};
 use image::ImageBuffer;
 use imageproc::filter;
-use rustfft::FftPlanner;
 use num_complex::Complex;
 use ndarray::Array;
+use crate::analysis::AnalysisResults;
+use ndarray::Array2;
 
 use crate::args::Args;
 use crate::analysis::analyze_results;
@@ -90,6 +91,13 @@ pub fn process_cor_file(
     if args.add_plot {
         let path = frinz_dir.join("add_plot");
         fs::create_dir_all(&path)?;
+    }
+
+    let mut spectrum_output_path: Option<PathBuf> = None;
+    if args.spectrum {
+        let path = frinz_dir.join("crossspectrum");
+        fs::create_dir_all(&path)?;
+        spectrum_output_path = Some(path);
     }
 
     // --- Read .cor File ---
@@ -219,11 +227,7 @@ pub fn process_cor_file(
             obs_time = Some(current_obs_time);
         }
 
-        let mut analysis_results;
-        let freq_rate_array;
-        let delay_rate_2d_data_comp;
-
-        if args.search_deep {
+        let (analysis_results, freq_rate_array, delay_rate_2d_data_comp) = if args.search_deep {
             // --- DEEP SEARCH MODE ---
             let deep_search_result = deep_search::run_deep_search(
                 &complex_vec,
@@ -238,165 +242,78 @@ pub fn process_cor_file(
                 pp,
                 args.cpu, // Pass the new cpu argument
             )?;
-
-            analysis_results = deep_search_result.analysis_results;
-            freq_rate_array = deep_search_result.freq_rate_array;
-            delay_rate_2d_data_comp = deep_search_result.delay_rate_2d_data;
+            (
+                deep_search_result.analysis_results,
+                deep_search_result.freq_rate_array,
+                deep_search_result.delay_rate_2d_data,
+            )
         } else if args.search {
             // --- SEARCH MODE ---
             let mut total_delay_correct = args.delay_correct;
             let mut total_rate_correct = args.rate_correct;
-            let total_acel_correct = args.acel_correct;
 
             let mut analysis_results_mut = None;
             let mut freq_rate_array_mut = None;
             let mut delay_rate_2d_data_comp_mut = None;
 
-            for i in 0..args.iter {
-                let mut current_args = args.clone();
-                current_args.delay_correct = total_delay_correct;
-                current_args.rate_correct = total_rate_correct;
-                current_args.acel_correct = total_acel_correct;
-                if i > 0 {
-                    // After the first iteration, narrow the search window
-                    current_args.delay_window = vec![-2.0, 2.0];
-                    current_args.rate_window = vec![-0.05, 0.05];
-                }
-
-                let temp_complex_vec = if total_delay_correct == 0.0
-                    && total_rate_correct == 0.0
-                    && total_acel_correct == 0.0
-                {
-                    complex_vec.clone()
-                } else {
-                    let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
-                        .chunks(header.fft_point as usize / 2)
-                        .map(|chunk| {
-                            chunk
-                                .iter()
-                                .map(|&c| Complex::new(c.re as f64, c.im as f64))
-                                .collect()
-                        })
-                        .collect();
-                    let start_time_offset_sec =
-                        (current_obs_time - obs_time.unwrap()).num_seconds() as f32;
-                    let corrected_complex_vec_2d = fft::apply_phase_correction(
-                        &input_data_2d,
-                        total_rate_correct,
+            for _ in 0..args.iter {
+                let (iter_results, iter_freq_rate_array, iter_delay_rate_2d_data_comp) =
+                    run_analysis_pipeline(
+                        &complex_vec,
+                        &header,
+                        args,
                         total_delay_correct,
-                        total_acel_correct,
+                        total_rate_correct,
+                        args.acel_correct,
+                        current_length,
                         effective_integ_time,
-                        header.sampling_speed as u32,
-                        header.fft_point as u32,
-                        start_time_offset_sec,
-                    );
-                    corrected_complex_vec_2d
-                        .into_iter()
-                        .flatten()
-                        .map(|v| Complex::new(v.re as f32, v.im as f32))
-                        .collect()
-                };
-
-                let (mut iter_freq_rate_array, padding_length) = process_fft(
-                    &temp_complex_vec,
-                    current_length,
-                    header.fft_point,
-                    header.sampling_speed,
-                    &rfi_ranges,
-                    args.rate_padding,
-                );
-                if let Some(bp_data) = &bandpass_data {
-                    apply_bandpass_correction(&mut iter_freq_rate_array, bp_data);
-                }
-                let iter_delay_rate_2d_data_comp =
-                    process_ifft(&iter_freq_rate_array, header.fft_point, padding_length);
-                let iter_results = analyze_results(
-                    &iter_freq_rate_array,
-                    &iter_delay_rate_2d_data_comp,
-                    &header,
-                    current_length,
-                    effective_integ_time,
-                    &current_obs_time,
-                    padding_length,
-                    &current_args,
-                );
+                        &current_obs_time,
+                        &obs_time.unwrap(),
+                        &rfi_ranges,
+                        &bandpass_data,
+                    )?;
 
                 total_delay_correct += iter_results.delay_offset;
                 total_rate_correct += iter_results.rate_offset;
 
-                // Store the results of the last iteration
                 analysis_results_mut = Some(iter_results);
                 freq_rate_array_mut = Some(iter_freq_rate_array);
                 delay_rate_2d_data_comp_mut = Some(iter_delay_rate_2d_data_comp);
             }
 
-            analysis_results = analysis_results_mut.unwrap();
-            analysis_results.length_f32 = current_length as f32 * effective_integ_time;
-            analysis_results.residual_delay = total_delay_correct;
-            analysis_results.residual_rate = total_rate_correct;
-            analysis_results.corrected_delay = args.delay_correct;
-            analysis_results.corrected_rate = args.rate_correct;
-            analysis_results.corrected_acel = args.acel_correct;
-            freq_rate_array = freq_rate_array_mut.unwrap();
-            delay_rate_2d_data_comp = delay_rate_2d_data_comp_mut.unwrap();
+            let mut final_analysis_results = analysis_results_mut.unwrap();
+            final_analysis_results.length_f32 = current_length as f32 * effective_integ_time;
+            final_analysis_results.residual_delay = total_delay_correct;
+            final_analysis_results.residual_rate = total_rate_correct;
+            final_analysis_results.corrected_delay = args.delay_correct;
+            final_analysis_results.corrected_rate = args.rate_correct;
+            final_analysis_results.corrected_acel = args.acel_correct;
+
+            (
+                final_analysis_results,
+                freq_rate_array_mut.unwrap(),
+                delay_rate_2d_data_comp_mut.unwrap(),
+            )
         } else {
             // --- NORMAL MODE ---
-            let mut corrected_complex_vec: Vec<C32> = complex_vec.clone();
-            if args.delay_correct != 0.0 || args.rate_correct != 0.0 || args.acel_correct != 0.0 {
-                let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
-                    .chunks(header.fft_point as usize / 2)
-                    .map(|chunk| {
-                        chunk
-                            .iter()
-                            .map(|&c| Complex::new(c.re as f64, c.im as f64))
-                            .collect()
-                    })
-                    .collect();
-                let start_time_offset_sec =
-                    (current_obs_time - obs_time.unwrap()).num_seconds() as f32;
-                let corrected_complex_vec_2d = fft::apply_phase_correction(
-                    &input_data_2d,
-                    args.rate_correct,
+            let (mut analysis_results, freq_rate_array, delay_rate_2d_data_comp) =
+                run_analysis_pipeline(
+                    &complex_vec,
+                    &header,
+                    args,
                     args.delay_correct,
+                    args.rate_correct,
                     args.acel_correct,
+                    current_length,
                     effective_integ_time,
-                    header.sampling_speed as u32,
-                    header.fft_point as u32,
-                    start_time_offset_sec,
-                );
-                corrected_complex_vec = corrected_complex_vec_2d
-                    .into_iter()
-                    .flatten()
-                    .map(|v| Complex::new(v.re as f32, v.im as f32))
-                    .collect();
-            }
-            let (mut final_freq_rate_array, padding_length) = process_fft(
-                &corrected_complex_vec,
-                current_length,
-                header.fft_point,
-                header.sampling_speed,
-                &rfi_ranges,
-                args.rate_padding,
-            );
-            if let Some(bp_data) = &bandpass_data {
-                apply_bandpass_correction(&mut final_freq_rate_array, bp_data);
-            }
-            let final_delay_rate_2d_data_comp =
-                process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
-            analysis_results = analyze_results(
-                &final_freq_rate_array,
-                &final_delay_rate_2d_data_comp,
-                &header,
-                current_length,
-                effective_integ_time,
-                &current_obs_time,
-                padding_length,
-                &args,
-            );
+                    &current_obs_time,
+                    &obs_time.unwrap(),
+                    &rfi_ranges,
+                    &bandpass_data,
+                )?;
             analysis_results.length_f32 = (current_length as f32 * effective_integ_time).ceil();
-            freq_rate_array = final_freq_rate_array;
-            delay_rate_2d_data_comp = final_delay_rate_2d_data_comp;
-        }
+            (analysis_results, freq_rate_array, delay_rate_2d_data_comp)
+        };
 
         // --- Output and Plotting ---
         let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
@@ -410,6 +327,19 @@ pub fn process_cor_file(
             current_length,
         );
 
+        if args.spectrum {
+            if let Some(path) = &spectrum_output_path {
+                let output_file_path = path.join(format!("{}_cross.spec", base_filename));
+                write_complex_spectrum_binary(
+                    &output_file_path,
+                    &analysis_results.freq_rate_spectrum.to_vec(),
+                    header.fft_point,
+                    1,
+                )?;
+                println!("Cross-power spectrum file written to {:?}", output_file_path);
+            }
+        }
+
         if args.bandpass_table {
             if let Some(path) = &bandpass_output_path {
                 let output_file_path = path.join(format!("{}_bptable.bin", base_filename));
@@ -417,6 +347,7 @@ pub fn process_cor_file(
                     &output_file_path,
                     &analysis_results.freq_rate_spectrum.to_vec(),
                     header.fft_point,
+                    0,
                 )?;
                 println!("Bandpass binary file written to {:?}", output_file_path);
                 println!("Bandpass binary file format:");
@@ -426,26 +357,11 @@ pub fn process_cor_file(
                 println!("  - Each real and imaginary part is a 4-byte f32 (LittleEndian).");
                 println!("  - File extension should be .bin");
                 println!("  - Output to {:?}", output_file_path);
-                println!("Net step:");
+                println!("Next step:");
                 println!(
                     "  - Add --bandpass {:?} to the commandline argument in this program.",
                     output_file_path
                 );
-                return Ok(ProcessResult {
-                    header,
-                    label,
-                    obs_time: obs_time.unwrap(),
-                    length_arg: length,
-                    cumulate_len,
-                    cumulate_snr,
-                    add_plot_times,
-                    add_plot_amp,
-                    add_plot_snr,
-                    add_plot_phase,
-                    add_plot_noise,
-                    add_plot_res_delay,
-                    add_plot_res_rate,
-                });
             }
         }
 
@@ -479,26 +395,10 @@ pub fn process_cor_file(
             )?;
 
             let mut lag_data = Array::zeros((time_samples, header.fft_point as usize));
-            let mut planner = FftPlanner::new();
-            let ifft = planner.plan_fft_inverse(header.fft_point as usize);
             let fft_point_usize = header.fft_point as usize;
 
             for (i, row) in spectrum_array.rows().into_iter().enumerate() {
-                let mut ifft_input = vec![C32::new(0.0, 0.0); fft_point_usize];
-                ifft_input[..fft_point_half].copy_from_slice(&row.to_vec());
-                
-                ifft.process(&mut ifft_input);
-
-                let mut shifted_out = vec![C32::new(0.0, 0.0); fft_point_usize];
-                let (first_half, second_half) = ifft_input.split_at(fft_point_half);
-                shifted_out[..fft_point_half].copy_from_slice(second_half);
-                shifted_out[fft_point_half..].copy_from_slice(first_half);
-
-                for val in &mut shifted_out {
-                    *val /= header.fft_point as f32;
-                }
-
-                shifted_out.reverse();
+                let shifted_out = fft::perform_ifft_on_vec(row.as_slice().unwrap(), fft_point_usize);
 
                 for (j, val) in shifted_out.iter().enumerate() {
                     lag_data[[i, j]] = val.norm();
@@ -816,4 +716,84 @@ pub fn process_cor_file(
         add_plot_res_delay,
         add_plot_res_rate,
     })
+}
+
+fn run_analysis_pipeline(
+    complex_vec: &[C32],
+    header: &CorHeader,
+    base_args: &Args,
+    delay_correct: f32,
+    rate_correct: f32,
+    acel_correct: f32,
+    current_length: i32,
+    effective_integ_time: f32,
+    current_obs_time: &DateTime<Utc>,
+    obs_time: &DateTime<Utc>,
+    rfi_ranges: &[(usize, usize)],
+    bandpass_data: &Option<Vec<C32>>,
+) -> Result<(AnalysisResults, Array2<C32>, Array2<C32>), Box<dyn Error>> {
+    let mut temp_args = base_args.clone();
+    temp_args.delay_correct = delay_correct;
+    temp_args.rate_correct = rate_correct;
+    temp_args.acel_correct = acel_correct;
+
+    let corrected_complex_vec = if delay_correct != 0.0 || rate_correct != 0.0 || acel_correct != 0.0 {
+        let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
+            .chunks(header.fft_point as usize / 2)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .map(|&c| Complex::new(c.re as f64, c.im as f64))
+                    .collect()
+            })
+            .collect();
+        let start_time_offset_sec =
+            (*current_obs_time - *obs_time).num_seconds() as f32;
+        let corrected_complex_vec_2d = fft::apply_phase_correction(
+            &input_data_2d,
+            rate_correct,
+            delay_correct,
+            acel_correct,
+            effective_integ_time,
+            header.sampling_speed as u32,
+            header.fft_point as u32,
+            start_time_offset_sec,
+        );
+        corrected_complex_vec_2d
+            .into_iter()
+            .flatten()
+            .map(|v| Complex::new(v.re as f32, v.im as f32))
+            .collect()
+    } else {
+        complex_vec.to_vec()
+    };
+
+    let (mut freq_rate_array, padding_length) = process_fft(
+        &corrected_complex_vec,
+        current_length,
+        header.fft_point,
+        header.sampling_speed,
+        rfi_ranges,
+        base_args.rate_padding,
+    );
+
+    if let Some(bp_data) = &bandpass_data {
+        apply_bandpass_correction(&mut freq_rate_array, bp_data);
+    }
+
+    let delay_rate_2d_data_comp =
+        process_ifft(&freq_rate_array, header.fft_point, padding_length);
+
+    let analysis_results = analyze_results(
+        &freq_rate_array,
+        &delay_rate_2d_data_comp,
+        &header,
+        current_length,
+        effective_integ_time,
+        &current_obs_time,
+        padding_length,
+        &temp_args,
+    );
+
+    Ok((analysis_results, freq_rate_array, delay_rate_2d_data_comp))
 }

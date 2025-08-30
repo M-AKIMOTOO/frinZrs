@@ -62,46 +62,39 @@ pub fn process_ifft(
     padding_length: usize,
 ) -> Array2<C32> {
     let fft_point_usize = fft_point as usize;
-    let fft_point_half = fft_point_usize / 2;
-
-    let mut planner = FftPlanner::new();
-    let ifft = planner.plan_fft_inverse(fft_point_usize);
-
     let mut delay_rate_array = Array2::<C32>::zeros((padding_length, fft_point_usize));
 
     for i in 0..freq_rate_array.dim().1 {
         let freq_data_col = freq_rate_array.column(i);
-
-        // IFFTの入力として rustfft に渡すためのベクトルを準備
-        let mut ifft_exe = vec![C32::new(0.0, 0.0); fft_point_usize];
-
-        // freq_data_col (fftshift されたデータ) を ifft_exe の先頭にコピーし、残りをゼロで埋める
-        // Pythonの scipy.fft.ifft のゼロ埋め挙動に合わせる
-        ifft_exe[..fft_point_half].copy_from_slice(&freq_data_col.slice(s![..fft_point_half]).to_vec());
-
-        // IFFTを実行
-        ifft.process(&mut ifft_exe);
-
-        // ifft.process の出力はシフトされていないので、
-        // Pythonの np.fft.ifftshift に合わせて、shifted_out を作る際に ifftshift を適用する
-        let mut shifted_out = vec![C32::new(0.0, 0.0); fft_point_usize];
-        let (first_half_output, second_half_output) = ifft_exe.split_at(fft_point_half);
-        shifted_out[..fft_point_half].copy_from_slice(second_half_output);
-        shifted_out[fft_point_half..].copy_from_slice(first_half_output);
-
-        // 正規化
-        for val in &mut shifted_out {
-            *val /= fft_point as f32;
-        }
-
-        delay_rate_array.row_mut(i).assign(&ArrayView::from(&shifted_out));
+        let ifft_result = perform_ifft_on_vec(&freq_data_col.to_vec(), fft_point_usize);
+        delay_rate_array.row_mut(i).assign(&ArrayView::from(&ifft_result));
     }
 
-    // Reverse the columns of delay_rate_array to match frinZ.py's behavior
-    for mut row in delay_rate_array.rows_mut() {
-        row.as_slice_mut().unwrap().reverse();
-    }
     delay_rate_array
+}
+
+
+pub fn perform_ifft_on_vec(input: &[C32], ifft_size: usize) -> Vec<C32> {
+    let mut planner = FftPlanner::new();
+    let ifft = planner.plan_fft_inverse(ifft_size);
+
+    let mut ifft_exe = vec![C32::new(0.0, 0.0); ifft_size];
+    ifft_exe[..input.len()].copy_from_slice(input);
+
+    ifft.process(&mut ifft_exe);
+
+    let mut shifted_out = vec![C32::new(0.0, 0.0); ifft_size];
+    let (first_half, second_half) = ifft_exe.split_at(ifft_size / 2);
+    shifted_out[..ifft_size / 2].copy_from_slice(second_half);
+    shifted_out[ifft_size / 2..].copy_from_slice(first_half);
+
+    for val in &mut shifted_out {
+        *val /= ifft_size as f32;
+    }
+    
+    shifted_out.reverse(); // Common reverse operation
+
+    shifted_out
 }
 
 /// Applies phase correction to input data

@@ -1,10 +1,14 @@
 #![allow(unused_imports)]
 use std::error::Error;
 use std::process::exit;
+use std::io::{self, Read, Write, Cursor};
+use std::fs;
+use byteorder::{WriteBytesExt, LittleEndian};
 
 use chrono::{DateTime, Utc};
 use clap::{CommandFactory, Parser};
 use num_complex::Complex;
+use std::path::Path;
 
 mod acel_search;
 mod analysis;
@@ -69,6 +73,97 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !args.rate_padding.is_power_of_two() {
         eprintln!("Error: --rate-padding must be a power of two.");
         exit(1);
+    }
+
+    if args.cor2bin {
+        if args.input.is_none() {
+            eprintln!("Error: --cor2bin requires an --input file.");
+            exit(1);
+        }
+        let input_path = args.input.as_ref().unwrap();
+
+        // --- Create Output Directory ---
+        let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
+        let output_dir = parent_dir.join("frinZ").join("rawvis");
+        if let Err(e) = fs::create_dir_all(&output_dir) {
+            eprintln!("Error creating output directory {:?}: {}", output_dir, e);
+            exit(1);
+        }
+        let base_filename = input_path.file_stem().unwrap().to_str().unwrap();
+
+        let mut file = match fs::File::open(input_path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error opening input file {:?}: {}", input_path, e);
+                exit(1);
+            }
+        };
+        let mut buffer = Vec::new();
+        if let Err(e) = file.read_to_end(&mut buffer) {
+            eprintln!("Error reading input file {:?}: {}", input_path, e);
+            exit(1);
+        }
+        let mut cursor = Cursor::new(buffer.as_slice());
+
+        let header = match crate::header::parse_header(&mut cursor) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("Error parsing header: {}", e);
+                exit(1);
+            }
+        };
+
+        let mut all_spectra: Vec<Vec<C32>> = Vec::new();
+        for l1 in 0..header.number_of_sector {
+            let (complex_vec, _, _) = match crate::read::read_visibility_data(
+                &mut cursor,
+                &header,
+                1, // length in sectors
+                0, // skip in sectors
+                l1, // loop_idx, which acts as sector index here
+                false,
+            ) {
+                Ok(data) => data,
+                Err(_) => {
+                    eprintln!("Warning: Could not read sector {}, stopping read.", l1);
+                    break;
+                }
+            };
+            if complex_vec.is_empty() {
+                eprintln!("Warning: Empty sector {} found, stopping read.", l1);
+                break;
+            }
+            all_spectra.push(complex_vec);
+        }
+
+        if all_spectra.is_empty() {
+            eprintln!("No visibility data found in the file.");
+            exit(1);
+        }
+
+        let flattened_spectra: Vec<C32> = all_spectra.iter().flatten().cloned().collect();
+        let output_file_path = output_dir.join(format!("{}.cor.bin", base_filename));
+
+        let mut output_file = match fs::File::create(&output_file_path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error creating output file {:?}: {}", output_file_path, e);
+                exit(1);
+            }
+        };
+
+        for val in &flattened_spectra {
+            if let Err(e) = output_file.write_f32::<LittleEndian>(val.re) {
+                eprintln!("Error writing real part to file: {}", e);
+                exit(1);
+            }
+            if let Err(e) = output_file.write_f32::<LittleEndian>(val.im) {
+                eprintln!("Error writing imaginary part to file: {}", e);
+                exit(1);
+            }
+        }
+        println!("Raw complex visibility data written to {:?}", output_file_path);
+        return Ok(());
     }
 
     if args.raw_visibility {

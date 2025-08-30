@@ -130,6 +130,8 @@ pub fn delay_plane(
         .y_desc("Rate [Hz]")
         .x_labels(7)
         .y_labels(10)
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .label_style(("sans-serif ", 30))
         .x_label_formatter(&|v| format!("{:.0}", v))
         .y_label_formatter(&|v| format!("{:.2e}", v))
@@ -324,6 +326,8 @@ pub fn frequency_plane(
         .y_desc("Rate [Hz]")
         .x_labels(7)
         .y_labels(7)
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_label_formatter(&|y| format!("{:.0}", y))
         .y_label_formatter(&|y| format!("{:.1}", y))
         .label_style(("sans-serif ", 30))
@@ -1073,7 +1077,7 @@ fn gaussian_blur_2d(data: &Vec<Vec<f32>>, sigma: f32) -> Vec<Vec<f32>> {
 fn plot_single_heatmap_with_colorbar(
     output_path: &Path,
     data: &Vec<Vec<f32>>,
-    title: &str,
+    _title: &str,
     x_desc: &str,
     y_desc: &str,
     color_bar_title: &str,
@@ -1101,7 +1105,7 @@ fn plot_single_heatmap_with_colorbar(
     let y_label_area_size = 45;
 
     let mut chart = ChartBuilder::on(&chart_area)
-        .caption(title, ("sans-serif", 20).into_font())
+        //.caption(title, ("sans-serif", 20).into_font())
         .margin_top(top_margin)
         .margin_bottom(bottom_margin)
         .margin_left(10)

@@ -54,9 +54,13 @@ pub struct Args {
     #[arg(long, aliases = ["fr", "fre", "freq", "frequ", "freque", "frequen", "frequenc"])]
     pub frequency: bool,
 
-    /// Output the complex visibility data to a .tsv file.
-    #[arg(long, aliases = ["cs","cross"])]
-    pub cross_output: bool,
+    /// Output the raw complex visibility data to a binary file. Requires --raw-visibility to be active.
+    #[arg(long, aliases = ["c2b", "cor2b", "cor2bi"])]
+    pub cor2bin: bool,
+
+    /// Output the frequency spectrum to a binary file.
+    #[arg(long, aliases = ["spec", "spect", "spectr", "spectru"])]
+    pub spectrum: bool,
 
     /// Output the analysis results (delay/frequency) to a .txt file.
     #[arg(long, aliases = ["ou", "out", "outp", "outpu"])]
@@ -131,7 +135,7 @@ pub struct Args {
     pub bandpass: Option<PathBuf>,
 
     /// Output the bandpass-corrected complex spectrum to a binary file.
-    #[arg(long)]
+    #[arg(long, aliases = ["bptable"])]
     pub bandpass_table: bool,
 
     /// Number of CPU cores to use for parallel processing. Only effective with `--search-deep`.
@@ -142,7 +146,7 @@ pub struct Args {
 
     /// Time ranges to flag and skip processing (e.g., "2023012090000 2023012100000").
     /// Must be provided in pairs of start and end times in YYYYDDDHHMMSS format.
-    #[arg(long, aliases = ["ft", "flag"], num_args = 1.., value_name = "YYYYDDDHHMMSS")]
+    #[arg(long, num_args = 1.., value_name = "YYYYDDDHHMMSS")]
     pub flag_time: Vec<String>,
 
     /// Calculate and plot the Allan deviation of the phase data.
@@ -155,7 +159,7 @@ pub struct Args {
     #[arg(long, aliases = ["ra","raw","raw-v","raw-vi","raw-vis","raw-visi","raw-visib","raw-visibi","raw-visibils","raw-visibili","raw-visibilit"])]
     pub raw_visibility: bool,
 
-    /// Generate a fringe-rate map (experimental).
+    
     #[arg(long, aliases = ["frmap"])]
     pub fringe_rate_map: bool,
 
