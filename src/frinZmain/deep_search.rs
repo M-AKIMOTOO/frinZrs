@@ -189,6 +189,7 @@ fn get_coarse_estimates(
             header.fft_point,
             header.sampling_speed,
             rfi_ranges,
+            args.rate_padding,
         );
         
         if let Some(bp_data) = bandpass_data {
@@ -226,6 +227,7 @@ fn get_coarse_estimates(
             header.fft_point,
             header.sampling_speed,
             rfi_ranges,
+            args.rate_padding,
         );
         
         if let Some(bp_data) = bandpass_data {
@@ -357,6 +359,7 @@ fn evaluate_delay_rate_snr(
         header.fft_point,
         header.sampling_speed,
         rfi_ranges,
+        args.rate_padding,
     );
     
     // バンドパス補正
@@ -415,6 +418,7 @@ fn perform_final_analysis(
         header.fft_point,
         header.sampling_speed,
         rfi_ranges,
+        args.rate_padding,
     );
     
     if let Some(bp_data) = bandpass_data {

@@ -303,6 +303,7 @@ pub fn process_cor_file(
                     header.fft_point,
                     header.sampling_speed,
                     &rfi_ranges,
+                    args.rate_padding,
                 );
                 if let Some(bp_data) = &bandpass_data {
                     apply_bandpass_correction(&mut iter_freq_rate_array, bp_data);
@@ -375,6 +376,7 @@ pub fn process_cor_file(
                 header.fft_point,
                 header.sampling_speed,
                 &rfi_ranges,
+                args.rate_padding,
             );
             if let Some(bp_data) = &bandpass_data {
                 apply_bandpass_correction(&mut final_freq_rate_array, bp_data);

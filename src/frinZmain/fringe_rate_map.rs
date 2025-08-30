@@ -211,7 +211,7 @@ pub fn run_fringe_rate_map_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, 
         }
 
         // 1. Get delay-rate map
-        let (freq_rate_array, padding_length) = process_fft(&complex_vec, length_in_sectors, header.fft_point, header.sampling_speed, &[]);
+        let (freq_rate_array, padding_length) = process_fft(&complex_vec, length_in_sectors, header.fft_point, header.sampling_speed, &[], args.rate_padding);
         let delay_rate_array = process_ifft(&freq_rate_array, header.fft_point, padding_length);
         
         // 2. Get axis ranges

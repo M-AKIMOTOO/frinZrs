@@ -143,7 +143,7 @@ pub fn run_acel_search_analysis(
             }
 
             let (freq_rate_array, padding_length) =
-                process_fft(&corrected_complex_vec, actual_length as i32, header.fft_point, header.sampling_speed, &[]);
+                process_fft(&corrected_complex_vec, actual_length as i32, header.fft_point, header.sampling_speed, &[], args.rate_padding);
             let delay_rate_array_comp =
                 process_ifft(&freq_rate_array, header.fft_point, padding_length);
             let _delay_rate_array_abs = delay_rate_array_comp.mapv(|x| x.norm());

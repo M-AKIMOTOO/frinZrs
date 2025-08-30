@@ -8,9 +8,9 @@ use std::path::PathBuf;
     author = "Masanori AKIMOTO  <masanori.akimoto.ac@gmail.com>",
     about = "fringe search for Yamaguchi Interferometer and Japanese VLBI Network",
     after_help = r#"(c) M.AKIMOTO with Gemini in 2025/08/04
-    github: https://github.com/M-AKIMOTOO/frinZrs
-    This program is licensed under the MIT License
-    see https://opensource.org/license/mit"#
+github: https://github.com/M-AKIMOTOO/frinZrs
+This program is licensed under the MIT License
+see https://opensource.org/license/mit"#
 )]
 pub struct Args {
 
@@ -81,6 +81,10 @@ pub struct Args {
     /// Rate window for fringe search (min, max).
     #[arg(long, aliases = ["rate-w", "rate-wi", "rate-win", "rate-wind", "rate-windo"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
     pub rate_window: Vec<f32>,
+
+    /// Padding factor for rate resolution, must be a power of two.
+    #[arg(long, aliases = ["rate-p", "rate-pa", "rate-pad", "rate-padd", "rate-paddi", "rate-paddin"], default_value_t = 2)]
+    pub rate_padding: u32,
 
     // /pub cmap_time: bool,
 

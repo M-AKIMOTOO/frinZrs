@@ -11,12 +11,13 @@ pub fn process_fft(
     fft_point: i32,
     sampling_speed: i32,
     rfi_ranges: &[(usize, usize)],
+    rate_padding: u32,
 ) -> (Array2<C32>, usize) {
     let bandwidth = sampling_speed as f32 / 2.0 / 1_000_000.0; // [MHz]
 
     let length_usize = length as usize;
     let fft_point_half = (fft_point / 2) as usize;
-    let padding_length = (length as u32).next_power_of_two() as usize * 2;
+    let padding_length = (length as u32).next_power_of_two() as usize * rate_padding as usize;
     let padding_length_half = padding_length / 2;
 
     let mut planner = FftPlanner::new();

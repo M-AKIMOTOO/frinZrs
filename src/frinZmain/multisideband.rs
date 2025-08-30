@@ -221,6 +221,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         c_band_header.fft_point,
         c_band_header.sampling_speed,
         &parse_rfi_ranges(&c_band_filtered_rfi_args, c_band_rbw)?, // RFI ranges for initial analysis
+        args.rate_padding,
     );
     if let Some(bp_data) = &c_band_bp_data {
         apply_bandpass_correction(&mut c_band_freq_rate_array, bp_data);
@@ -258,6 +259,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         x_band_header.fft_point,
         x_band_header.sampling_speed,
         &parse_rfi_ranges(&x_band_filtered_rfi_args_converted, x_band_rbw)?, // converted RFI ranges for initial analysis
+        args.rate_padding,
     );
     if let Some(bp_data) = &x_band_bp_data {
         apply_bandpass_correction(&mut x_band_freq_rate_array, bp_data);

@@ -29,6 +29,7 @@ mod read;
 mod rfi;
 mod single_file;
 mod utils;
+mod pre_check;
 
 use crate::acel_search::run_acel_search_analysis;
 use crate::args::Args;
@@ -37,6 +38,7 @@ use crate::multisideband::run_multisideband_analysis;
 use crate::phase_reference::run_phase_reference_analysis;
 use crate::raw_visibility::run_raw_visibility_plot;
 use crate::single_file::run_single_file_analysis;
+use crate::pre_check::check_memory_usage;
 
 // --- Type Aliases for Clarity ---
 pub type C32 = Complex<f32>;
@@ -63,6 +65,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     };
+
+    if !args.rate_padding.is_power_of_two() {
+        eprintln!("Error: --rate-padding must be a power of two.");
+        exit(1);
+    }
 
     if args.raw_visibility {
         if args.input.is_none() {
@@ -105,6 +112,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect();
 
     if args.fringe_rate_map {
+        if let Some(input_path) = &args.input {
+            if !check_memory_usage(&args, input_path)? {
+                exit(0);
+            }
+        }
         if args.input.is_none() {
             eprintln!("Error: --fringe-rate-map requires an --input file.");
             exit(1);
@@ -113,6 +125,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if !args.multi_sideband.is_empty() {
+        let c_band_path = std::path::PathBuf::from(&args.multi_sideband[0]);
+        if !check_memory_usage(&args, &c_band_path)? {
+            exit(0);
+        }
         return run_multisideband_analysis(&args);
     }
 
@@ -125,6 +141,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // --- Argument Validation & Dispatch ---
     if args.acel_search.is_some() {
+        if let Some(input_path) = &args.input {
+            if !check_memory_usage(&args, input_path)? {
+                exit(0);
+            }
+        }
         // Check if acel_search was provided by the user
         if args.input.is_none() {
             eprintln!("Error: --acel-search requires an --input file.");
@@ -152,10 +173,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if !args.phase_reference.is_empty() {
+        let cal_path = std::path::PathBuf::from(&args.phase_reference[0]);
+        if !check_memory_usage(&args, &cal_path)? {
+            exit(0);
+        }
+        let target_path = std::path::PathBuf::from(&args.phase_reference[1]);
+        if !check_memory_usage(&args, &target_path)? {
+            exit(0);
+        }
         return run_phase_reference_analysis(&args, &flag_ranges);
     }
 
-    if let Some(_) = &args.input {
+    if let Some(input_path) = &args.input {
+        if !check_memory_usage(&args, input_path)? {
+            exit(0);
+        }
         return run_single_file_analysis(&args, &flag_ranges);
     }
 
