@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::{Cursor, Read, Write, BufWriter};
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -12,17 +12,18 @@ use num_complex::Complex;
 use ndarray::Array;
 
 use crate::args::Args;
-use crate::analysis::{analyze_results, AnalysisResults};
+use crate::analysis::analyze_results;
 use crate::bandpass::{apply_bandpass_correction, read_bandpass_file, write_complex_spectrum_binary};
 use crate::deep_search;
-use crate::fft::{self, apply_phase_correction, process_fft, process_ifft};
+use crate::fft::{self, process_fft, process_ifft};
 use crate::header::{parse_header, CorHeader};
 use crate::output::{format_delay_output, format_freq_output, generate_output_names, output_header_info};
 use crate::plot::{delay_plane, frequency_plane, plot_dynamic_spectrum_freq, plot_dynamic_spectrum_lag};
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
-use crate::C32;
 use crate::utils::safe_arg;
+
+type C32 = Complex<f32>;
 
 /// Holds the results of processing a single .cor file, needed for subsequent plotting.
 pub struct ProcessResult {
@@ -91,13 +92,6 @@ pub fn process_cor_file(
         fs::create_dir_all(&path)?;
     }
 
-    let mut spectrum_path: Option<PathBuf> = None;
-    if args.spectrum {
-        let path = frinz_dir.join("crossspectrum");
-        fs::create_dir_all(&path)?;
-        spectrum_path = Some(path);
-    }
-
     // --- Read .cor File ---
     let mut file = File::open(input_path)?;
     let mut buffer = Vec::new();
@@ -121,7 +115,7 @@ pub fn process_cor_file(
 
     // --- Output Header Information ---
     if args.output || args.header {
-        let cor_header_path = frinz_dir.join("cor_header");
+        let cor_header_path = frinz_dir.join("header");
         fs::create_dir_all(&cor_header_path)?;
         let header_info_str = output_header_info(&header, &cor_header_path, basename)?;
         if args.header {
@@ -421,7 +415,6 @@ pub fn process_cor_file(
                     &output_file_path,
                     &analysis_results.freq_rate_spectrum.to_vec(),
                     header.fft_point,
-                    0,
                 )?;
                 println!("Bandpass binary file written to {:?}", output_file_path);
                 println!("Bandpass binary file format:");
@@ -525,10 +518,10 @@ pub fn process_cor_file(
             let delay_output_line = format_delay_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
                 let header_str = "".to_string()
-                    + "#*******************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD      \n"
-                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]                \n"
-                    + "#*******************************************************************************************************************************************************************************************";
+                    + "#*****************************************************************************************************************************************************************************************\n"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD    \n"
+                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]              \n"
+                    + "#*****************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
                 delay_output_str += &header_str;
             }
@@ -562,10 +555,10 @@ pub fn process_cor_file(
             let freq_output_line = format_freq_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
                 let header_str = "".to_string()
-                    + "#******************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD    \n"
-                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]               \n"
-                    + "#******************************************************************************************************************************************************************************************";
+                    + "#*******************************************************************************************************************************************************************************************\n"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD     \n"
+                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                \n"
+                    + "#*******************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
                 freq_output_str += &header_str;
             }
@@ -588,18 +581,6 @@ pub fn process_cor_file(
                 add_plot_noise.push(analysis_results.freq_noise * 100.0);
                 add_plot_res_delay.push(analysis_results.residual_delay);
                 add_plot_res_rate.push(analysis_results.residual_rate);
-            }
-
-            if args.spectrum {
-                if let Some(path) = &spectrum_path {
-                    let output_file_path = path.join(format!("{}_cross.spec", base_filename));
-                    write_complex_spectrum_binary(
-                        &output_file_path,
-                        &analysis_results.freq_rate_spectrum.to_vec(),
-                        header.fft_point,
-                        1,
-                    )?;
-                }
             }
         }
 

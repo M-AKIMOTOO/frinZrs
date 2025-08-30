@@ -3,16 +3,14 @@ use std::fs;
 use std::io::Cursor;
 use std::io::Read;
 use std::path::Path;
-use std::io::{self, Write};
+use std::io::Write;
 use std::fs::File;
-use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use ndarray::{Array, Array2};
 
 use crate::args::Args;
 use crate::fft::{apply_phase_correction, process_fft, process_ifft};
-use crate::C32;
 use num_complex::Complex;
 use crate::header::parse_header;
 use crate::imaging::create_map;
@@ -20,6 +18,8 @@ use crate::plot::{plot_cross_section, plot_sky_map, plot_uv_coverage};
 use crate::read::read_visibility_data;
 use crate::utils::{uvw_cal, rate_cal};
 use std::f64::consts::PI;
+
+type C32 = Complex<f32>;
 
 #[allow(unused_variables)]
 #[allow(unused_mut)]

@@ -8,13 +8,13 @@ use num_complex::Complex;
 
 use crate::args::Args;
 use crate::fitting;
-use crate::header::CorHeader;
 use crate::output::write_phase_corrected_spectrum_binary;
 use crate::plot::phase_reference_plot;
 use crate::processing::process_cor_file;
 use crate::read::{read_sector_header, read_visibility_data};
 use crate::utils;
-use crate::C32;
+
+type C32 = Complex<f32>;
 
 
 pub fn run_phase_reference_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)]) -> Result<(), Box<dyn Error>> {

@@ -1,7 +1,17 @@
 [package]
-name = "frinZ-rs"
-version = "4.0.0"
+name = "frinZ"
+version = "4.1.4"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Masanori AKIMOTO <masanori.akimoto.ac@gmail.com>"]
+description = "fringe search for Yamaguchi Interferometer and Japanese VLBI Network"
+repository = "https://github.com/M-AKIMOTOO/frinZrs"
+documentation = "https://docs.rs/frinZ"
+readme = "README.md"    
+include = ["src/frinZmain/"]
+
+[lib]
+path = "src/frinZmain/lib.rs"
 
 [[bin]]
 name = "frinZ"
@@ -13,26 +23,17 @@ path = "src/cormerge/main.rs"
 
 [dependencies]
 chrono        = "0.4.22"
-#data-encoding = "2.3.2"
-#hex           = "0.4.3"
 num-complex   = "0.4.2"
 rustfft       = "6.1.0"
 byteorder     = "1.4.3"
 nalgebra = "0.33"
-#lstsq = "0.5.0"
 ndarray       = "0.16.1"
 plotters      = "0.3.7"
-#plotters-bitmap = "0.3.5"
 clap          = { version = "4.4.6", features = ["derive"] }
 astro         = "2.0.0"
-#blh           = "0.3.0"
 nav-types     = "0.5"
 image = { version = "0.25.6", features = ["png"] }
 imageproc     = "0.25.0"
-euclid = "0.22.11"
-#eframe = "0.32.0"
-#egui_plot = "0.33.0"
-#anyhow = "1"
 terminal_size = "0.4"
 rayon = "1.10"
 

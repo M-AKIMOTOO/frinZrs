@@ -3,22 +3,19 @@ use std::fs::{self, File};
 use std::io::{Cursor, Read, Write, ErrorKind, self};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc, Duration};
-use byteorder::{LittleEndian, WriteBytesExt};
 use num_complex::Complex;
-use ndarray::Array2;
 
 use crate::args::Args;
 use crate::header::{parse_header, CorHeader};
 use crate::read::{read_visibility_data, read_sector_header};
 use crate::fft::{process_fft, process_ifft, apply_phase_correction};
-use crate::analysis::{analyze_results, AnalysisResults};
-use crate::C32;
-use std::f64::consts::PI;
+use crate::analysis::analyze_results;
 use crate::bandpass::{read_bandpass_file, apply_bandpass_correction};
 use crate::rfi::parse_rfi_ranges;
 use crate::utils::{unwrap_phase, rate_cal, safe_arg};
 use crate::plot_msb::frequency_plane;
+
+type C32 = Complex<f32>;
 
 // Define TeeWriter struct and its implementation
 struct TeeWriter<W1: Write, W2: Write> {

@@ -1,10 +1,6 @@
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
-use chrono::{DateTime, Utc, TimeZone};
-use plotters::style::colors::colormaps::ViridisRGB;
-use num_complex::Complex;
-use std::path::Path;
-use ndarray::Array2; // Added for dynamic spectrum
+ // Added for dynamic spectrum
 
 pub fn frequency_plane(
     c_band_amp_profile: &[(f64, f64)],

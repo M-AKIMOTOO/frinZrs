@@ -8,7 +8,8 @@ use crate::args::Args;
 use crate::header::parse_header;
 use crate::read::read_visibility_data;
 use crate::plot;
-use crate::C32;
+use num_complex::Complex;
+type C32 = Complex<f32>;
 
 /// Executes the raw visibility plotting.
 pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {

@@ -4,14 +4,16 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "frinZ",
-    version = "4.0.0",
-    author = "Masanori AKIMOTO",
-    about = "A Rust implementation of the frinZ fringe-fitting tool.",
-    after_help = "(c) M.AKIMOTO with Gemini in 2025/08/04
-This program is licensed under the MIT License
-see https://opensource.org/license/mit"
+    version = env!("CARGO_PKG_VERSION"),
+    author = "Masanori AKIMOTO  <masanori.akimoto.ac@gmail.com>",
+    about = "fringe search for Yamaguchi Interferometer and Japanese VLBI Network",
+    after_help = r#"(c) M.AKIMOTO with Gemini in 2025/08/04
+    github: https://github.com/M-AKIMOTOO/frinZrs
+    This program is licensed under the MIT License
+    see https://opensource.org/license/mit"#
 )]
 pub struct Args {
+
     /// Path to the input .cor file
     #[arg(long, aliases = ["in", "inp", "inpu"])]
     pub input: Option<PathBuf>,
@@ -125,7 +127,7 @@ pub struct Args {
     pub bandpass: Option<PathBuf>,
 
     /// Output the bandpass-corrected complex spectrum to a binary file.
-    #[arg(long, aliases = ["bptable"])]
+    #[arg(long)]
     pub bandpass_table: bool,
 
     /// Number of CPU cores to use for parallel processing. Only effective with `--search-deep`.
@@ -163,10 +165,4 @@ pub struct Args {
     /// 6. X_BAND_DELAY: Delay for X-band in seconds.
     #[arg(long, num_args = 6, value_names = ["C_BAND_DATA", "C_BAND_BP", "C_BAND_DELAY", "X_BAND_DATA", "X_BAND_BP", "X_BAND_DELAY"], aliases = ["msb"], allow_negative_numbers = true)]
     pub multi_sideband: Vec<String>,
-
-    /// Output the corss-power spectrum in the complex to a .spec file.
-    /// This file is used for calculating a flux density in the frequency domain.
-    /// Note: --frequency is essential for this analysis.
-    #[arg(long, aliases = ["sp","spec"])]
-    pub spectrum: bool,
 }

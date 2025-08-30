@@ -14,7 +14,8 @@ use crate::header::{parse_header, CorHeader};
 use crate::plot::plot_acel_search_result;
 use crate::read::read_visibility_data;
 use crate::utils::{unwrap_phase_radians, safe_arg};
-use crate::C32;
+
+type C32 = Complex<f32>;
 
 
 pub fn run_acel_search_analysis(
@@ -286,7 +287,7 @@ pub fn run_acel_search_analysis(
 
         println!("  Updated acel: {:.9e} (Hz/s), Updated rate: {:.9e} (Hz)", total_acel_correct, total_rate_correct);
 
-        println!("  Copypaste acel: {:.18} (Hz/s), Updated rate: {:.15} (Hz)", total_acel_correct, total_rate_correct);
+        println!("  Copypaste: --acel {:.18}  --rate {:.15}", total_acel_correct, total_rate_correct);
     }
 
     // Add plotting logic here

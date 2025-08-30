@@ -5,9 +5,9 @@ use astro::coords;
 use astro::time;
 use nav_types::{ECEF, WGS84};
 
-use crate::header::CorHeader;
+//use crate::header::CorHeader;
 
-const C: f64 = 299792458.0; // Speed of light in m/s
+//const C: f64 = 299792458.0; // Speed of light in m/s
 
 type C32 = Complex<f32>;
 
@@ -258,7 +258,7 @@ pub fn uvw_cal(
 }
 
 
-
+/*
 /// Converts rate (Hz) and delay (samples) to sky coordinates (l, m).
 ///
 /// # Arguments
@@ -303,6 +303,6 @@ pub fn rate_delay_to_lm(
 
     (l, m)
 }
-
+*/
 
 

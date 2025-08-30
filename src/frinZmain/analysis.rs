@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::header::CorHeader;
 use crate::args::Args;
-use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal, uvw_cal, rate_delay_to_lm, safe_arg};
+use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal, safe_arg};
 use crate::fitting;
 
 type C32 = Complex<f32>;
@@ -306,8 +306,8 @@ pub fn analyze_results(
         }
     }
 
-
-     // --- Sky Coordinate Calculation ---
+    /*
+    // --- Sky Coordinate Calculation ---
     let (u, v, _w, du_dt, dv_dt) = uvw_cal(
         header.station1_position,
         header.station2_position,
@@ -316,7 +316,7 @@ pub fn analyze_results(
         header.source_position_dec,
     );
 
-    let (_l_coord, _m_coord) = rate_delay_to_lm(
+    let (l_coord, m_coord) = rate_delay_to_lm(
         residual_rate_val as f64,
         residual_delay_val as f64,
         header,
@@ -325,6 +325,7 @@ pub fn analyze_results(
         du_dt,
         dv_dt,
     );
+    */
 
 
     // --- Antenna Az/El Calculation ---

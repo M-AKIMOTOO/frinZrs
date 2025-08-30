@@ -35,7 +35,6 @@ pub fn write_complex_spectrum_binary(
     path: &std::path::Path,
     spectrum: &[C32],
     fft_points: i32,
-    flag: i8, // 0: bandpass, 1: cross-power spectrum
 ) -> io::Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
@@ -46,10 +45,9 @@ pub fn write_complex_spectrum_binary(
         writer.write_f32::<LittleEndian>(val.im)?;
     }
 
-    if flag == 0 {
-        // Plot the spectrum
-        plot_bandpass_spectrum(path, spectrum, fft_points)?;
-    }
+    // Plot the spectrum
+    plot_bandpass_spectrum(path, spectrum, fft_points)?;
+
     Ok(())
 }
 
