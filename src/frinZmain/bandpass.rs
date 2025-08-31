@@ -61,9 +61,9 @@ pub fn apply_bandpass_correction(
     }
     const EPSILON: f32 = 1e-9;
 
-    // The mean is used to rescale the corrected spectrum to maintain a similar overall power level.
-    let bandpass_mean =
-        bandpass_data.iter().map(|c| c.norm()).sum::<f32>() / bandpass_data.len() as f32;
+    // The complex mean is used to rescale the corrected spectrum to maintain a similar overall power and phase.
+    let bandpass_sum: C32 = bandpass_data.iter().copied().sum();
+    let bandpass_mean = bandpass_sum / bandpass_data.len() as f32;
 
     for (mut row, &bp_val) in freq_rate_array.rows_mut().into_iter().zip(bandpass_data.iter()) {
         // Avoid division by zero or near-zero values

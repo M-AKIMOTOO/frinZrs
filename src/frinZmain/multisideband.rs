@@ -295,7 +295,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     writeln!(tee_writer, "X-band SNR: {:.2}", x_band_analysis_results.delay_snr)?;
 
     // --- Phase correction based on average phase difference ---
-    let mut c_band_phases_deg: Vec<f32> = c_band_analysis_results.freq_rate_spectrum.iter().map(|c| safe_arg(&c)).collect();
+    let mut c_band_phases_deg: Vec<f32> = c_band_analysis_results.freq_rate_spectrum.iter().map(|c| safe_arg(&c).to_degrees()).collect();
     unwrap_phase(&mut c_band_phases_deg);
     let avg_c_phase = { // exclude complex 0+0j for cutting RFI
         let non_zero_phases: Vec<f64> = c_band_phases_deg.iter()
@@ -309,7 +309,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let mut x_band_phases_deg: Vec<f32> = x_band_analysis_results.freq_rate_spectrum.iter().map(|c| safe_arg(&c)).collect();
+    let mut x_band_phases_deg: Vec<f32> = x_band_analysis_results.freq_rate_spectrum.iter().map(|c| safe_arg(c).to_degrees()).collect();
     unwrap_phase(&mut x_band_phases_deg);
     let avg_x_phase = {
         let non_zero_phases: Vec<f64> = x_band_phases_deg.iter()
@@ -406,8 +406,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     writeln!(tee_writer, "X-band delay correction (delta_tau_x): {:.6} samples", delta_tau_x)?;
 
     // Convert phase difference to radians for complex exponential
-    let phase_difference_rad = phase_difference_deg.to_radians() as f32;
-    let correction_factor = Complex::<f32>::new(0.0, phase_difference_rad).exp() as C32 ;
+    let correction_factor = Complex::<f32>::new(0.0, phase_difference_deg.to_radians() as f32).exp() as C32 ;
 
     // --- Prepare output header ---
     let mut output_header_bytes = c_band_buffer[..256].to_vec();
@@ -458,15 +457,18 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             i,
             false,
         )?;
+        
         if let Some(bp_data) = &c_band_bp_data {
             const EPSILON: f32 = 1e-9;
-            let bandpass_mean = bp_data.iter().map(|c| c.norm()).sum::<f32>() / bp_data.len() as f32;
+            let bandpass_sum: C32 = bp_data.iter().copied().sum(); 
+            let bandpass_mean = bandpass_sum / bp_data.len() as f32; 
             for (elem, &bp_val) in c_complex_vec_sector.iter_mut().zip(bp_data.iter()) {
                 if bp_val.norm() > EPSILON {
                     *elem = (*elem / bp_val) * bandpass_mean;
                 }
             }
         }
+
 
         let c_start_time_offset_sec = (c_current_obs_time - c_band_obs_time).num_seconds() as f32;
         let c_complex_vec_sector_f64: Vec<Complex<f64>> = c_complex_vec_sector.iter()
@@ -518,7 +520,8 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         )?;
         if let Some(bp_data) = &x_band_bp_data {
             const EPSILON: f32 = 1e-9;
-            let bandpass_mean = bp_data.iter().map(|c| c.norm()).sum::<f32>() / bp_data.len() as f32;
+            let bandpass_sum: C32 = bp_data.iter().copied().sum();
+            let bandpass_mean = bandpass_sum / bp_data.len() as f32;
             for (elem, &bp_val) in x_complex_vec_sector.iter_mut().zip(bp_data.iter()) {
                 if bp_val.norm() > EPSILON {
                     *elem = (*elem / bp_val) * bandpass_mean;
@@ -840,3 +843,4 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
 
     Ok(all_match)
 }
+
