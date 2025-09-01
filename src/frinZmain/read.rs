@@ -48,13 +48,10 @@ pub fn read_visibility_data(
         effective_integ_time = cursor.read_f32::<byteorder::LittleEndian>()?;
         cursor.set_position(sector_start_pos + SECTOR_HEADER_SIZE);
 
-        for _ in 0..fft_point_half / 2 {
-            let real1 = cursor.read_f32::<byteorder::LittleEndian>()?;
-            let imag1 = cursor.read_f32::<byteorder::LittleEndian>()?;
-            let real2 = cursor.read_f32::<byteorder::LittleEndian>()?;
-            let imag2 = cursor.read_f32::<byteorder::LittleEndian>()?;
-            complex_vec.push(C32::new(real1, imag1));
-            complex_vec.push(C32::new(real2, imag2));
+        for _ in 0..fft_point_half {
+            let real = cursor.read_f32::<byteorder::LittleEndian>()?;
+            let imag = cursor.read_f32::<byteorder::LittleEndian>()?;
+            complex_vec.push(C32::new(real, imag));
         }
     }
 

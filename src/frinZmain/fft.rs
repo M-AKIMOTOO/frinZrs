@@ -17,7 +17,11 @@ pub fn process_fft(
 
     let length_usize = length as usize;
     let fft_point_half = (fft_point / 2) as usize;
-    let padding_length = (length as u32).next_power_of_two() as usize * rate_padding as usize;
+    //let padding_length = (length as u32).next_power_of_two() as usize * rate_padding as usize; // FFTのビン（周波数の区切り）と実際の信号周波数のズレによって生じる「スカロッピング損失」という現象
+    let mut padding_length = length as usize * rate_padding as usize; 
+    if length == 1 {
+        padding_length *= 2.0 as usize
+    }
     let padding_length_half = padding_length / 2;
 
     let mut planner = FftPlanner::new();

@@ -80,7 +80,7 @@ pub fn analyze_results(
 
     // --- Delay Analysis ---
     let delay_rate_2d_data_array = delay_rate_array.clone().mapv(|x| x.norm());
-    let delay_noise = noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap(), padding_length, fft_point_usize);
+    let delay_noise = noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap());
 
     
 
@@ -239,7 +239,7 @@ pub fn analyze_results(
     } else {
         // Fallback to old method if no noise region is found
         eprintln!("Warning: Could not find noise region for frequency SNR calculation. Falling back to old method.");
-        noise_level(freq_rate_array.view(), freq_rate_array.mean().unwrap(), fft_point_half, padding_length)
+        noise_level(freq_rate_array.view(), freq_rate_array.mean().unwrap())
     };
 
     let freq_snr = freq_max_amp / freq_noise;

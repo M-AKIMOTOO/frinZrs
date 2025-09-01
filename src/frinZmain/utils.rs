@@ -34,13 +34,12 @@ pub fn rate_cal(n: f32, d: f32) -> Vec<f32> {
     rate
 }
 
-pub fn noise_level(array: ArrayView2<C32>, array_mean: C32, rows: usize, cols: usize) -> f32 {
-    let mut array_sum: f32 = 0.0;
-    for i in 0..rows {
-        for j in 0..cols {
-            array_sum += (array[[i, j]] - array_mean).norm()
-        }
+pub fn noise_level(array: ArrayView2<C32>, array_mean: C32) -> f32 {
+    let (rows, cols) = array.dim();
+    if rows == 0 || cols == 0 {
+        return 0.0;
     }
+    let array_sum: f32 = array.iter().map(|x| (x - array_mean).norm()).sum();
     array_sum / (rows * cols) as f32
 }
 

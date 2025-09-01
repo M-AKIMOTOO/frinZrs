@@ -87,7 +87,7 @@ pub struct Args {
     pub rate_window: Vec<f32>,
 
     /// Padding factor for rate resolution, must be a power of two.
-    #[arg(long, aliases = ["rate-p", "rate-pa", "rate-pad", "rate-padd", "rate-paddi", "rate-paddin"], default_value_t = 2)]
+    #[arg(long, aliases = ["rate-p", "rate-pa", "rate-pad", "rate-padd", "rate-paddi", "rate-paddin"], default_value_t = 1)]
     pub rate_padding: u32,
 
     // /pub cmap_time: bool,
