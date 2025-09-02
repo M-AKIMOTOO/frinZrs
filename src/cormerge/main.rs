@@ -174,7 +174,17 @@ const SOURCE_NAME_OFFSET: u64 = 128;
 const SOURCE_NAME_LEN: usize = 16;
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None, arg_required_else_help = true)]
+#[command(
+    name = "cormerge",
+    version = "1.1.1",
+    author = "Masanori AKIMOTO  <masanori.akimoto.ac@gmail.com>",
+    about = "複数の.corファイルを1つに結合し、長時間積分計算のための単一ファイルを生成します。天体名でのフィルタリングや結合済みファイルの自動スキップが可能です。",
+    arg_required_else_help = true,
+    after_help = r#"(c) M.AKIMOTO with Gemini in 2025/08/04
+github: https://github.com/M-AKIMOTOO/frinZrs
+This program is licensed under the MIT License
+see https://opensource.org/license/mit"#
+)]
 struct Cli {
     /// Set a source name to filter files
     #[arg(long, required = true)]
