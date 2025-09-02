@@ -319,7 +319,7 @@ pub fn process_cor_file(
         let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
         let base_filename = generate_output_names(
             &header,
-            &current_obs_time,
+            &obs_time.unwrap(),
             &label_str,
             !rfi_ranges.is_empty(),
             args.frequency,
@@ -419,16 +419,19 @@ pub fn process_cor_file(
         if !args.frequency {
             let delay_output_line = format_delay_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
-                let header_str = "".to_string()
-                    + "#*****************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD    \n"
-                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]              \n"
+                let header_str = "".to_string() 
+                    + "#*****************************************************************************************************************************************************************************************
+"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD    
+"
+                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]              
+"
                     + "#*****************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
-                delay_output_str += &header_str;
+                delay_output_str += &format!("{}\n", header_str);
             }
             print!("{}\n", delay_output_line);
-            delay_output_str += &delay_output_line;
+            delay_output_str += &format!("{}\n", delay_output_line);
 
             if args.cumulate != 0 {
                 cumulate_len.push(current_length as f32);
@@ -457,15 +460,18 @@ pub fn process_cor_file(
             let freq_output_line = format_freq_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
                 let header_str = "".to_string()
-                    + "#*******************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD     \n"
-                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                \n"
+                    + "#*******************************************************************************************************************************************************************************************
+"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD     
+"
+                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                
+"
                     + "#*******************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
-                freq_output_str += &header_str;
+                freq_output_str += &format!("{}\n", header_str);
             }
             print!("{}\n", freq_output_line);
-            freq_output_str += &freq_output_line;
+            freq_output_str += &format!("{}\n", freq_output_line);
 
             if l1 == loop_count - 1 && args.output {
                 if let Some(path) = &output_path {

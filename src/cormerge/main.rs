@@ -330,25 +330,28 @@ fn generate_output_filename(input_files: &[PathBuf]) -> Result<PathBuf, Box<dyn 
     }
 
     let first_filename = &input_files[0];
-    const TARGET_INDEX: usize = 2; // 3番目の要素
+    const TIME_INDEX: usize = 2; // 3番目の要素 (Time)
+    const LABEL_INDEX: usize = 3; // 4番目の要素 (Label)
 
     let file_stem = first_filename.file_stem().and_then(|s| s.to_str()).ok_or("ファイル名からステムを取得できません.")?;
     let parts: Vec<&str> = file_stem.split('_').collect();
 
-    let base_parts = parts.iter().take(TARGET_INDEX).cloned().collect::<Vec<_>>().join("_");
-    let first_file_third = parts.get(TARGET_INDEX).ok_or(format!("最初のファイル \"{:?}\" から3番目の要素を取得できませんでした.", first_filename))?;
+    let base_parts = parts.iter().take(TIME_INDEX).cloned().collect::<Vec<_>>().join("_");
+    let first_file_time = parts.get(TIME_INDEX).ok_or(format!("最初のファイル \"{:?}\" から3番目の要素（時刻）を取得できませんでした.", first_filename))?;
+    let label = parts.get(LABEL_INDEX).ok_or(format!("最初のファイル \"{:?}\" から4番目の要素（ラベル）を取得できませんでした.", first_filename))?;
 
     let output_filename_str = if input_files.len() > 1 {
         let last_filename = &input_files[input_files.len() - 1];
-        let last_file_third = get_split_element(last_filename, TARGET_INDEX)
-            .ok_or(format!("最後のファイル \"{:?}\" から3番目の要素を取得できませんでした.", last_filename))?;
-        format!("{}_{}T{}_cormerge.cor", base_parts, first_file_third, last_file_third)
+        let last_file_time = get_split_element(last_filename, TIME_INDEX)
+            .ok_or(format!("最後のファイル \"{:?}\" から3番目の要素（時刻）を取得できませんでした.", last_filename))?;
+        format!("{}_{}T{}_{}_cormerge.cor", base_parts, first_file_time, last_file_time, label)
     } else {
-        format!("{}_{}Tcormerge.cor", base_parts, first_file_third)
+        format!("{}_{}T_{}_cormerge.cor", base_parts, first_file_time, label)
     };
 
     Ok(PathBuf::from(output_filename_str))
 }
+
 
 /// ファイルの内容を別のファイルにコピーする
 fn append_file_content(outfile: &mut File, infilename: &Path, offset_src: u64) -> Result<(), io::Error> {
