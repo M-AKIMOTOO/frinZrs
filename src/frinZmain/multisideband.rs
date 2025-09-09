@@ -58,7 +58,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let output_dir = parent_dir.to_path_buf();
     let plot_output_dir = output_dir.join("frinZ").join("multisideband"); // Create a specific plot directory
     fs::create_dir_all(&plot_output_dir)?;
-    // /fs::create_dir_all(&output_dir)?;
 
     let c_band_file_stem = c_band_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let base_filename_prefix = c_band_file_stem.to_string();
@@ -107,10 +106,8 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     
         let mut min_mhz: f32 = parts[0].parse().map_err(|_| io::Error::from(ErrorKind::InvalidInput))?;
         let mut max_mhz: f32 = parts[1].parse().map_err(|_| io::Error::from(ErrorKind::InvalidInput))?;
-        // C-band range (0-512 MHz)
         if min_mhz < 0.0 { min_mhz = 0.0; }
         if 512.0 < max_mhz && max_mhz < 1000.0 { max_mhz = 512.0; } 
-        // X-band range (1592-2104 MHz)
         if 1000.0 < min_mhz && min_mhz < 1592.0 { min_mhz = 1592.0; }
         if max_mhz > 2104.0 { max_mhz = 2104.0; }
         
@@ -121,7 +118,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             return Err("Invalid RFI range".into());
         }
     
-        // Determine if it's C-band or X-band RFI
         if max_mhz <= 512.0 { // C-band range (0-512 MHz)
             writeln!(tee_writer, "C-band RFI range: {}-{} MHz", min_mhz, max_mhz)?;
             c_band_filtered_rfi_args.push(rfi_pair.clone());
@@ -162,6 +158,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         0,
         0,
         false,
+        &[],
     )?;
     c_band_cursor.set_position(256);
 
@@ -172,6 +169,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         0,
         0,
         false,
+        &[],
     )?;
 
     // --- Process X-band data ---
@@ -192,6 +190,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         0,
         0,
         false,
+        &[],
     )?;
     x_band_cursor.set_position(256);
 
@@ -202,6 +201,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         0,
         0,
         false,
+        &[],
     )?;
 
     writeln!(tee_writer, "Successfully read headers for both bands.")?;
@@ -220,7 +220,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         c_band_header.number_of_sector,
         c_band_header.fft_point,
         c_band_header.sampling_speed,
-        &parse_rfi_ranges(&c_band_filtered_rfi_args, c_band_rbw)?, // RFI ranges for initial analysis
+        &parse_rfi_ranges(&c_band_filtered_rfi_args, c_band_rbw)?,
         args.rate_padding,
     );
     if let Some(bp_data) = &c_band_bp_data {
@@ -258,7 +258,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         x_band_header.number_of_sector,
         x_band_header.fft_point,
         x_band_header.sampling_speed,
-        &parse_rfi_ranges(&x_band_filtered_rfi_args_converted, x_band_rbw)?, // converted RFI ranges for initial analysis
+        &parse_rfi_ranges(&x_band_filtered_rfi_args_converted, x_band_rbw)?,
         args.rate_padding,
     );
     if let Some(bp_data) = &x_band_bp_data {
@@ -297,13 +297,13 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     // --- Phase correction based on average phase difference ---
     let mut c_band_phases_deg: Vec<f32> = c_band_analysis_results.freq_rate_spectrum.iter().map(|c| safe_arg(&c).to_degrees()).collect();
     unwrap_phase(&mut c_band_phases_deg);
-    let avg_c_phase = { // exclude complex 0+0j for cutting RFI
+    let avg_c_phase = { 
         let non_zero_phases: Vec<f64> = c_band_phases_deg.iter()
-            .filter(|&&p| p != 0.0) // Filter out 0.0 degree phases
+            .filter(|&&p| p != 0.0)
             .map(|&p| p as f64)
             .collect();
         if non_zero_phases.is_empty() {
-            f64::NAN // If all phases are 0.0 (RFI), average is NaN
+            f64::NAN
         } else {
             non_zero_phases.iter().sum::<f64>() / non_zero_phases.len() as f64
         }
@@ -313,11 +313,11 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     unwrap_phase(&mut x_band_phases_deg);
     let avg_x_phase = {
         let non_zero_phases: Vec<f64> = x_band_phases_deg.iter()
-            .filter(|&&p| p != 0.0) // Filter out 0.0 degree phases
+            .filter(|&&p| p != 0.0)
             .map(|&p| p as f64)
             .collect();
         if non_zero_phases.is_empty() {
-            f64::NAN // If all phases are 0.0 (RFI), average is NaN
+            f64::NAN
         } else {
             non_zero_phases.iter().sum::<f64>() / non_zero_phases.len() as f64
         }
@@ -330,12 +330,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
 
     // --- Calculate weighted average delay ---
-    // Weighting is proportional to SNR^2 and frequency variance, as per documentation.
-    // w_b ∝ ρ_b^2 * Σ_ν,b
-    // where Σ_ν,b = Σ_k w_k * (ν_k - ν̄_b)^2
-    // and w_k is the channel weight (using power/norm_sqr).
-
-    // For C-band
     let c_weights: Vec<f32> = c_band_analysis_results.freq_rate_spectrum.iter().map(|c| c.norm_sqr()).collect();
     let c_total_weight: f32 = c_weights.iter().sum();
     let c_mean_freq: f64 = if c_total_weight > 1e-9 {
@@ -355,7 +349,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         0.0
     };
 
-    // For X-band
     let x_weights: Vec<f32> = x_band_analysis_results.freq_rate_spectrum.iter().map(|c| c.norm_sqr()).collect();
     let x_total_weight: f32 = x_weights.iter().sum();
     let x_mean_freq: f64 = if x_total_weight > 1e-9 {
@@ -384,13 +377,12 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let tau_0 = if (wc + wx) > 1e-9 {
         (wc * tau_c + wx * tau_x) / (wc + wx)
     } else {
-        // Fallback to simple SNR weighting if frequency variance is zero for both
         let wc_simple = c_band_analysis_results.delay_snr.powi(2);
         let wx_simple = x_band_analysis_results.delay_snr.powi(2);
         if (wc_simple + wx_simple) > 1e-9 {
             (wc_simple * tau_c + wx_simple * tau_x) / (wc_simple + wx_simple)
         } else {
-            0.0 // All weights are zero, cannot determine a weighted average
+            0.0
         }
     };
 
@@ -405,7 +397,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     writeln!(tee_writer, "C-band delay correction (delta_tau_c): {:.6} samples", delta_tau_c)?;
     writeln!(tee_writer, "X-band delay correction (delta_tau_x): {:.6} samples", delta_tau_x)?;
 
-    // Convert phase difference to radians for complex exponential
     let correction_factor = Complex::<f32>::new(0.0, phase_difference_deg.to_radians() as f32).exp() as C32 ;
 
     // --- Prepare output header ---
@@ -414,11 +405,8 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let new_sampling_speed = c_band_header.sampling_speed + x_band_header.sampling_speed;
     let new_fft_point = c_band_header.fft_point + x_band_header.fft_point;
 
-    // Write new sampling_speed (offset 12, i32)
     output_header_bytes.as_mut_slice()[12..16].copy_from_slice(&new_sampling_speed.to_le_bytes());
-    // Write new observing_frequency (offset 16, f64)
     output_header_bytes.as_mut_slice()[16..24].copy_from_slice(&new_observing_frequency.to_le_bytes());
-    // Write new fft_point (offset 24, i32)
     output_header_bytes.as_mut_slice()[24..28].copy_from_slice(&new_fft_point.to_le_bytes());
 
     let is_bandpass_corrected = c_band_bp_data.is_some() || x_band_bp_data.is_some();
@@ -430,15 +418,12 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     
     let mut output_file = File::create(&output_filename)?;
 
-    // Write modified header to output file
     output_file.write_all(&output_header_bytes)?;
 
-    // Loop through sectors and interleave corrected data
     let num_sectors = c_band_header.number_of_sector.min(x_band_header.number_of_sector);
     writeln!(tee_writer, "Combining {} sectors...", num_sectors)?;
 
     for i in 0..num_sectors {
-        // Process C-band sector
         let mut c_band_cursor_sector = Cursor::new(c_band_buffer.as_slice());
         let c_sector_header = read_sector_header(
             &mut c_band_cursor_sector,
@@ -456,6 +441,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             0,
             i,
             false,
+            &[],
         )?;
         
         if let Some(bp_data) = &c_band_bp_data {
@@ -476,7 +462,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             .collect();
 
         let corrected_c_complex_vec = apply_phase_correction(
-            &[c_complex_vec_sector_f64], // Pass a slice containing the single Vec<Complex<f64>>
+            &[c_complex_vec_sector_f64],
             0.0,
             delta_tau_c,
             0.0,
@@ -499,7 +485,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         }
         all_c_spectra.push(corrected_c_complex_vec_f32.clone());
 
-        // Process X-band sector
         let mut x_band_cursor_sector = Cursor::new(x_band_buffer.as_slice());
         let _x_sector_header = read_sector_header(
             &mut x_band_cursor_sector,
@@ -517,6 +502,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             0,
             i,
             false,
+            &[],
         )?;
         if let Some(bp_data) = &x_band_bp_data {
             const EPSILON: f32 = 1e-9;
@@ -535,7 +521,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             .collect();
 
         let corrected_x_complex_vec = apply_phase_correction(
-            &[x_complex_vec_sector_f64], // Pass a slice containing the single Vec<Complex<f64>>
+            &[x_complex_vec_sector_f64], 
             0.0,
             delta_tau_x,
             0.0,
@@ -551,7 +537,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             .map(|v| C32::new(v.re as f32, v.im as f32))
             .collect();
 
-        // Do NOT write X-band sector header
         for val in corrected_x_complex_vec_f32.iter_mut() {
             *val *=  correction_factor;
             output_file.write_all(&val.re.to_le_bytes())?;
@@ -569,7 +554,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let x_band_offset_mhz = 1592.0;
 
 
-    // For rate_profile: use rate_cal
     let rate_values_f32 = rate_cal(4.0 * c_band_header.number_of_sector as f32, c_band_effective_integ_time);
     let _rate_profile: Vec<(f64, f64)> = rate_values_f32.iter().map(|&r| (r as f64, 0.0)).collect();
 
@@ -581,7 +565,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let mut x_band_phase_profile: Vec<(f64, f64)> = Vec::new();
     let mut x_band_uncalibrated_phase_profile: Vec<(f64, f64)> = Vec::new();
 
-    // Populate from C-band analysis results
     for (i, &freq_mhz) in c_band_analysis_results.freq_range.iter().enumerate() {
         let amp = c_band_analysis_results.freq_rate_spectrum[i].norm() as f64;
         let phase = safe_arg(&c_band_analysis_results.freq_rate_spectrum[i]).to_degrees() as f64;
@@ -589,11 +572,9 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         c_band_phase_profile.push((freq_mhz as f64, phase));
     }
 
-    // Populate from X-band analysis results
     for (i, &freq_mhz) in x_band_analysis_results.freq_range.iter().enumerate() {
         let uncalibrated_phase = safe_arg(&x_band_analysis_results.freq_rate_spectrum[i]).to_degrees() as f64;
         x_band_uncalibrated_phase_profile.push((freq_mhz as f64 + x_band_offset_mhz, uncalibrated_phase));
-        // Apply correction to X-band frequency-rate array
         let temp = x_band_analysis_results.freq_rate_spectrum[i] * correction_factor;
         let amp = temp.norm() as f64;
         let phase = safe_arg(&temp).to_degrees() as f64;
@@ -601,7 +582,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         x_band_phase_profile.push((freq_mhz as f64 + x_band_offset_mhz, phase));
     }
 
-    // For rate_profile: use rate_cal
     let c_band_rate_profile: Vec<(f64, f64)> = c_band_analysis_results.rate_range.iter()
         .zip(c_band_analysis_results.freq_rate.iter())
         .map(|(&rate, &amp)| (rate as f64, amp as f64))
@@ -616,14 +596,11 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let x_band_freq_resolution_mhz = (x_band_header.sampling_speed as f64 / x_band_header.fft_point as f64) / 1e6;
     let x_band_offset_mhz = 1592.0;
 
-    // For rate_profile: use rate_cal (for heatmap_func)
     let c_band_rate_values_f32 = rate_cal(c_band_padding_length as f32, c_band_effective_integ_time);
     let x_band_rate_values_f32 = rate_cal(x_band_padding_length as f32, x_band_effective_integ_time);
 
 
-    // For heatmap_func: show combined 2D frequency-rate data
     let heatmap_func = move |freq_mhz: f64, rate_hz: f64| -> f64 {
-        // Convert rate_hz to rate index
         let rate_idx_c = ((rate_hz - c_band_rate_values_f32[0] as f64) / (c_band_rate_values_f32[1] - c_band_rate_values_f32[0]) as f64).round() as usize;
         let rate_idx_x = ((rate_hz - x_band_rate_values_f32[0] as f64) / (x_band_rate_values_f32[1] - x_band_rate_values_f32[0]) as f64).round() as usize;
 
@@ -649,7 +626,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
     let freq_plot_filename = plot_output_dir.join(format!("{}_msb_freq_rate{}.png", base_filename_prefix, filename_suffix));
 
-    // Calculate max amplitude for color bar
     let c_max_amp = c_band_amp_profile.iter().map(|&(_, amp)| amp).fold(0.0f64, f64::max);
     let x_max_amp = x_band_amp_profile.iter().map(|&(_, amp)| amp).fold(0.0f64, f64::max);
     let max_amplitude = c_max_amp.max(x_max_amp);
@@ -658,47 +634,41 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let mut stat_keys_vec: Vec<String> = Vec::new();
     let mut stat_vals_vec: Vec<String> = Vec::new();
 
-    // Binary Files
     stat_keys_vec.push("".to_string());
     stat_vals_vec.push(c_band_path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string());
     stat_keys_vec.push("".to_string());
     stat_vals_vec.push(x_band_path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string());
 
-    // Bandpass Calibration Tables
     stat_keys_vec.push("".to_string());
     stat_vals_vec.push(PathBuf::from(c_band_bp_path_str).file_name().and_then(|s| s.to_str()).unwrap_or("").to_string());
     stat_keys_vec.push("".to_string());
     stat_vals_vec.push(PathBuf::from(x_band_bp_path_str).file_name().and_then(|s| s.to_str()).unwrap_or("").to_string());
 
-    // Average Phase Values
     stat_keys_vec.push("Avg C/X Phase".to_string());
     stat_vals_vec.push(format!("{:.5}/{:.5} deg", avg_c_phase, avg_x_phase));
     stat_keys_vec.push("Phase Diff (C-X)".to_string());
     stat_vals_vec.push(format!("{:.5} deg", phase_difference_deg));
 
-    // Delay Correction Amounts
     stat_keys_vec.push("C/X Delay Corr".to_string());
     stat_vals_vec.push(format!("{:.6}/{:.6} samples", delta_tau_c, delta_tau_x));
 
-    // Frequency Spectrum Range
-    let min_freq_c  = c_band_header.observing_frequency as f64 / 1e6; // Convert Hz to MHz
-    let bandwidth_c = c_band_header.sampling_speed as f64 / 1e6; // Convert Hz to MHz
+    let min_freq_c  = c_band_header.observing_frequency as f64 / 1e6;
+    let bandwidth_c = c_band_header.sampling_speed as f64 / 1e6;
     let max_freq_c = min_freq_c  + bandwidth_c / 2.0;
-    let min_freq_x  = x_band_header.observing_frequency as f64 / 1e6; // Convert Hz to MHz
-    let bandwidth_x = x_band_header.sampling_speed as f64 / 1e6; // Convert Hz to MHz
+    let min_freq_x  = x_band_header.observing_frequency as f64 / 1e6;
+    let bandwidth_x = x_band_header.sampling_speed as f64 / 1e6;
     let max_freq_x = min_freq_x  + bandwidth_x / 2.0;
     stat_keys_vec.push("Base Freq".to_string());
     stat_vals_vec.push(format!("{:.0} MHz", min_freq_c));
     stat_keys_vec.push("C/X Freq".to_string());
     stat_vals_vec.push(format!("{:.0}--{:.0}/{:.0}--{:.0} MHz", min_freq_c, max_freq_c, min_freq_x, max_freq_x));
 
-    // RFI Ranges
     stat_keys_vec.push("C/X(+1592) RFI".to_string());
     let c_rfi_str = if c_band_filtered_rfi_args.is_empty() {
         "None".to_string()
     } else {
         c_band_filtered_rfi_args.iter()
-            .map(|s| s.replace(',', "-")) // Replace comma with hyphen
+            .map(|s| s.replace(',', "-"))
             .collect::<Vec<String>>()
             .join(", ")
     };
@@ -706,7 +676,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         "None".to_string()
     } else {
         x_band_filtered_rfi_args_converted.iter()
-            .map(|s| s.replace(',', "-")) // Replace comma with hyphen
+            .map(|s| s.replace(',', "-"))
             .collect::<Vec<String>>()
             .join(", ")
     };
@@ -745,7 +715,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", "Parameter", "C-Band", "X-Band", "Match")?;
     writeln!(writer, "{:-<25} {:-<20} {:-<20} {:-<10}", "", "", "", "")?;
 
-    // Compare header_version
     let field_name = "header_version";
     let c_val = format!("{}", header1.header_version);
     let x_val = format!("{}", header2.header_version);
@@ -753,7 +722,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare software_version
     let field_name = "software_version";
     let c_val = format!("{}", header1.software_version);
     let x_val = format!("{}", header2.software_version);
@@ -761,7 +729,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare sampling_speed
     let field_name = "sampling_speed";
     let c_val = format!("{}", header1.sampling_speed);
     let x_val = format!("{}", header2.sampling_speed);
@@ -769,7 +736,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare fft_point
     let field_name = "fft_point";
     let c_val = format!("{}", header1.fft_point);
     let x_val = format!("{}", header2.fft_point);
@@ -777,7 +743,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare number_of_sector
     let field_name = "number_of_sector";
     let c_val = format!("{}", header1.number_of_sector);
     let x_val = format!("{}", header2.number_of_sector);
@@ -785,7 +750,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare station1_name
     let field_name = "station1_name";
     let c_val = format!("{}", header1.station1_name);
     let x_val = format!("{}", header2.station1_name);
@@ -793,7 +757,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare station1_code
     let field_name = "station1_code";
     let c_val = format!("{}", header1.station1_code);
     let x_val = format!("{}", header2.station1_code);
@@ -801,7 +764,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare station2_name
     let field_name = "station2_name";
     let c_val = format!("{}", header1.station2_name);
     let x_val = format!("{}", header2.station2_name);
@@ -809,7 +771,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare station2_code
     let field_name = "station2_code";
     let c_val = format!("{}", header1.station2_code);
     let x_val = format!("{}", header2.station2_code);
@@ -817,7 +778,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare source_name
     let field_name = "source_name";
     let c_val = format!("{}", header1.source_name);
     let x_val = format!("{}", header2.source_name);
@@ -825,7 +785,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare source_position_ra
     let field_name = "source_position_ra";
     let c_val = format!("{}", header1.source_position_ra);
     let x_val = format!("{}", header2.source_position_ra);
@@ -833,7 +792,6 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
     writeln!(writer, "{:<25} {:<20} {:<20} {:<10}", field_name, c_val, x_val, matches)?;
     if !matches { all_match = false; }
 
-    // Compare source_position_dec
     let field_name = "source_position_dec";
     let c_val = format!("{}", header1.source_position_dec);
     let x_val = format!("{}", header2.source_position_dec);
@@ -843,4 +801,3 @@ fn compare_headers_except_observing_frequency<W: Write>(header1: &CorHeader, hea
 
     Ok(all_match)
 }
-

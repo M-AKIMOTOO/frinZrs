@@ -22,6 +22,10 @@ name = "cormerge"
 path = "src/cormerge/main.rs"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
 chrono        = "0.4.22"
 num-complex   = "0.4.2"
 rustfft       = "6.1.0"
@@ -37,6 +41,7 @@ imageproc     = "0.25.0"
 terminal_size = "0.4"
 rayon = "1.10"
 sys-info      = "0.9"
+memmap2 = "0.9"
 
 [profile.release]
 opt-level = 3
@@ -47,3 +52,6 @@ codegen-units = 1
 panic = "abort"
 overflow-checks = false
 
+[[bin]]
+name = "gfrinZ"
+path = "src/gfrinZmain/main.rs"

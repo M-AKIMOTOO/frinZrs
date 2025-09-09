@@ -17,7 +17,11 @@ use crate::utils;
 type C32 = Complex<f32>;
 
 
-pub fn run_phase_reference_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)]) -> Result<(), Box<dyn Error>> {
+pub fn run_phase_reference_analysis(
+    args: &Args,
+    time_flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
+    pp_flag_ranges: &[(u32, u32)],
+) -> Result<(), Box<dyn Error>> {
     let cal_path = PathBuf::from(&args.phase_reference[0]);
     let target_path = PathBuf::from(&args.phase_reference[1]);
 
@@ -65,7 +69,7 @@ pub fn run_phase_reference_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, 
         },
         loop_count
     );
-    let mut cal_results = process_cor_file(&cal_path, &cal_args, flag_ranges)?;
+    let mut cal_results = process_cor_file(&cal_path, &cal_args, time_flag_ranges, pp_flag_ranges)?;
 
     println!(
         "Target:     {:?} (length: {}s, loop: {}",
@@ -77,7 +81,7 @@ pub fn run_phase_reference_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, 
         },
         loop_count
     );
-    let mut target_results = process_cor_file(&target_path, &target_args, flag_ranges)?;
+    let mut target_results = process_cor_file(&target_path, &target_args, time_flag_ranges, pp_flag_ranges)?;
 
 
     // --- Phase Unwrapping ---
@@ -181,6 +185,7 @@ pub fn run_phase_reference_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, 
                         l1,
                         0,
                         false,
+                        pp_flag_ranges,
                     )?;
 
                     let sector_headers = read_sector_header(
@@ -213,8 +218,6 @@ pub fn run_phase_reference_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, 
                     let phase_reference_dir = target_path
                         .parent() 
                         .unwrap_or_else(|| Path::new(""));
-                        //.join("frinZ")
-                        //.join("phase_reference");
                     fs::create_dir_all(&phase_reference_dir)?;
                     let output_path = phase_reference_dir.join(output_filename_str);
 

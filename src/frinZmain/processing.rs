@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -23,6 +23,7 @@ use crate::plot::{delay_plane, frequency_plane, plot_dynamic_spectrum_freq, plot
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
 use crate::utils::safe_arg;
+use memmap2::Mmap;
 
 type C32 = Complex<f32>;
 
@@ -47,7 +48,8 @@ pub struct ProcessResult {
 pub fn process_cor_file(
     input_path: &Path,
     args: &Args,
-    flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
+    time_flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
+    pp_flag_ranges: &[(u32, u32)],
 ) -> Result<ProcessResult, Box<dyn Error>> {
     // --- File and Path Setup ---
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
@@ -101,10 +103,9 @@ pub fn process_cor_file(
     }
 
     // --- Read .cor File ---
-    let mut file = File::open(input_path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    let mut cursor = Cursor::new(buffer.as_slice());
+    let file = File::open(input_path)?;
+    let mmap = unsafe { Mmap::map(&file)? };
+    let mut cursor = Cursor::new(&mmap[..]);
 
     // --- Parse Header ---
     let header = parse_header(&mut cursor)?;
@@ -132,31 +133,25 @@ pub fn process_cor_file(
     }
 
     // --- Loop and Processing Setup ---
-    // Get effective_integ_time from the first sector
-    cursor.set_position(0); // Reset cursor to beginning of file
-    let (_, _, effective_integ_time) = read_visibility_data(
+    cursor.set_position(0);
+    let (_, obs_time, effective_integ_time) = read_visibility_data(
         &mut cursor,
         &header,
-        1, // read only 1 sector
-        0, // skip 0
-        0, // loop_index 0
+        1,
+        0,
+        0,
         false,
+        pp_flag_ranges,
     )?;
-    cursor.set_position(256); // Reset cursor to after header for main loop
+    cursor.set_position(256);
 
     let pp = header.number_of_sector;
-    let mut length = if args.length == 0 { pp } else { args.length }; // This length is in seconds if args.length is in seconds
+    let mut length = if args.length == 0 { pp } else { args.length };
 
-    // Cap args.length if it's too large
     let total_obs_time_seconds = pp as f32 * effective_integ_time;
     if args.length != 0 && args.length as f32 > total_obs_time_seconds {
-        // Cap args.length to total_obs_time_seconds
-        // Then convert this capped seconds value back to sectors for the 'length' variable
         length = (total_obs_time_seconds / effective_integ_time).ceil() as i32;
-        // If effective_integ_time is 0, this will cause division by zero.
-        // effective_integ_time should not be 0 for valid data.
     } else if args.length != 0 {
-        // If args.length is specified and not capped, convert it to sectors
         length = (args.length as f32 / effective_integ_time).ceil() as i32;
     }
     let mut loop_count = if (pp - args.skip) / length <= 0 {
@@ -182,10 +177,8 @@ pub fn process_cor_file(
 
     let mut delay_output_str = String::new();
     let mut freq_output_str = String::new();
-
     let mut cumulate_len: Vec<f32> = Vec::new();
     let mut cumulate_snr: Vec<f32> = Vec::new();
-
     let mut add_plot_amp: Vec<f32> = Vec::new();
     let mut add_plot_phase: Vec<f32> = Vec::new();
     let mut add_plot_snr: Vec<f32> = Vec::new();
@@ -193,9 +186,7 @@ pub fn process_cor_file(
     let mut add_plot_times: Vec<DateTime<Utc>> = Vec::new();
     let mut add_plot_res_delay: Vec<f32> = Vec::new();
     let mut add_plot_res_rate: Vec<f32> = Vec::new();
-    let mut obs_time: Option<chrono::DateTime<chrono::Utc>> = None;
 
-    // --- Main Processing Loop ---
     for l1 in 0..loop_count {
         let current_length = if args.cumulate != 0 { (l1 + 1) * length } else { length };
         let (complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(
@@ -205,42 +196,37 @@ pub fn process_cor_file(
             args.skip,
             l1,
             args.cumulate != 0,
+            pp_flag_ranges,
         ) {
             Ok(data) => data,
-            Err(_) => break, // Stop if we can't read more data
+            Err(_) => break,
         };
 
-        // Skip processing if the observation time falls within a flagged range
-        let is_flagged = flag_ranges
+        let is_flagged = time_flag_ranges
             .iter()
             .any(|(start, end)| current_obs_time >= *start && current_obs_time < *end);
 
         if is_flagged {
             println!(
-                "#INFO: Skipping data at {} due to --flag-time range.",
+                "#INFO: Skipping data at {} due to --flagging time range.",
                 current_obs_time.format("%Y-%m-%d %H:%M:%S")
             );
             continue;
         }
 
-        if l1 == 0 {
-            obs_time = Some(current_obs_time);
-        }
-
         let (analysis_results, freq_rate_array, delay_rate_2d_data_comp) = if args.search_deep {
-            // --- DEEP SEARCH MODE ---
             let deep_search_result = deep_search::run_deep_search(
                 &complex_vec,
                 &header,
                 current_length,
                 effective_integ_time,
                 &current_obs_time,
-                &obs_time.unwrap(),
+                &obs_time,
                 &rfi_ranges,
                 &bandpass_data,
                 args,
                 pp,
-                args.cpu, // Pass the new cpu argument
+                args.cpu,
             )?;
             (
                 deep_search_result.analysis_results,
@@ -248,10 +234,8 @@ pub fn process_cor_file(
                 deep_search_result.delay_rate_2d_data,
             )
         } else if args.search {
-            // --- SEARCH MODE ---
             let mut total_delay_correct = args.delay_correct;
             let mut total_rate_correct = args.rate_correct;
-
             let mut analysis_results_mut = None;
             let mut freq_rate_array_mut = None;
             let mut delay_rate_2d_data_comp_mut = None;
@@ -268,14 +252,12 @@ pub fn process_cor_file(
                         current_length,
                         effective_integ_time,
                         &current_obs_time,
-                        &obs_time.unwrap(),
+                        &obs_time,
                         &rfi_ranges,
                         &bandpass_data,
                     )?;
-
                 total_delay_correct += iter_results.delay_offset;
                 total_rate_correct += iter_results.rate_offset;
-
                 analysis_results_mut = Some(iter_results);
                 freq_rate_array_mut = Some(iter_freq_rate_array);
                 delay_rate_2d_data_comp_mut = Some(iter_delay_rate_2d_data_comp);
@@ -288,14 +270,12 @@ pub fn process_cor_file(
             final_analysis_results.corrected_delay = args.delay_correct;
             final_analysis_results.corrected_rate = args.rate_correct;
             final_analysis_results.corrected_acel = args.acel_correct;
-
             (
                 final_analysis_results,
                 freq_rate_array_mut.unwrap(),
                 delay_rate_2d_data_comp_mut.unwrap(),
             )
         } else {
-            // --- NORMAL MODE ---
             let (mut analysis_results, freq_rate_array, delay_rate_2d_data_comp) =
                 run_analysis_pipeline(
                     &complex_vec,
@@ -307,7 +287,7 @@ pub fn process_cor_file(
                     current_length,
                     effective_integ_time,
                     &current_obs_time,
-                    &obs_time.unwrap(),
+                    &obs_time,
                     &rfi_ranges,
                     &bandpass_data,
                 )?;
@@ -315,11 +295,10 @@ pub fn process_cor_file(
             (analysis_results, freq_rate_array, delay_rate_2d_data_comp)
         };
 
-        // --- Output and Plotting ---
         let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
         let base_filename = generate_output_names(
             &header,
-            &obs_time.unwrap(),
+            &obs_time,
             &label_str,
             !rfi_ranges.is_empty(),
             args.frequency,
@@ -350,25 +329,12 @@ pub fn process_cor_file(
                     0,
                 )?;
                 println!("Bandpass binary file written to {:?}", output_file_path);
-                println!("Bandpass binary file format:");
-                println!(
-                    "  - Subsequent data consists of interleaved real and imaginary parts of complex spectra."
-                );
-                println!("  - Each real and imaginary part is a 4-byte f32 (LittleEndian).");
-                println!("  - File extension should be .bin");
-                println!("  - Output to {:?}", output_file_path);
-                println!("Next step:");
-                println!(
-                    "  - Add --bandpass {:?} to the commandline argument in this program.",
-                    output_file_path
-                );
             }
         }
 
         if args.dynamic_spectrum {
             let dynamic_spectrum_dir = frinz_dir.join("dynamic_spectrum");
             fs::create_dir_all(&dynamic_spectrum_dir)?;
-
             let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
             let base_filename = generate_output_names(
                 &header,
@@ -379,11 +345,9 @@ pub fn process_cor_file(
                 args.bandpass.is_some(),
                 current_length,
             );
-
             let fft_point_half = (header.fft_point / 2) as usize;
             let time_samples = complex_vec.len() / fft_point_half;
             let spectrum_array = Array::from_shape_vec((time_samples, fft_point_half), complex_vec.clone()).unwrap();
-            
             let output_path_freq = dynamic_spectrum_dir.join(format!("{}_dynamic_spectrum_frequency.png", base_filename));
             plot_dynamic_spectrum_freq(
                 output_path_freq.to_str().unwrap(),
@@ -393,18 +357,14 @@ pub fn process_cor_file(
                 current_length,
                 effective_integ_time,
             )?;
-
             let mut lag_data = Array::zeros((time_samples, header.fft_point as usize));
             let fft_point_usize = header.fft_point as usize;
-
             for (i, row) in spectrum_array.rows().into_iter().enumerate() {
                 let shifted_out = fft::perform_ifft_on_vec(row.as_slice().unwrap(), fft_point_usize);
-
                 for (j, val) in shifted_out.iter().enumerate() {
                     lag_data[[i, j]] = val.norm();
                 }
             }
-
             let output_path_lag = dynamic_spectrum_dir.join(format!("{}_dynamic_spectrum_time_lag.png", base_filename));
             plot_dynamic_spectrum_lag(
                 output_path_lag.to_str().unwrap(),
@@ -460,12 +420,9 @@ pub fn process_cor_file(
             let freq_output_line = format_freq_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
                 let header_str = "".to_string()
-                    + "#*******************************************************************************************************************************************************************************************
-"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD     
-"
-                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                
-"
+                    + "#*******************************************************************************************************************************************************************************************\n"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD     \n"
+                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                \n"
                     + "#*******************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
                 freq_output_str += &format!("{}\n", header_str);
@@ -570,11 +527,29 @@ pub fn process_cor_file(
                         let r2 = q21 * (1.0 - fx) + q22 * fx;
                         r1 * (1.0 - fy) + r2 * fy
                     };
+
+                    let (length_key, length_val) = if !pp_flag_ranges.is_empty() {
+                        let flag_str = pp_flag_ranges
+                            .iter()
+                            .map(|(s, e)| format!("{}-{}", s, e))
+                            .collect::<Vec<String>>()
+                            .join(", ");
+                        (
+                            "Length (flag) [s]".to_string(),
+                            format!("{:.3} ({})", analysis_results.length_f32.ceil(), flag_str)
+                        )
+                    } else {
+                        (
+                            "Length [s]".to_string(),
+                            format!("{:.3}", analysis_results.length_f32.ceil())
+                        )
+                    };
+
                     let stat_keys = vec![
                         "Epoch (UTC)",
                         "Station 1 & 2",
                         "Source",
-                        "Length [s]",
+                        &length_key,
                         "Frequency [MHz]",
                         "Peak Amp [%]",
                         "Peak Phs [deg]",
@@ -588,7 +563,7 @@ pub fn process_cor_file(
                         analysis_results.yyyydddhhmmss1.to_string(),
                         format!("{} & {}", header.station1_name, header.station2_name),
                         analysis_results.source_name.to_string(),
-                        format!("{:.3}", analysis_results.length_f32.ceil()),
+                        length_val,
                         format!("{:.3}", header.observing_frequency as f32 / 1e6),
                         format!("{:.6}", analysis_results.delay_max_amp * 100.0),
                         format!("{:+.5}", analysis_results.delay_phase),
@@ -661,12 +636,43 @@ pub fn process_cor_file(
                             0.0
                         }
                     };
+
+                    let (length_key, length_val) = if !pp_flag_ranges.is_empty() {
+                        let flag_str = pp_flag_ranges
+                            .iter()
+                            .map(|(s, e)| format!("{}-{}", s, e))
+                            .collect::<Vec<String>>()
+                            .join(", ");
+                        (
+                            "Length (flag) [s]".to_string(),
+                            format!("{:.3} ({})", analysis_results.length_f32.ceil(), flag_str)
+                        )
+                    } else {
+                        (
+                            "Length [s]".to_string(),
+                            format!("{:.3}", analysis_results.length_f32.ceil())
+                        )
+                    };
+
+                    let (freq_key, freq_val) = if !args.rfi.is_empty() {
+                        let rfi_str = args.rfi.iter().map(|s| s.replace(',', "-")).collect::<Vec<String>>().join(", ");
+                        (
+                            "Frequency (RFI) [MHz]".to_string(),
+                            format!("{:.3} ({})", header.observing_frequency as f32 / 1e6, rfi_str)
+                        )
+                    } else {
+                        (
+                            "Frequency [MHz]".to_string(),
+                            format!("{:.3}", header.observing_frequency as f32 / 1e6)
+                        )
+                    };
+
                     let stat_keys = vec![
                         "Epoch (UTC)",
                         "Station 1 & 2",
                         "Source",
-                        "Length [s]",
-                        "Frequency [MHz]",
+                        &length_key,
+                        &freq_key,
                         "Peak Amp [%]",
                         "Peak Phs [deg]",
                         "Peak Freq [MHz]",
@@ -677,8 +683,8 @@ pub fn process_cor_file(
                         analysis_results.yyyydddhhmmss1.to_string(),
                         format!("{} & {}", header.station1_name, header.station2_name),
                         analysis_results.source_name.to_string(),
-                        format!("{:.3}", analysis_results.length_f32.ceil()),
-                        format!("{:.3}", header.observing_frequency as f32 / 1e6),
+                        length_val,
+                        freq_val,
                         format!("{:.6}", analysis_results.freq_max_amp * 100.0),
                         format!("{:+.5}", analysis_results.freq_phase),
                         format!("{:+.6}", analysis_results.freq_max_freq),
@@ -710,7 +716,7 @@ pub fn process_cor_file(
     Ok(ProcessResult {
         header,
         label,
-        obs_time: obs_time.unwrap(),
+        obs_time,
         length_arg: length,
         cumulate_len,
         cumulate_snr,

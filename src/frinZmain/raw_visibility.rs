@@ -39,6 +39,7 @@ pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
             0, // skip in sectors
             l1, // loop_idx, which acts as sector index here
             false,
+            &[], // Add empty pp_flag_ranges
         ) {
             Ok(data) => data,
             Err(_) => break, // Stop if we can't read more data

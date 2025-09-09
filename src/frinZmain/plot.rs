@@ -134,7 +134,7 @@ pub fn delay_plane(
         .y_max_light_lines(0)
         .label_style(("sans-serif ", 30))
         .x_label_formatter(&|v| format!("{:.0}", v))
-        .y_label_formatter(&|v| format!("{:.2e}", v))
+        .y_label_formatter(&|v| format!("{:.2}", v))
         .draw()?;
 
     let resolution = 600; // Increased resolution for a smoother heatmap

@@ -14,9 +14,13 @@ use crate::utils;
 use crate::output::generate_output_names;
 
 
-pub fn run_single_file_analysis(args: &Args, flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)]) -> Result<(), Box<dyn Error>> {
+pub fn run_single_file_analysis(
+    args: &Args,
+    time_flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
+    pp_flag_ranges: &[(u32, u32)],
+) -> Result<(), Box<dyn Error>> {
     let input_path = args.input.as_ref().unwrap();
-    let result = process_cor_file(input_path, args, flag_ranges)?;
+    let result = process_cor_file(input_path, args, time_flag_ranges, pp_flag_ranges)?;
 
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let frinz_dir = parent_dir.join("frinZ");

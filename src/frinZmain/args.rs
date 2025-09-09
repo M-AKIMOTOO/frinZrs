@@ -115,6 +115,10 @@ pub struct Args {
     #[arg(long)]
     pub search_deep: bool,
 
+    /// Perform a rate search (equivalent to --acel-search 1).
+    #[arg(long)]
+    pub rate_search: bool,
+
     /// Perform acceleration search with specified fitting degrees (e.g., --acel-search 2 1 1 2).
     /// 2 for quadratic fit, 1 for linear fit.
     ///
@@ -144,10 +148,13 @@ pub struct Args {
     #[arg(long, default_value_t = 0)]
     pub cpu: u32,
 
-    /// Time ranges to flag and skip processing (e.g., "2023012090000 2023012100000").
-    /// Must be provided in pairs of start and end times in YYYYDDDHHMMSS format.
-    #[arg(long, num_args = 1.., value_name = "YYYYDDDHHMMSS")]
-    pub flag_time: Vec<String>,
+    /// Flag data by time or sector number (pp).
+    ///
+    /// Modes:
+    ///  time <START> <END>... : Skips processing for segments within the YYYYDDDHHMMSS time ranges.
+    ///  pp <START> <END>...   : Replaces visibility data with 0+0j for the given sector number ranges.
+    #[arg(long, num_args = 1.., value_name = "MODE [ARGS...]")]
+    pub flagging: Vec<String>,
 
     /// Calculate and plot the Allan deviation of the phase data.
     /// Requires --length and --loop to be set to generate a time series.

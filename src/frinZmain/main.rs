@@ -70,6 +70,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
+    if args.rate_search {
+        if args.acel_search.is_some() {
+            eprintln!("Error: --rate-search cannot be used with --acel-search.");
+            exit(1);
+        }
+        args.acel_search = Some(vec![1]);
+    }
+
     if !args.rate_padding.is_power_of_two() {
         eprintln!("Error: --rate-padding must be a power of two.");
         exit(1);
@@ -122,6 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 0, // skip in sectors
                 l1, // loop_idx, which acts as sector index here
                 false,
+                &[], // pp_flag_ranges
             ) {
                 Ok(data) => data,
                 Err(_) => {
@@ -178,33 +187,84 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let flag_ranges: Vec<(DateTime<Utc>, DateTime<Utc>)> = args
-        .flag_time
-        .chunks_exact(2)
-        .filter_map(|chunk| {
-            let start = utils::parse_flag_time(&chunk[0]);
-            let end = utils::parse_flag_time(&chunk[1]);
-            match (start, end) {
-                (Some(s), Some(e)) => {
-                    if s >= e {
-                        eprintln!(
-                            "Error: Start time ({}) must be before end time ({}) for --flag-time.",
-                            chunk[0], chunk[1]
-                        );
-                        exit(1);
-                    }
-                    Some((s, e))
-                }
-                _ => {
-                    eprintln!(
-                        "Error: Invalid time format in --flag-time arguments: '{}', '{}'. Expected YYYYDDDHHMMSS.",
-                        chunk[0], chunk[1]
-                    );
+    let mut time_flag_ranges: Vec<(DateTime<Utc>, DateTime<Utc>)> = Vec::new();
+    let mut pp_flag_ranges: Vec<(u32, u32)> = Vec::new();
+
+    if !args.flagging.is_empty() {
+        let mode = &args.flagging[0];
+        let params = &args.flagging[1..];
+
+        match mode.as_str() {
+            "time" => {
+                if params.len() % 2 != 0 {
+                    eprintln!("Error: --flagging time requires pairs of start and end times.");
                     exit(1);
                 }
+                time_flag_ranges = params
+                    .chunks_exact(2)
+                    .filter_map(|chunk| {
+                        let start = utils::parse_flag_time(&chunk[0]);
+                        let end = utils::parse_flag_time(&chunk[1]);
+                        match (start, end) {
+                            (Some(s), Some(e)) => {
+                                if s >= e {
+                                    eprintln!(
+                                        "Error: Start time ({}) must be before end time ({}) for --flagging time.",
+                                        chunk[0], chunk[1]
+                                    );
+                                    exit(1);
+                                }
+                                Some((s, e))
+                            }
+                            _ => {
+                                eprintln!(
+                                    "Error: Invalid time format in --flagging time: '{}, {}'. Expected YYYYDDDHHMMSS.",
+                                    chunk[0], chunk[1]
+                                );
+                                exit(1);
+                            }
+                        }
+                    })
+                    .collect();
             }
-        })
-        .collect();
+            "pp" => {
+                if params.len() % 2 != 0 {
+                    eprintln!("Error: --flagging pp requires pairs of start and end sector numbers.");
+                    exit(1);
+                }
+                pp_flag_ranges = params
+                    .chunks_exact(2)
+                    .filter_map(|chunk| {
+                        let start_res = chunk[0].parse::<u32>();
+                        let end_res = chunk[1].parse::<u32>();
+                        match (start_res, end_res) {
+                            (Ok(s), Ok(e)) => {
+                                if s > e {
+                                    eprintln!(
+                                        "Error: Start pp ({}) must not be greater than end pp ({}) for --flagging pp.",
+                                        s, e
+                                    );
+                                    exit(1);
+                                }
+                                Some((s, e))
+                            }
+                            _ => {
+                                eprintln!(
+                                    "Error: Invalid sector number in --flagging pp: '{}, {}'. Expected positive integers.",
+                                    chunk[0], chunk[1]
+                                );
+                                exit(1);
+                            }
+                        }
+                    })
+                    .collect();
+            }
+            _ => {
+                eprintln!("Error: Invalid mode for --flagging. Use 'time' or 'pp'.");
+                exit(1);
+            }
+        }
+    }
 
     if args.fringe_rate_map {
         if let Some(input_path) = &args.input {
@@ -216,7 +276,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("Error: --fringe-rate-map requires an --input file.");
             exit(1);
         }
-        return run_fringe_rate_map_analysis(&args, &flag_ranges);
+        return run_fringe_rate_map_analysis(&args, &time_flag_ranges, &pp_flag_ranges);
     }
 
     if !args.multi_sideband.is_empty() {
@@ -258,7 +318,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         return run_acel_search_analysis(
             &args,
             args.acel_search.as_ref().unwrap(),
-            &flag_ranges,
+            &time_flag_ranges,
+            &pp_flag_ranges,
         );
     }
 
@@ -276,14 +337,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         if !check_memory_usage(&args, &target_path)? {
             exit(0);
         }
-        return run_phase_reference_analysis(&args, &flag_ranges);
+        return run_phase_reference_analysis(&args, &time_flag_ranges, &pp_flag_ranges);
     }
 
     if let Some(input_path) = &args.input {
         if !check_memory_usage(&args, input_path)? {
             exit(0);
         }
-        return run_single_file_analysis(&args, &flag_ranges);
+        return run_single_file_analysis(&args, &time_flag_ranges, &pp_flag_ranges);
     }
 
     // If we reach here, no primary mode was selected.

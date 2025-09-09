@@ -21,6 +21,7 @@ pub fn read_visibility_data(
     skip: i32,
     loop_index: i32,
     is_cumulate: bool,
+    pp_flag_ranges: &[(u32, u32)],
 ) -> io::Result<(Vec<C32>, DateTime<Utc>, f32)> {
     let sector_size = (8 + header.fft_point / 4) * 16;
 
@@ -48,10 +49,19 @@ pub fn read_visibility_data(
         effective_integ_time = cursor.read_f32::<byteorder::LittleEndian>()?;
         cursor.set_position(sector_start_pos + SECTOR_HEADER_SIZE);
 
+        let current_pp = actual_length_start as u32 + i as u32;
+        let is_pp_flagged = pp_flag_ranges
+            .iter()
+            .any(|(start, end)| current_pp >= *start && current_pp <= *end);
+
         for _ in 0..fft_point_half {
             let real = cursor.read_f32::<byteorder::LittleEndian>()?;
             let imag = cursor.read_f32::<byteorder::LittleEndian>()?;
-            complex_vec.push(C32::new(real, imag));
+            if is_pp_flagged {
+                complex_vec.push(C32::new(0.0, 0.0));
+            } else {
+                complex_vec.push(C32::new(real, imag));
+            }
         }
     }
 
