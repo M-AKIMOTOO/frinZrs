@@ -65,6 +65,7 @@ pub fn analyze_results(
     obs_time: &DateTime<Utc>,
     padding_length: usize,
     args: &Args,
+    search_mode: Option<&str>,
 ) -> AnalysisResults {
     let fft_point_usize = header.fft_point as usize;
     let fft_point_half = fft_point_usize / 2;
@@ -110,7 +111,7 @@ pub fn analyze_results(
             }
         }
         (temp_peak_rate_idx, temp_peak_delay_idx)
-    } else if args.search || args.search_deep {
+    } else if search_mode == Some("peak") || search_mode == Some("deep") {
         // Case 2: --search or --search_deep is specified, no window. Find the global maximum.
         let (mut max_val, mut max_r_idx, mut max_d_idx) = (0.0f32, 0, 0);
         for r_idx in 0..delay_rate_2d_data_array.shape()[0] {
@@ -135,7 +136,7 @@ pub fn analyze_results(
 
     let mut residual_delay_val: f32 = delay_range[peak_delay_idx];
     let mut delay_offset = 0.0;
-    if args.search {
+    if search_mode == Some("peak") {
         // Extract points for fitting
         let mut x_coords: Vec<f64> = Vec::new();
         let mut y_values: Vec<f64> = Vec::new();
@@ -191,7 +192,7 @@ pub fn analyze_results(
             }
         }
         (temp_peak_freq_row_idx, temp_peak_rate_col_idx)
-    } else if args.search || args.search_deep {
+    } else if search_mode == Some("peak") || search_mode == Some("deep") {
         // Case 2: --search or --search_deep is specified, no window. Find the global maximum.
         let (mut max_val, mut max_f_idx, mut max_r_idx) = (0.0f32, 0, 0);
         for f_idx in 0..freq_rate_2d_data_array.shape()[0] {
@@ -253,7 +254,7 @@ pub fn analyze_results(
         residual_rate_val = rate_range[peak_rate_idx];
     };
 
-    if args.search {
+    if search_mode == Some("peak") {
         if args.length == 1 {
             // When length is 1, rate fitting is unstable, so force residual_rate to 0.
             //eprintln!("Warning: Rate fitting is skipped because --length is 1. Residual rate is set to 0.");

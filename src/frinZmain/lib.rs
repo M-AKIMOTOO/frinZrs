@@ -7,7 +7,7 @@ pub mod fft;
 pub mod fitting;
 pub mod fringe_rate_map;
 pub mod header;
-pub mod imaging;
+
 pub mod multisideband;
 pub mod output;
 pub mod phase_reference;

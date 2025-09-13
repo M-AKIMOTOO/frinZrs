@@ -20,7 +20,7 @@ mod fft;
 mod fitting;
 mod fringe_rate_map;
 mod header;
-mod imaging;
+
 mod logo;
 mod multisideband;
 mod output;
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut args = match Args::try_parse() {
+    let args = match Args::try_parse() {
         Ok(args) => args,
         Err(e) => {
             if std::env::args().len() <= 1 {
@@ -69,14 +69,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     };
-
-    if args.rate_search {
-        if args.acel_search.is_some() {
-            eprintln!("Error: --rate-search cannot be used with --acel-search.");
-            exit(1);
-        }
-        args.acel_search = Some(vec![1]);
-    }
 
     if !args.rate_padding.is_power_of_two() {
         eprintln!("Error: --rate-padding must be a power of two.");
@@ -92,7 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // --- Create Output Directory ---
         let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
-        let output_dir = parent_dir.join("frinZ").join("rawvis");
+        let output_dir = parent_dir.join("frinZ").join("cor2bin");
         if let Err(e) = fs::create_dir_all(&output_dir) {
             eprintln!("Error creating output directory {:?}: {}", output_dir, e);
             exit(1);
@@ -161,6 +153,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         };
 
+        if let Err(e) = output_file.write_f32::<LittleEndian>(header.fft_point as f32) {
+            eprintln!("Error writing fft_point to file: {}", e);
+            exit(1);
+        }
+        if let Err(e) = output_file.write_f32::<LittleEndian>(header.number_of_sector as f32) {
+            eprintln!("Error writing number_of_sector to file: {}", e);
+            exit(1);
+        }
+
         for val in &flattened_spectra {
             if let Err(e) = output_file.write_f32::<LittleEndian>(val.re) {
                 eprintln!("Error writing real part to file: {}", e);
@@ -171,7 +172,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 exit(1);
             }
         }
-        println!("Raw complex visibility data written to {:?}", output_file_path);
+        println!("Raw complex visibility data written to {:?}.", output_file_path);
+        println!("このバイナリファイルは以下のフォーマットで構成されています:");
+        println!("- 先頭 4 byte: FFT点数 (f32, little-endian) = {}", header.fft_point);
+        println!("- 次の 4 byte: セクター数(pp) (f32, little-endian) = {}", header.number_of_sector);
+        println!("- それ以降: 複素スペクトルデータ (f32 real, f32 imag の繰り返し)");
         return Ok(());
     }
 
@@ -287,40 +292,36 @@ fn main() -> Result<(), Box<dyn Error>> {
         return run_multisideband_analysis(&args);
     }
 
-    // Handle default for acel_search if provided without arguments
-    if let Some(ref mut acel_search_vec) = args.acel_search {
-        if acel_search_vec.is_empty() {
-            *acel_search_vec = vec![2];
-        }
-    }
-
     // --- Argument Validation & Dispatch ---
-    if args.acel_search.is_some() {
-        if let Some(input_path) = &args.input {
-            if !check_memory_usage(&args, input_path)? {
-                exit(0);
+    if let Some(search_mode) = &args.search {
+        if search_mode == "acel" || search_mode == "rate" {
+            if let Some(input_path) = &args.input {
+                if !check_memory_usage(&args, input_path)? {
+                    exit(0);
+                }
             }
-        }
-        // Check if acel_search was provided by the user
-        if args.input.is_none() {
-            eprintln!("Error: --acel-search requires an --input file.");
-            exit(1);
-        }
-        if args.length == 0 {
-            eprintln!(
-                "Warning: --acel-search is used, but --length is not specified. This is required for the analysis."
+            if args.input.is_none() {
+                eprintln!("Error: --search={} requires an --input file.", search_mode);
+                exit(1);
+            }
+            if args.length == 0 {
+                eprintln!(
+                    "Warning: --search={} is used, but --length is not specified. This is required for the analysis.",
+                    search_mode
+                );
+                exit(1);
+            }
+            if args.loop_ == 1 {
+                eprintln!("Warning: --search={} is used, but --loop is not specified or is 1. Multiple loops are usually needed for fitting.", search_mode);
+            }
+            let degrees = if search_mode == "rate" { vec![1] } else { vec![2] };
+            return run_acel_search_analysis(
+                &args,
+                &degrees,
+                &time_flag_ranges,
+                &pp_flag_ranges,
             );
-            exit(1); // lengthが0の場合、分析に必須なのでexit(1)を追加
         }
-        if args.loop_ == 1 {
-            eprintln!("Warning: --acel-search is used, but --loop is not specified or is 1. Multiple loops are usually needed for fitting.");
-        }
-        return run_acel_search_analysis(
-            &args,
-            args.acel_search.as_ref().unwrap(),
-            &time_flag_ranges,
-            &pp_flag_ranges,
-        );
     }
 
     if args.input.is_some() && !args.phase_reference.is_empty() {

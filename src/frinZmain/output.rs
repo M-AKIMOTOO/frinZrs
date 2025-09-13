@@ -68,9 +68,9 @@ pub fn output_header_info(header: &CorHeader, output_dir: &Path, basename: &str)
         header.station1_clock_acel,
         header.station1_clock_jerk,
         header.station1_clock_snap,
-        header.station1_position[0] as f32,
-        header.station1_position[1] as f32,
-        header.station1_position[2] as f32,
+        header.station1_position[0] as f64,
+        header.station1_position[1] as f64,
+        header.station1_position[2] as f64,
         header.station2_name,
         header.station2_code,
         header.station2_clock_delay,
@@ -78,12 +78,12 @@ pub fn output_header_info(header: &CorHeader, output_dir: &Path, basename: &str)
         header.station2_clock_acel,
         header.station2_clock_jerk,
         header.station2_clock_snap,
-        header.station2_position[0] as f32,
-        header.station2_position[1] as f32,
-        header.station2_position[2] as f32,
+        header.station2_position[0] as f64,
+        header.station2_position[1] as f64,
+        header.station2_position[2] as f64,
         header.source_name,
-        header.source_position_ra.to_degrees() as f32,
-        header.source_position_dec.to_degrees() as f32
+        header.source_position_ra.to_degrees() as f64,
+        header.source_position_dec.to_degrees() as f64
     );
     if !header_file_path.exists() {
         std::fs::write(header_file_path, &header_info)?;

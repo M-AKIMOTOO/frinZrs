@@ -1,6 +1,8 @@
 use clap::Parser;
 use std::path::PathBuf;
 
+
+
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "frinZ",
@@ -13,7 +15,6 @@ This program is licensed under the MIT License
 see https://opensource.org/license/mit"#
 )]
 pub struct Args {
-
     /// Path to the input .cor file
     #[arg(long, aliases = ["in", "inp", "inpu"])]
     pub input: Option<PathBuf>,
@@ -54,7 +55,7 @@ pub struct Args {
     #[arg(long, aliases = ["fr", "fre", "freq", "frequ", "freque", "frequen", "frequenc"])]
     pub frequency: bool,
 
-    /// Output the raw complex visibility data to a binary file. Requires --raw-visibility to be active.
+    /// Output the raw complex visibility data to a binary file.
     #[arg(long, aliases = ["c2b", "cor2b", "cor2bi"])]
     pub cor2bin: bool,
 
@@ -90,16 +91,11 @@ pub struct Args {
     #[arg(long, aliases = ["rate-p", "rate-pa", "rate-pad", "rate-padd", "rate-paddi", "rate-paddin"], default_value_t = 1)]
     pub rate_padding: u32,
 
-    // /pub cmap_time: bool,
-
     /// Cumulate length in seconds.
     #[arg(long, aliases = ["cu", "cum", "cumu", "cumul", "cumula", "cumulat"], default_value_t = 0)]
     pub cumulate: i32,
 
     /// Generate additional plots for amplitude, SNR, phase, and noise level over time.
-    /// These plots are useful for visualizing the time-series behavior of fringe parameters.
-    /// Best used in conjunction with --length (to specify integration time per point)
-    /// and --loop (to specify the number of points).
     #[arg(long, aliases = ["add", "add-p", "add-pl", "add-plo"])]
     pub add_plot: bool,
 
@@ -107,26 +103,18 @@ pub struct Args {
     #[arg(long)]
     pub header: bool,
 
-    /// Enable precise search mode.
-    #[arg(long)]
-    pub search: bool,
-
-    /// Enable deep hierarchical search mode with fine-grained delay and rate search.
-    #[arg(long)]
-    pub search_deep: bool,
-
-    /// Perform a rate search (equivalent to --acel-search 1).
-    #[arg(long)]
-    pub rate_search: bool,
-
-    /// Perform acceleration search with specified fitting degrees (e.g., --acel-search 2 1 1 2).
-    /// 2 for quadratic fit, 1 for linear fit.
+    /// Specifies the search mode. [possible values: peak, deep, rate, acel]
     ///
-    /// Note: --length (must be > 0) and --loop (recommended > 1) are essential for this analysis.
-    #[arg(long, num_args = 0.., value_name = "DEGREE")]
-    pub acel_search: Option<Vec<i32>>,
+    /// - peak: Precise search for the fringe peak using iterative fitting. (equivalent to the old --search flag).
+    /// - deep: A deep, hierarchical search for fringes. Computationally expensive. (equivalent to the old --search-deep flag).
+    /// - rate: A search for the fringe rate by performing a linear fit. (equivalent to the old --rate-search flag).
+    /// - acel: A search for fringe acceleration by performing a quadratic fit.
+    ///
+    /// If `--search` is provided without a value, it defaults to `peak`.
+    #[arg(long, num_args = 0..=1, default_missing_value = "peak", value_name = "MODE")]
+    pub search: Option<String>,
 
-    /// Number of iterations for the precise search mode (--search).
+    /// Number of iterations for the precise search mode (--search=peak).
     #[arg(long, default_value_t = 5)]
     pub iter: u32,
 
@@ -142,7 +130,7 @@ pub struct Args {
     #[arg(long, aliases = ["bptable"])]
     pub bandpass_table: bool,
 
-    /// Number of CPU cores to use for parallel processing. Only effective with `--search-deep`.
+    /// Number of CPU cores to use for parallel processing. Only effective with `--search=deep`.
     /// If 0, automatically determines the number of cores.
     /// If specified value is greater than available CPU cores, it defaults to half of available cores.
     #[arg(long, default_value_t = 0)]
@@ -153,7 +141,7 @@ pub struct Args {
     /// Modes:
     ///  time <START> <END>... : Skips processing for segments within the YYYYDDDHHMMSS time ranges.
     ///  pp <START> <END>...   : Replaces visibility data with 0+0j for the given sector number ranges.
-    #[arg(long, num_args = 1.., value_name = "MODE [ARGS...]")]
+    #[arg(long, num_args = 1.., value_name = "MODE [ARGS...]", aliases = ["flag"])]
     pub flagging: Vec<String>,
 
     /// Calculate and plot the Allan deviation of the phase data.

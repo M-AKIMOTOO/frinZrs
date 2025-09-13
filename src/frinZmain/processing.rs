@@ -214,38 +214,40 @@ pub fn process_cor_file(
             continue;
         }
 
-        let (analysis_results, freq_rate_array, delay_rate_2d_data_comp) = if args.search_deep {
-            let deep_search_result = deep_search::run_deep_search(
-                &complex_vec,
-                &header,
-                current_length,
-                effective_integ_time,
-                &current_obs_time,
-                &obs_time,
-                &rfi_ranges,
-                &bandpass_data,
-                args,
-                pp,
-                args.cpu,
-            )?;
-            (
-                deep_search_result.analysis_results,
-                deep_search_result.freq_rate_array,
-                deep_search_result.delay_rate_2d_data,
-            )
-        } else if args.search {
-            let mut total_delay_correct = args.delay_correct;
-            let mut total_rate_correct = args.rate_correct;
-            let mut analysis_results_mut = None;
-            let mut freq_rate_array_mut = None;
-            let mut delay_rate_2d_data_comp_mut = None;
+        let (analysis_results, freq_rate_array, delay_rate_2d_data_comp) = match args.search.as_deref() {
+            Some("deep") => {
+                let deep_search_result = deep_search::run_deep_search(
+                    &complex_vec,
+                    &header,
+                    current_length,
+                    effective_integ_time,
+                    &current_obs_time,
+                    &obs_time,
+                    &rfi_ranges,
+                    &bandpass_data,
+                    args,
+                    pp,
+                    args.cpu,
+                )?;
+                (
+                    deep_search_result.analysis_results,
+                    deep_search_result.freq_rate_array,
+                    deep_search_result.delay_rate_2d_data,
+                )
+            }
+            Some("peak") => {
+                let mut total_delay_correct = args.delay_correct;
+                let mut total_rate_correct = args.rate_correct;
+                let mut analysis_results_mut = None;
+                let mut freq_rate_array_mut = None;
+                let mut delay_rate_2d_data_comp_mut = None;
 
-            for _ in 0..args.iter {
-                let (iter_results, iter_freq_rate_array, iter_delay_rate_2d_data_comp) =
-                    run_analysis_pipeline(
+                for _ in 0..args.iter {
+                    let (iter_results, iter_freq_rate_array, iter_delay_rate_2d_data_comp) = run_analysis_pipeline(
                         &complex_vec,
                         &header,
                         args,
+                        Some("peak"),
                         total_delay_correct,
                         total_rate_correct,
                         args.acel_correct,
@@ -256,31 +258,32 @@ pub fn process_cor_file(
                         &rfi_ranges,
                         &bandpass_data,
                     )?;
-                total_delay_correct += iter_results.delay_offset;
-                total_rate_correct += iter_results.rate_offset;
-                analysis_results_mut = Some(iter_results);
-                freq_rate_array_mut = Some(iter_freq_rate_array);
-                delay_rate_2d_data_comp_mut = Some(iter_delay_rate_2d_data_comp);
-            }
+                    total_delay_correct += iter_results.delay_offset;
+                    total_rate_correct += iter_results.rate_offset;
+                    analysis_results_mut = Some(iter_results);
+                    freq_rate_array_mut = Some(iter_freq_rate_array);
+                    delay_rate_2d_data_comp_mut = Some(iter_delay_rate_2d_data_comp);
+                }
 
-            let mut final_analysis_results = analysis_results_mut.unwrap();
-            final_analysis_results.length_f32 = current_length as f32 * effective_integ_time;
-            final_analysis_results.residual_delay = total_delay_correct;
-            final_analysis_results.residual_rate = total_rate_correct;
-            final_analysis_results.corrected_delay = args.delay_correct;
-            final_analysis_results.corrected_rate = args.rate_correct;
-            final_analysis_results.corrected_acel = args.acel_correct;
-            (
-                final_analysis_results,
-                freq_rate_array_mut.unwrap(),
-                delay_rate_2d_data_comp_mut.unwrap(),
-            )
-        } else {
-            let (mut analysis_results, freq_rate_array, delay_rate_2d_data_comp) =
-                run_analysis_pipeline(
+                let mut final_analysis_results = analysis_results_mut.unwrap();
+                final_analysis_results.length_f32 = current_length as f32 * effective_integ_time;
+                final_analysis_results.residual_delay = total_delay_correct;
+                final_analysis_results.residual_rate = total_rate_correct;
+                final_analysis_results.corrected_delay = args.delay_correct;
+                final_analysis_results.corrected_rate = args.rate_correct;
+                final_analysis_results.corrected_acel = args.acel_correct;
+                (
+                    final_analysis_results,
+                    freq_rate_array_mut.unwrap(),
+                    delay_rate_2d_data_comp_mut.unwrap(),
+                )
+            }
+            _ => { // No search or other modes not handled here
+                let (mut analysis_results, freq_rate_array, delay_rate_2d_data_comp) = run_analysis_pipeline(
                     &complex_vec,
                     &header,
                     args,
+                    None,
                     args.delay_correct,
                     args.rate_correct,
                     args.acel_correct,
@@ -291,8 +294,9 @@ pub fn process_cor_file(
                     &rfi_ranges,
                     &bandpass_data,
                 )?;
-            analysis_results.length_f32 = (current_length as f32 * effective_integ_time).ceil();
-            (analysis_results, freq_rate_array, delay_rate_2d_data_comp)
+                analysis_results.length_f32 = (current_length as f32 * effective_integ_time).ceil();
+                (analysis_results, freq_rate_array, delay_rate_2d_data_comp)
+            }
         };
 
         let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
@@ -734,6 +738,7 @@ fn run_analysis_pipeline(
     complex_vec: &[C32],
     header: &CorHeader,
     base_args: &Args,
+    search_mode: Option<&str>,
     delay_correct: f32,
     rate_correct: f32,
     acel_correct: f32,
@@ -805,6 +810,7 @@ fn run_analysis_pipeline(
         &current_obs_time,
         padding_length,
         &temp_args,
+        search_mode,
     );
 
     Ok((analysis_results, freq_rate_array, delay_rate_2d_data_comp))

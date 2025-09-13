@@ -207,6 +207,7 @@ fn get_coarse_estimates(
             current_obs_time,
             padding_length,
             args,
+            args.search.as_deref(),
         );
         
         let coarse_delay = analysis_results.delay_offset;
@@ -218,8 +219,7 @@ fn get_coarse_estimates(
         println!("[DEEP SEARCH] No windows specified, running coarse search (no fitting) for initial estimates");
         
         let mut search_args = args.clone();
-        search_args.search = false; // フィッティングを無効化
-        search_args.search_deep = true; // グローバル最大値探索を有効化
+        search_args.search = Some("deep".to_string()); // Enable global max search, disable fitting
         
         let (mut freq_rate_array, padding_length) = process_fft(
             complex_vec,
@@ -245,6 +245,7 @@ fn get_coarse_estimates(
             current_obs_time,
             padding_length,
             &search_args,
+            search_args.search.as_deref(),
         );
         
         // 粗い探索の結果（フィッティングなし）を取得
@@ -381,6 +382,7 @@ fn evaluate_delay_rate_snr(
         current_obs_time,
         padding_length,
         &temp_args,
+        None, // No search fitting during deep search iterations
     );
     
     Ok(analysis_results.delay_snr)
@@ -437,6 +439,7 @@ fn perform_final_analysis(
         current_obs_time,
         padding_length,
         &final_args,
+        Some("deep"), // Final analysis for deep search should find the global max
     );
     
     // Deep searchの結果を反映
@@ -535,7 +538,6 @@ fn create_corrected_args(args: &Args, delay: f32, rate: f32) -> Args {
     let mut corrected_args = args.clone();
     corrected_args.delay_correct = delay;
     corrected_args.rate_correct = rate;
-    corrected_args.search = false; // 無限ループを防ぐ
-    corrected_args.search_deep = false; // 無限ループを防ぐ
+    corrected_args.search = None; // Prevent infinite loops
     corrected_args
 }

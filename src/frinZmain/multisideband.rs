@@ -236,8 +236,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let c_band_temp_args = Args {
         delay_correct: 0.0,
         rate_correct: 0.0,
-        search: false,
-        search_deep: false,
+        search: None,
         ..args.clone()
     };
 
@@ -250,6 +249,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         &c_band_obs_time,
         c_band_padding_length,
         &c_band_temp_args,
+        None,
     );
 
     // --- Perform initial analysis for X-band ---
@@ -274,8 +274,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let x_band_temp_args = Args {
         delay_correct: 0.0,
         rate_correct: 0.0,
-        search: false,
-        search_deep: false,
+        search: None,
         ..args.clone()
     };
 
@@ -288,6 +287,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         &x_band_obs_time,
         x_band_padding_length,
         &x_band_temp_args,
+        None,
     );
 
     writeln!(tee_writer, "Initial analysis complete for both bands.")?;

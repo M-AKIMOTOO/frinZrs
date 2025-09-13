@@ -167,7 +167,7 @@ fn compute_uv_for_pair(
 #[derive(Parser, Debug)]
 #[command(
     name = "gfrinZ",
-    version = env!("CARGO_PKG_VERSION"),
+    version = "0.1.0",
     author = "Masanori AKIMOTO  <masanori.akimoto.ac@gmail.com>",
     about = "Global (antenna-based) fringe solver that aggregates baseline-based estimates",
     after_help = "Input: JSONL of baseline estimates with fields a,b,tau_s,rate_hz and optional sigma/w/snr/t_idx"
@@ -299,7 +299,7 @@ struct Cli {
     #[arg(long, default_value = "header")]
     auto_flip: String,
 
-    /// バイナリ出力先ディレクトリ（省略時は ./gfrinZ_out）
+    /// バイナリ出力先ディレクトリ（省略時は入力ファイルの場所に gfrinZ/ を作成）
     #[arg(long)]
     out_dir: Option<PathBuf>,
 
@@ -797,6 +797,7 @@ fn main() -> anyhow::Result<()> {
                 &t0,
                 padding_length,
                 &args,
+                args.search.as_deref(),
             );
 
             let tau_s = analysis.residual_delay as f64 / e.header.sampling_speed as f64;
@@ -845,7 +846,22 @@ fn main() -> anyhow::Result<()> {
     }
 
     // バイナリ出力（solutions.bin, baselines.bin）準備
-    let out_dir = cli.out_dir.clone().unwrap_or_else(|| PathBuf::from("gfrinZ_out"));
+    let out_dir = cli.out_dir.clone().unwrap_or_else(|| {
+        if !cli.cor.is_empty() {
+            let first_cor_path = cli.cor[0].splitn(3, ':').last().unwrap_or(".");
+            PathBuf::from(first_cor_path)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("gfrinZ")
+        } else if let Some(input_path) = &cli.input {
+            input_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("gfrinZ")
+        } else {
+            PathBuf::from("gfrinZ_out") // Fallback
+        }
+    });
     std::fs::create_dir_all(&out_dir)?;
     let sol_path = out_dir.join("solutions.bin");
     let bln_path = out_dir.join("baselines.bin");
@@ -1041,6 +1057,7 @@ fn main() -> anyhow::Result<()> {
                 &t0,
                 padding_length,
                 &args,
+                args.search.as_deref(),
             );
 
             let mut tau_s = analysis.residual_delay as f64 / e.header.sampling_speed as f64;
