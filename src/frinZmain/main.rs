@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let args = match Args::try_parse() {
+    let mut args = match Args::try_parse() {
         Ok(args) => args,
         Err(e) => {
             if std::env::args().len() <= 1 {
@@ -69,6 +69,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     };
+
+    // シンプルな仕様: --cumulate が指定されたら rate_padding は常に 1 にする
+    if args.cumulate != 0 {
+        args.rate_padding = 1;
+    }
 
     if !args.rate_padding.is_power_of_two() {
         eprintln!("Error: --rate-padding must be a power of two.");
