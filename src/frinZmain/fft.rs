@@ -44,10 +44,11 @@ pub fn process_fft(
 
         let mut shifted_out = vec![C32::new(0.0, 0.0); padding_length];
 
-        // FFT shift
+        // FFT shift (works for even/odd lengths)
         let (first_half, second_half) = fft_exe.split_at(padding_length_half);
-        shifted_out[..padding_length_half].copy_from_slice(second_half);
-        shifted_out[padding_length_half..].copy_from_slice(first_half);
+        // For odd lengths, second_half.len() = first_half.len() + 1
+        shifted_out[..second_half.len()].copy_from_slice(second_half);
+        shifted_out[second_half.len()..].copy_from_slice(first_half);
 
         let scaled_shifted_out: Vec<C32> = shifted_out
             .iter_mut()
