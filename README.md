@@ -6,7 +6,7 @@ Rust version of frinZ.py - A high-performance fringe-fitting tool for VLBI data 
 Original Python version: https://github.com/M-AKIMOTOO/frinZ.py
 
 ## Note
-fontconfig-devel needs to be installed for this program.
+If the OS is Rocky Linux 8, you have to install the fontconfig-devel package.
 
 ## Overview
 
