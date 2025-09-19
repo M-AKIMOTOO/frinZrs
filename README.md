@@ -5,6 +5,9 @@
 Rust version of frinZ.py - A high-performance fringe-fitting tool for VLBI data analysis.  
 Original Python version: https://github.com/M-AKIMOTOO/frinZ.py
 
+## Note
+fontconfig-devel needs to be installed for this program.
+
 ## Overview
 
 frinZrs is a Rust implementation of the frinZ fringe-fitting tool for processing Very Long Baseline Interferometry (VLBI) correlation data. It provides accurate delay and rate measurements with enhanced performance compared to the original Python version.
