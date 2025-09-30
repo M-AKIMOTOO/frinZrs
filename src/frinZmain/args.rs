@@ -159,6 +159,10 @@ pub struct Args {
     #[arg(long, aliases = ["frmap"])]
     pub fringe_rate_map: bool,
 
+    /// Path to the off-source .cor file for maser analysis. Requires --input for on-source data.
+    #[arg(long)]
+    pub maser: Option<PathBuf>,
+
     /// Perform multi-sideband analysis.
     /// Arguments:
     /// 1. C_BAND_DATA: Path to the C-band .cor file.

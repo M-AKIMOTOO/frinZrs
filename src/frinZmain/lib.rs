@@ -7,6 +7,7 @@ pub mod fft;
 pub mod fitting;
 pub mod fringe_rate_map;
 pub mod header;
+pub mod maser;
 
 pub mod multisideband;
 pub mod output;

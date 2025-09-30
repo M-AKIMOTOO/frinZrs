@@ -22,6 +22,7 @@ mod fringe_rate_map;
 mod header;
 
 mod logo;
+mod maser;
 mod multisideband;
 mod output;
 mod phase_reference;
@@ -43,6 +44,7 @@ use crate::phase_reference::run_phase_reference_analysis;
 use crate::raw_visibility::run_raw_visibility_plot;
 use crate::single_file::run_single_file_analysis;
 use crate::pre_check::check_memory_usage;
+use crate::maser::run_maser_analysis;
 
 // --- Type Aliases for Clarity ---
 pub type C32 = Complex<f32>;
@@ -195,6 +197,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             exit(1);
         }
         return Ok(());
+    }
+
+    if args.maser.is_some() {
+        if args.input.is_none() {
+            eprintln!("Error: --maser requires an --input file for on-source data.");
+            exit(1);
+        }
+        return run_maser_analysis(&args);
     }
 
     let mut time_flag_ranges: Vec<(DateTime<Utc>, DateTime<Utc>)> = Vec::new();
