@@ -1,8 +1,7 @@
 use std::error::Error;
 use std::fs::{self, File};
 use std::io::{Cursor, Read, Write};
-use std::path::Path;
-use num_complex::Complex;
+use std::path::{Path, PathBuf};
 use ndarray::{Array1, Axis};
 use plotters::prelude::*;
 
@@ -11,6 +10,8 @@ use crate::header::{parse_header, CorHeader};
 use crate::read::read_visibility_data;
 use crate::fft::process_fft;
 use crate::rfi::parse_rfi_ranges;
+
+const C_KM_S: f64 = 299792.458; // Speed of light in km/s
 
 /// Extracts the cross-power spectrum at zero fringe rate from a .cor file.
 fn get_spectrum_from_file(
@@ -56,136 +57,191 @@ fn get_spectrum_from_file(
 }
 
 pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
+    // 1. Parse args
     println!("Running Maser Analysis...");
     let on_source_path = args.input.as_ref().unwrap();
-    let off_source_path = args.maser.as_ref().unwrap();
+    let off_source_path = PathBuf::from(&args.maser[0]);
+    let velocity_correction: f64 = if args.maser.len() > 1 { args.maser[1].parse()? } else { 0.0 };
+    let rest_freq_mhz: f64 = if args.maser.len() > 2 { args.maser[2].parse()? } else { 6668.5192 };
 
     println!("  ON Source: {:?}", on_source_path);
     println!("  OFF Source: {:?}", off_source_path);
+    println!("  Rest Frequency: {} MHz", rest_freq_mhz);
+    println!("  Velocity Correction: {} km/s", velocity_correction);
 
-    // Get spectra
+    // 2. Get full spectra
     let (header_on, spec_on) = get_spectrum_from_file(on_source_path, args)?;
-    let (header_off, spec_off) = get_spectrum_from_file(off_source_path, args)?;
+    let (_header_off, spec_off) = get_spectrum_from_file(&off_source_path, args)?;
 
-    // Create output directory
+    // 3. Setup paths and full-range vectors
     let parent_dir = on_source_path.parent().unwrap_or_else(|| Path::new(""));
     let output_dir = parent_dir.join("frinZ").join("maser");
     fs::create_dir_all(&output_dir)?;
     let on_stem = on_source_path.file_stem().unwrap().to_str().unwrap();
     let off_stem = off_source_path.file_stem().unwrap().to_str().unwrap();
 
-    let freq_resolution_mhz = (header_on.sampling_speed as f32 / 2.0 / 1e6) / (header_on.fft_point as f32 / 2.0);
-    let freq_range: Vec<f32> = (0..header_on.fft_point as usize / 2)
-        .map(|i| i as f32 * freq_resolution_mhz + (header_on.observing_frequency as f32 / 1e6))
+    let freq_resolution_mhz = (header_on.sampling_speed as f64 / 2.0 / 1e6) / (header_on.fft_point as f64 / 2.0);
+    let freq_range_mhz: Vec<f64> = (0..header_on.fft_point as usize / 2)
+        .map(|i| i as f64 * freq_resolution_mhz + (header_on.observing_frequency / 1e6))
+        .collect();
+    let velocity_range_kms: Vec<f64> = freq_range_mhz.iter()
+        .map(|&f_obs| C_KM_S * (rest_freq_mhz - f_obs) / rest_freq_mhz - velocity_correction)
         .collect();
 
-    // --- Write data to CSV ---
-    let csv_filename = output_dir.join(format!("{}_vs_{}_data.csv", on_stem, off_stem));
-    let mut file = File::create(&csv_filename)?;
-    writeln!(file, "Frequency,onsource,offsource")?;
 
-    for i in 0..freq_range.len() {
-        writeln!(file, "{},{},{}", freq_range[i], spec_on[i], spec_off[i])?;
-    }
-    println!("Maser data saved to: {:?}", csv_filename);
-    // --- End of CSV writing ---
+    // 5. Conditional analysis range selection
+    let analysis_indices: Vec<usize> = if rest_freq_mhz >= 6600.0 && rest_freq_mhz <= 7112.0 {
+        println!("  C-band maser detected. Restricting analysis to 6660-6675 MHz range.");
+        freq_range_mhz.iter().enumerate()
+            .filter(|(_, &freq)| freq >= 6660.0 && freq <= 6675.0)
+            .map(|(i, _)| i)
+            .collect()
+    } else {
+        (0..freq_range_mhz.len()).collect()
+    };
 
-    // --- Plot for ON vs OFF ---
-    let on_plot_data: Vec<(f32, f32)> = freq_range.iter().zip(spec_on.iter()).map(|(&x, &y)| (x, y)).collect();
-    let off_plot_data: Vec<(f32, f32)> = freq_range.iter().zip(spec_off.iter()).map(|(&x, &y)| (x, y)).collect();
-    
-    let on_off_plot_filename = output_dir.join(format!("{}_vs_{}_on_off.png", on_stem, off_stem));
-
-    plot_on_off_spectra(
-        &on_off_plot_filename,
-        &on_plot_data,
-        &off_plot_data,
-    )?;
-    println!("ON vs OFF source spectra plot saved to: {:?}", on_off_plot_filename);
-    // --- End of plot section ---
-
-    // Validate headers
-    if header_on.fft_point != header_off.fft_point {
-        return Err("ON and OFF source files must have the same fft_point.".into());
-    }
-    if header_on.sampling_speed != header_off.sampling_speed {
-        return Err("ON and OFF source files must have the same sampling_speed.".into());
+    if analysis_indices.is_empty() {
+        return Err("No data found in the specified frequency range for analysis.".into());
     }
 
-    // Calculate (ON - OFF) / OFF
-    if spec_on.len() != spec_off.len() {
-        return Err("ON and OFF spectra have different lengths.".into());
-    }
+    // 6. Create data slices for analysis
+    let analysis_freq_mhz: Vec<f64> = analysis_indices.iter().map(|&i| freq_range_mhz[i]).collect();
+    let analysis_velocity_kms: Vec<f64> = analysis_indices.iter().map(|&i| velocity_range_kms[i]).collect();
+    let analysis_spec_on: Vec<f32> = analysis_indices.iter().map(|&i| spec_on[i]).collect();
+    let analysis_spec_off: Vec<f32> = analysis_indices.iter().map(|&i| spec_off[i]).collect();
 
-    let mut normalized_spec = Array1::<f32>::zeros(spec_on.len());
-    for i in 0..spec_on.len() {
-        if spec_off[i] > 1e-9 { // Avoid division by zero
-            normalized_spec[i] = (spec_on[i] - spec_off[i]) / spec_off[i];
+    // 7. Write NARROWED data to TSV
+    let tsv_filename = output_dir.join(format!("{}_vs_{}_data.tsv", on_stem, off_stem));
+    let mut file = File::create(&tsv_filename)?;
+    let base_freq_mhz = header_on.observing_frequency / 1e6;
+    writeln!(file, "# Base Frequency (MHz): {}", base_freq_mhz)?;
+    writeln!(file, "Frequency_Offset_MHz\tVelocity_km/s\tonsourc\toffsource")?;
+    for i in 0..analysis_freq_mhz.len() {
+        let freq_offset_mhz = analysis_freq_mhz[i] - base_freq_mhz;
+        writeln!(file, "{}\t{}\t{}\t{}", freq_offset_mhz, analysis_velocity_kms[i], analysis_spec_on[i], analysis_spec_off[i])?;
+    }
+    println!("Maser data saved to: {:?}", tsv_filename);
+
+    let mut normalized_spec = Array1::<f32>::zeros(analysis_indices.len());
+    for i in 0..analysis_indices.len() {
+        if analysis_spec_off[i] > 1e-9 {
+            normalized_spec[i] = (analysis_spec_on[i] - analysis_spec_off[i]) / analysis_spec_off[i];
         } else {
             normalized_spec[i] = 0.0;
         }
     }
 
-    // Find peak
+    // 7. Find peak on (potentially narrowed) normalized spectrum
     let mut peak_val = f32::NEG_INFINITY;
-    let mut peak_idx = 0;
+    let mut peak_idx_in_analysis = 0;
     for (i, &val) in normalized_spec.iter().enumerate() {
         if val > peak_val {
             peak_val = val;
-            peak_idx = i;
+            peak_idx_in_analysis = i;
         }
     }
-
-    let peak_freq_mhz = peak_idx as f32 * freq_resolution_mhz + (header_on.observing_frequency as f32 / 1e6);
-
-    // Calculate median and SNR
+    let peak_freq_mhz = analysis_freq_mhz[peak_idx_in_analysis];
+    let peak_velocity_kms = analysis_velocity_kms[peak_idx_in_analysis];
     let mut sorted_spec = normalized_spec.to_vec();
     sorted_spec.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median = sorted_spec[sorted_spec.len() / 2];
     let snr = if median > 1e-9 { peak_val / median } else { 0.0 };
 
-    // Plotting normalized spectrum
-    let plot_filename = output_dir.join(format!("{}_vs_{}_maser.png", on_stem, off_stem));
-    
-    let plot_data: Vec<(f32, f32)> = freq_range.iter().zip(normalized_spec.iter()).map(|(&x, &y)| (x, y)).collect();
+    // 8. Generate plots
+    // Plot 1: ON/OFF vs Frequency (Full Range)
+    let on_plot_data_freq: Vec<(f64, f32)> = freq_range_mhz.iter().zip(spec_on.iter()).map(|(&x, &y)| (x, y)).collect();
+    let off_plot_data_freq: Vec<(f64, f32)> = freq_range_mhz.iter().zip(spec_off.iter()).map(|(&x, &y)| (x, y)).collect();
+    let on_off_freq_plot_filename = output_dir.join(format!("{}_vs_{}_on_off_freq.png", on_stem, off_stem));
+    plot_on_off_spectra(
+        &on_off_freq_plot_filename,
+        &on_plot_data_freq,
+        &off_plot_data_freq,
+        "Frequency [MHz]",
+        peak_velocity_kms, // Use peak velocity found in analysis range
+    )?;
+    println!("ON vs OFF source frequency spectra plot saved to: {:?}", on_off_freq_plot_filename);
 
+    // Plot 2: (ON-OFF)/OFF vs Frequency (Analysis Range)
+    let normalized_plot_data_freq: Vec<(f64, f32)> = analysis_freq_mhz.iter().zip(normalized_spec.iter()).map(|(&x, &y)| (x, y)).collect();
+    let maser_freq_plot_filename = output_dir.join(format!("{}_vs_{}_maser_freq.png", on_stem, off_stem));
     plot_maser_spectrum(
-        &plot_filename,
-        &plot_data,
+        &maser_freq_plot_filename,
+        &normalized_plot_data_freq,
+        "Frequency [MHz]",
         peak_freq_mhz,
+        peak_velocity_kms,
         peak_val,
         snr,
     )?;
+    println!("Maser frequency analysis plot saved to: {:?}", maser_freq_plot_filename);
 
-    println!("Maser analysis plot saved to: {:?}", plot_filename);
+    // Plot 3: (ON-OFF)/OFF vs Velocity (Analysis Range)
+    let normalized_plot_data_vel: Vec<(f64, f32)> = analysis_velocity_kms.iter().zip(normalized_spec.iter()).map(|(&x, &y)| (x, y)).collect();
+    let maser_vel_plot_filename = output_dir.join(format!("{}_vs_{}_maser_vel.png", on_stem, off_stem));
+    plot_maser_spectrum(
+        &maser_vel_plot_filename,
+        &normalized_plot_data_vel,
+        "Velocity [km/s]",
+        peak_freq_mhz,
+        peak_velocity_kms,
+        peak_val,
+        snr,
+    )?;
+    println!("Maser velocity analysis plot saved to: {:?}", maser_vel_plot_filename);
+
+    // Plot 4: Zoomed-in (ON-OFF)/OFF vs Velocity
+    let vel_window_kms = 10.0;
+    let min_zoom_vel = peak_velocity_kms - vel_window_kms;
+    let max_zoom_vel = peak_velocity_kms + vel_window_kms;
+    let zoomed_plot_data: Vec<(f64, f32)> = analysis_velocity_kms.iter() // Use analysis range for zoom
+        .zip(normalized_spec.iter())
+        .filter(|(&vel, _)| vel >= min_zoom_vel && vel <= max_zoom_vel)
+        .map(|(&vel, &norm_val)| (vel, norm_val))
+        .collect();
+
+    if !zoomed_plot_data.is_empty() {
+        let maser_zoom_plot_filename = output_dir.join(format!("{}_vs_{}_maser_vel_zoom.png", on_stem, off_stem));
+        plot_maser_spectrum(
+            &maser_zoom_plot_filename,
+            &zoomed_plot_data,
+            "Velocity [km/s]",
+            peak_freq_mhz,
+            peak_velocity_kms,
+            peak_val,
+            snr,
+        )?;
+        println!("Zoomed maser velocity plot saved to: {:?}", maser_zoom_plot_filename);
+    }
 
     Ok(())
 }
 
 fn plot_maser_spectrum(
     output_path: &Path,
-    data: &[(f32, f32)],
-    peak_freq: f32,
+    data: &[(f64, f32)],
+    x_label: &str,
+    peak_freq: f64,
+    peak_velocity: f64,
     peak_val: f32,
     snr: f32,
 ) -> Result<(), Box<dyn Error>> {
     let root = BitMapBackend::new(output_path, (1200, 700)).into_drawing_area();
     root.fill(&WHITE)?;
 
-    let (min_freq, max_freq) = data.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), (f, _)| (min.min(*f), max.max(*f)));
-    let (min_val, max_val) = data.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), (_, v)| (min.min(*v), max.max(*v)));
+    let (min_x, max_x) = data.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), (x, _)| (min.min(*x), max.max(*x)));
+    let (min_y, max_y) = data.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), (_, y)| (min.min(*y), max.max(*y)));
 
-    let y_margin = (max_val - min_val) * 0.1;
+    let y_margin = (max_y - min_y) * 0.1;
 
     let mut chart = ChartBuilder::on(&root)
         .caption("Maser Analysis: (ON-OFF)/OFF Spectrum", ("sans-serif", 30).into_font())
         .margin(10)
         .x_label_area_size(60)
         .y_label_area_size(80)
-        .build_cartesian_2d(min_freq..max_freq, (min_val - y_margin)..(max_val + y_margin))?;
+        .build_cartesian_2d(min_x..max_x, (min_y - y_margin)..(max_y + y_margin))?;
 
     chart.configure_mesh()
-        .x_desc("Frequency [MHz]")
+        .x_desc(x_label)
         .y_desc("Normalized Intensity")
         .label_style(("sans-serif", 20))
         .draw()?;
@@ -196,6 +252,7 @@ fn plot_maser_spectrum(
     let style = TextStyle::from(("sans-serif", 20)).color(&BLACK);
     let legend_lines = vec![
         format!("Peak Freq: {:.4} MHz", peak_freq),
+        format!("Peak Velocity: {:.2} km/s", peak_velocity),
         format!("Peak Value: {:.4}", peak_val),
         format!("SNR: {:.2}", snr),
     ];
@@ -211,33 +268,35 @@ fn plot_maser_spectrum(
 
 fn plot_on_off_spectra(
     output_path: &Path,
-    on_data: &[(f32, f32)],
-    off_data: &[(f32, f32)],
+    on_data: &[(f64, f32)],
+    off_data: &[(f64, f32)],
+    x_label: &str,
+    peak_velocity: f64,
 ) -> Result<(), Box<dyn Error>> {
     let root = BitMapBackend::new(output_path, (1200, 700)).into_drawing_area();
     root.fill(&WHITE)?;
 
-    let (min_freq, max_freq) = on_data.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), (f, _)| (min.min(*f), max.max(*f)));
+    let (min_x, max_x) = on_data.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), (x, _)| (min.min(*x), max.max(*x)));
     
     let on_max = on_data.iter().fold(f32::NEG_INFINITY, |max, (_, v)| max.max(*v));
     let off_max = off_data.iter().fold(f32::NEG_INFINITY, |max, (_, v)| max.max(*v));
-    let max_val = on_max.max(off_max);
+    let max_y = on_max.max(off_max);
 
     let on_min = on_data.iter().fold(f32::INFINITY, |min, (_, v)| min.min(*v));
     let off_min = off_data.iter().fold(f32::INFINITY, |min, (_, v)| min.min(*v));
-    let min_val = on_min.min(off_min);
+    let min_y = on_min.min(off_min);
 
-    let y_margin = (max_val - min_val) * 0.1;
+    let y_margin = (max_y - min_y) * 0.1;
 
     let mut chart = ChartBuilder::on(&root)
         .caption("ON-source vs OFF-source Spectrum", ("sans-serif", 30).into_font())
         .margin(10)
         .x_label_area_size(60)
         .y_label_area_size(80)
-        .build_cartesian_2d(min_freq..max_freq, (min_val - y_margin)..(max_val + y_margin))?;
+        .build_cartesian_2d(min_x..max_x, (min_y - y_margin)..(max_y + y_margin))?;
 
     chart.configure_mesh()
-        .x_desc("Frequency [MHz]")
+        .x_desc(x_label)
         .y_desc("Intensity")
         .label_style(("sans-serif", 20))
         .draw()?;
@@ -254,6 +313,11 @@ fn plot_on_off_spectra(
         .background_style(&WHITE.mix(0.8))
         .border_style(&BLACK)
         .draw()?;
+
+    // Draw legend as text
+    let style = TextStyle::from(("sans-serif", 20)).color(&BLACK);
+    let legend_text = format!("Peak Velocity: {:.2} km/s", peak_velocity);
+    root.draw(&Text::new(legend_text, (800, 40), style))?;
 
     root.present()?;
     Ok(())

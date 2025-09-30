@@ -159,9 +159,17 @@ pub struct Args {
     #[arg(long, aliases = ["frmap"])]
     pub fringe_rate_map: bool,
 
-    /// Path to the off-source .cor file for maser analysis. Requires --input for on-source data.
-    #[arg(long)]
-    pub maser: Option<PathBuf>,
+    /// Perform maser analysis with velocity correction.
+    ///
+    /// Arguments:
+    /// 1. OFF_SOURCE_PATH: Path to the off-source .cor file.
+    /// 2. VELOCITY_CORRECTION (optional): Velocity correction in km/s. Defaults to 0.0.
+    /// 3. REST_FREQUENCY (optional): Rest frequency in MHz. Defaults to 6668.5192 MHz.
+    ///
+    /// The velocity correction should be the topocentric-to-heliocentric correction value, obtainable from online tools (e.g., https://www.gb.nrao.edu/cgi-bin/radvelcalc.py).
+    /// For a list of methanol maser rest frequencies, see Muller et al. 2004 (https://www.aanda.org/articles/aa/pdf/2004/48/aa1384.pdf).
+    #[arg(long, num_args = 1..=3, value_names = ["OFF_SOURCE_PATH", "VELOCITY_CORRECTION", "REST_FREQUENCY"])]
+    pub maser: Vec<String>,
 
     /// Perform multi-sideband analysis.
     /// Arguments:

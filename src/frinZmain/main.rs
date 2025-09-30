@@ -199,7 +199,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    if args.maser.is_some() {
+    if !args.maser.is_empty() {
         if args.input.is_none() {
             eprintln!("Error: --maser requires an --input file for on-source data.");
             exit(1);
