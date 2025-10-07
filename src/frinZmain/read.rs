@@ -1,7 +1,7 @@
-use std::io::{self, Cursor, Read, Error, ErrorKind};
-use chrono::{DateTime, Utc, TimeZone};
+use byteorder::ReadBytesExt;
+use chrono::{DateTime, TimeZone, Utc};
 use num_complex::Complex;
-use byteorder::{ReadBytesExt};
+use std::io::{self, Cursor, Error, ErrorKind, Read};
 
 use crate::header::CorHeader;
 
@@ -31,7 +31,10 @@ pub fn read_visibility_data(
     let num_sectors_to_read = (length_end - actual_length_start) as usize;
     let fft_point_half = (header.fft_point / 2) as usize;
     let mut complex_vec = Vec::with_capacity(num_sectors_to_read * fft_point_half);
-    let mut obs_time = Utc.timestamp_opt(0, 0).single().ok_or_else(|| Error::new(ErrorKind::InvalidData, "Failed to create initial timestamp"))?;
+    let mut obs_time = Utc
+        .timestamp_opt(0, 0)
+        .single()
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Failed to create initial timestamp"))?;
     let mut effective_integ_time = 0.0;
 
     for i in 0..num_sectors_to_read {
@@ -41,8 +44,15 @@ pub fn read_visibility_data(
 
         let correlation_time_sec = cursor.read_i32::<byteorder::LittleEndian>()?;
         if i == 0 {
-            obs_time = Utc.timestamp_opt(correlation_time_sec as i64, 0).single()
-                .ok_or_else(|| Error::new(ErrorKind::InvalidData, format!("Invalid timestamp seconds: {}", correlation_time_sec)))?;
+            obs_time = Utc
+                .timestamp_opt(correlation_time_sec as i64, 0)
+                .single()
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Invalid timestamp seconds: {}", correlation_time_sec),
+                    )
+                })?;
         }
 
         cursor.set_position(sector_start_pos + EFFECTIVE_INTEG_TIME_OFFSET);
@@ -68,12 +78,14 @@ pub fn read_visibility_data(
     let mut a = 1.0f32;
     let mut corrected = false;
 
-    if effective_integ_time >= 0.9 { // 1.0に近い場合の特別な処理
+    if effective_integ_time >= 0.9 {
+        // 1.0に近い場合の特別な処理
         effective_integ_time = 1.0;
         //corrected = true;
     } else {
         a /= 10.0; // 最初のaは0.1から始める
-        while a >= 0.000001 && !corrected { // ある程度の小さい値まで繰り返す
+        while a >= 0.000001 && !corrected {
+            // ある程度の小さい値まで繰り返す
             // effective_integ_timeがaの0.9倍からaまでの範囲にあるか
             if effective_integ_time >= a * 0.9 && effective_integ_time <= a {
                 effective_integ_time = a;

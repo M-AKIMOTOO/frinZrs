@@ -1,8 +1,8 @@
 use std::error::Error;
 use std::fs;
+use std::fs::File;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
-use std::fs::File;
 
 use chrono::{DateTime, Utc};
 use ndarray::{Array, Array2, ArrayView1};
@@ -13,7 +13,7 @@ use crate::fft::{apply_phase_correction, process_fft, process_ifft};
 use crate::header::{parse_header, CorHeader};
 use crate::plot::{plot_cross_section, plot_sky_map, plot_uv_coverage};
 use crate::read::read_visibility_data;
-use crate::utils::{uvw_cal, rate_cal};
+use crate::utils::{rate_cal, uvw_cal};
 use std::f64::consts::PI;
 
 type C32 = Complex<f32>;
@@ -25,7 +25,6 @@ pub fn run_fringe_rate_map_analysis(
     time_flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
     pp_flag_ranges: &[(u32, u32)],
 ) -> Result<(), Box<dyn Error>> {
-    
     println!("Starting fringe-rate map analysis...");
 
     let input_path = args.input.as_ref().unwrap();
@@ -44,7 +43,7 @@ pub fn run_fringe_rate_map_analysis(
 
     // --- Parse Header ---
     let header = parse_header(&mut cursor)?;
-        
+
     // --- Pre-computation for UV coverage and B_max ---
     println!("Pre-calculating UV coverage to determine optimal cell size...");
     let mut max_b = 0.0f64;
@@ -57,7 +56,15 @@ pub fn run_fringe_rate_map_analysis(
     let mut effective_integ_time: Option<f32> = None;
 
     for l1 in 0..temp_pp {
-        let (_, current_obs_time, current_effective_integ_time) = match read_visibility_data(&mut temp_cursor, &header, 1, l1, 0, false, pp_flag_ranges) {
+        let (_, current_obs_time, current_effective_integ_time) = match read_visibility_data(
+            &mut temp_cursor,
+            &header,
+            1,
+            l1,
+            0,
+            false,
+            pp_flag_ranges,
+        ) {
             Ok(data) => data,
             Err(_) => break,
         };
@@ -72,6 +79,7 @@ pub fn run_fringe_rate_map_analysis(
             current_obs_time,
             header.source_position_ra,
             header.source_position_dec,
+            true,
         );
         let b = (u.powi(2) + v.powi(2)).sqrt();
         if b > max_b {
@@ -90,34 +98,53 @@ pub fn run_fringe_rate_map_analysis(
     let image_size: usize = 1024; // Directly set desired image size
     let cell_size_rad = desired_map_range_rad / image_size as f64; // Calculate cell size based on desired image size
 
-    println!("Angular resolution (lambda/B_max): {:.2} arcsec", (lambda / max_b).to_degrees() * 3600.0);
-    println!("Calculated cell size: {:.4e} rad ({:.4} mas)", cell_size_rad, cell_size_rad.to_degrees() * 3600e3);
-    println!("Setting map range to ~{} arcsec with image size {}x{}", desired_map_range_arcsec, image_size, image_size);
+    println!(
+        "Angular resolution (lambda/B_max): {:.2} arcsec",
+        (lambda / max_b).to_degrees() * 3600.0
+    );
+    println!(
+        "Calculated cell size: {:.4e} rad ({:.4} mas)",
+        cell_size_rad,
+        cell_size_rad.to_degrees() * 3600e3
+    );
+    println!(
+        "Setting map range to ~{} arcsec with image size {}x{}",
+        desired_map_range_arcsec, image_size, image_size
+    );
 
     // --- Map Accumulator ---
     let mut total_map = ndarray::Array2::<f32>::zeros((image_size, image_size));
     let mut total_beam_map = ndarray::Array2::<f32>::zeros((image_size, image_size));
     let mut uv_data: Vec<(f32, f32)> = Vec::new();
-    
+
     let obs_start_time = obs_start_time.expect("Failed to get observation start time");
-    let effective_integ_time = effective_integ_time.expect("Failed to get effective integration time");
+    let effective_integ_time =
+        effective_integ_time.expect("Failed to get effective integration time");
 
     // --- Loop Setup ---
     cursor.set_position(0);
-    let (_, obs_start_time, effective_integ_time) = read_visibility_data(&mut cursor, &header, 1, 0, 0, false, pp_flag_ranges)?;
+    let (_, obs_start_time, effective_integ_time) =
+        read_visibility_data(&mut cursor, &header, 1, 0, 0, false, pp_flag_ranges)?;
     cursor.set_position(256);
 
     let pp = header.number_of_sector;
     let length_in_sectors = if args.length == 0 {
         let segment_duration_sec = pp as f32;
-        (segment_duration_sec / effective_integ_time).ceil().max(1.0) as i32
+        (segment_duration_sec / effective_integ_time)
+            .ceil()
+            .max(1.0) as i32
     } else {
         (args.length as f32 / effective_integ_time).ceil() as i32
     };
-    println!("Processing in segments of {} sectors (approx. {} seconds)", length_in_sectors, length_in_sectors as f32 * effective_integ_time);
+    println!(
+        "Processing in segments of {} sectors (approx. {} seconds)",
+        length_in_sectors,
+        length_in_sectors as f32 * effective_integ_time
+    );
 
     let total_segments_available = (pp - args.skip) / length_in_sectors;
-    let loop_count = if args.loop_ == 1 { // Default loop is 1, so if user doesn't specify, process all
+    let loop_count = if args.loop_ == 1 {
+        // Default loop is 1, so if user doesn't specify, process all
         total_segments_available
     } else {
         total_segments_available.min(args.loop_)
@@ -125,7 +152,15 @@ pub fn run_fringe_rate_map_analysis(
 
     // --- Main Processing Loop ---
     for l1 in 0..loop_count {
-        let (mut complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(&mut cursor, &header, length_in_sectors, args.skip, l1, false, pp_flag_ranges) {
+        let (mut complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(
+            &mut cursor,
+            &header,
+            length_in_sectors,
+            args.skip,
+            l1,
+            false,
+            pp_flag_ranges,
+        ) {
             Ok(data) => data,
             Err(_) => break,
         };
@@ -134,23 +169,32 @@ pub fn run_fringe_rate_map_analysis(
             break;
         }
 
-        let is_flagged = time_flag_ranges.iter().any(|(start, end)| current_obs_time >= *start && current_obs_time < *end);
+        let is_flagged = time_flag_ranges
+            .iter()
+            .any(|(start, end)| current_obs_time >= *start && current_obs_time < *end);
         if is_flagged {
             continue;
         }
 
         // --- Apply Phase Correction ---
         if args.delay_correct != 0.0 || args.rate_correct != 0.0 || args.acel_correct != 0.0 {
-            println!("Applying phase corrections: delay={}, rate={}, acel={}", args.delay_correct, args.rate_correct, args.acel_correct);
+            println!(
+                "Applying phase corrections: delay={}, rate={}, acel={}",
+                args.delay_correct, args.rate_correct, args.acel_correct
+            );
 
             let n_rows = length_in_sectors as usize;
             let n_cols = (header.fft_point / 2) as usize;
-            let mut input_data_f64: Vec<Vec<Complex<f64>>> = vec![vec![Complex::new(0.0, 0.0); n_cols]; n_rows];
+            let mut input_data_f64: Vec<Vec<Complex<f64>>> =
+                vec![vec![Complex::new(0.0, 0.0); n_cols]; n_rows];
             for r in 0..n_rows {
                 for c in 0..n_cols {
                     let index = r * n_cols + c;
                     if index < complex_vec.len() {
-                        input_data_f64[r][c] = Complex::new(complex_vec[index].re as f64, complex_vec[index].im as f64);
+                        input_data_f64[r][c] = Complex::new(
+                            complex_vec[index].re as f64,
+                            complex_vec[index].im as f64,
+                        );
                     }
                 }
             }
@@ -168,32 +212,58 @@ pub fn run_fringe_rate_map_analysis(
                 start_time_offset_sec,
             );
 
-            complex_vec = corrected_data_f64.into_iter().flatten().map(|c| C32::new(c.re as f32, c.im as f32)).collect();
+            complex_vec = corrected_data_f64
+                .into_iter()
+                .flatten()
+                .map(|c| C32::new(c.re as f32, c.im as f32))
+                .collect();
         }
 
-        let (freq_rate_array, padding_length) = process_fft(&complex_vec, length_in_sectors, header.fft_point, header.sampling_speed, &[], args.rate_padding);
+        let (freq_rate_array, padding_length) = process_fft(
+            &complex_vec,
+            length_in_sectors,
+            header.fft_point,
+            header.sampling_speed,
+            &[],
+            args.rate_padding,
+        );
         let delay_rate_array = process_ifft(&freq_rate_array, header.fft_point, padding_length);
-        
+
         let rate_range_vec = rate_cal(padding_length as f32, effective_integ_time);
         let rate_range = Array::from_vec(rate_range_vec);
-        let delay_range = Array::linspace(-(header.fft_point as f32 / 2.0) + 1.0, header.fft_point as f32 / 2.0, header.fft_point as usize);
+        let delay_range = Array::linspace(
+            -(header.fft_point as f32 / 2.0) + 1.0,
+            header.fft_point as f32 / 2.0,
+            header.fft_point as usize,
+        );
 
-        let segment_center_time = current_obs_time + chrono::Duration::microseconds(((length_in_sectors as f64 * effective_integ_time as f64 * 1_000_000.0) / 2.0) as i64);
+        let segment_center_time = current_obs_time
+            + chrono::Duration::microseconds(
+                ((length_in_sectors as f64 * effective_integ_time as f64 * 1_000_000.0) / 2.0)
+                    as i64,
+            );
         let (u, v, _w, du_dt, dv_dt) = uvw_cal(
             header.station1_position,
             header.station2_position,
             segment_center_time,
             header.source_position_ra,
             header.source_position_dec,
+            true,
         );
         if l1 == 0 {
-            println!("DEBUG: seg 0: u={}, v={}, du_dt={}, dv_dt={}", u, v, du_dt, dv_dt);
+            println!(
+                "DEBUG: seg 0: u={}, v={}, du_dt={}, dv_dt={}",
+                u, v, du_dt, dv_dt
+            );
         }
         uv_data.push((u as f32, v as f32));
 
         let segment_map = create_map(
             &delay_rate_array,
-            u, v, du_dt, dv_dt,
+            u,
+            v,
+            du_dt,
+            dv_dt,
             &header,
             &rate_range.view(),
             &delay_range.view(),
@@ -220,7 +290,10 @@ pub fn run_fringe_rate_map_analysis(
 
         let segment_beam_map = create_map(
             &beam_delay_rate_array,
-            u, v, du_dt, dv_dt,
+            u,
+            v,
+            du_dt,
+            dv_dt,
             &header,
             &rate_range.view(),
             &delay_range.view(),
@@ -259,7 +332,13 @@ pub fn run_fringe_rate_map_analysis(
     println!("Fringe rate map data saved to: {:?}", map_bin_filename);
 
     let beam_map_filename = frinz_dir.join(format!("{}_beam.png", file_stem));
-    plot_sky_map(&beam_map_filename, &total_beam_map, cell_size_rad, max_x, max_y)?;
+    plot_sky_map(
+        &beam_map_filename,
+        &total_beam_map,
+        cell_size_rad,
+        max_x,
+        max_y,
+    )?;
     println!("Beam map saved to: {:?}", beam_map_filename);
 
     let uv_coverage_filename = frinz_dir.join(format!("{}_uv.png", file_stem));
@@ -394,9 +473,9 @@ pub fn create_map(
                 let p22 = delay_rate_array[[y2, x2]].norm() as f64;
 
                 let val = p11 * (1.0 - x_frac) * (1.0 - y_frac)
-                        + p21 * x_frac * (1.0 - y_frac)
-                        + p12 * (1.0 - x_frac) * y_frac
-                        + p22 * x_frac * y_frac;
+                    + p21 * x_frac * (1.0 - y_frac)
+                    + p12 * (1.0 - x_frac) * y_frac
+                    + p22 * x_frac * y_frac;
 
                 image[[iy, ix]] = val as f32;
             }

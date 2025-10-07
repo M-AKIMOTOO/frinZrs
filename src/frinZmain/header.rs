@@ -1,5 +1,5 @@
-use std::io::{self, Cursor, Read};
 use byteorder::{LittleEndian, ReadBytesExt};
+use std::io::{self, Cursor, Read};
 
 #[derive(Debug, Default)]
 pub struct CorHeader {
@@ -49,7 +49,9 @@ pub fn parse_header(cursor: &mut Cursor<&[u8]>) -> io::Result<CorHeader> {
     // Line 2: Station 1 Name
     let mut name_buf = [0u8; 8];
     cursor.read_exact(&mut name_buf)?;
-    header.station1_name = String::from_utf8_lossy(&name_buf).trim_end_matches('\0').to_string();
+    header.station1_name = String::from_utf8_lossy(&name_buf)
+        .trim_end_matches('\0')
+        .to_string();
     cursor.set_position(cursor.position() + 8); // Skip padding
 
     // Line 3: Station 1 Pos X, Y
@@ -65,7 +67,9 @@ pub fn parse_header(cursor: &mut Cursor<&[u8]>) -> io::Result<CorHeader> {
 
     // Line 5: Station 2 Name
     cursor.read_exact(&mut name_buf)?;
-    header.station2_name = String::from_utf8_lossy(&name_buf).trim_end_matches('\0').to_string();
+    header.station2_name = String::from_utf8_lossy(&name_buf)
+        .trim_end_matches('\0')
+        .to_string();
     cursor.set_position(cursor.position() + 8); // Skip padding
 
     // Line 6: Station 2 Pos X, Y
@@ -81,7 +85,9 @@ pub fn parse_header(cursor: &mut Cursor<&[u8]>) -> io::Result<CorHeader> {
     // Line 8: Source Name (16 bytes)
     let mut source_name_buf = [0u8; 16];
     cursor.read_exact(&mut source_name_buf)?;
-    header.source_name = String::from_utf8_lossy(&source_name_buf).trim_end_matches('\0').to_string();
+    header.source_name = String::from_utf8_lossy(&source_name_buf)
+        .trim_end_matches('\0')
+        .to_string();
 
     // Line 9: Source Pos RA, Dec
     header.source_position_ra = cursor.read_f64::<LittleEndian>()?;

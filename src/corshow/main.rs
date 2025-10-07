@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fs::File;
-use std::io::{Read, Cursor};
-use std::path::{PathBuf};
+use std::io::{Cursor, Read};
+use std::path::PathBuf;
 use std::process::exit;
 
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
@@ -60,7 +60,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         cursor.set_position(0); // Reset cursor to read from the beginning for visibility data
         let (all_spectra, _, _) = read_visibility_data(&mut cursor, &header, pp, 0, 0, false, &[])?;
         spectra = all_spectra;
-
     } else if let Some(bin_path) = &args.bin {
         input_path = bin_path.clone();
         println!("Reading .bin file: {:?}", bin_path);
@@ -71,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
-        
+
         spectra = buffer
             .chunks_exact(8)
             .map(|chunk| {
@@ -80,7 +79,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 C32::new(re, im)
             })
             .collect();
-
     } else {
         eprintln!("Error: Either --cor or --bin must be provided.");
         exit(1);
@@ -95,25 +93,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     if spectra.len() != (pp as usize) * fft_point_half {
         eprintln!(
             "Error: Data size mismatch. Expected {} * {} = {} points, but found {}.",
-            pp, fft_point_half, (pp as usize) * fft_point_half, spectra.len()
+            pp,
+            fft_point_half,
+            (pp as usize) * fft_point_half,
+            spectra.len()
         );
         exit(1);
     }
 
     // Determine output path
-    let output_path = args.output.unwrap_or_else(|| {
-        input_path.with_extension("csv")
-    });
+    let output_path = args
+        .output
+        .unwrap_or_else(|| input_path.with_extension("csv"));
 
     // Write to CSV
     let mut writer = csv::Writer::from_path(&output_path)?;
-    println!("Writing {} sectors of {} channels to {:?}...", pp, fft_point_half, &output_path);
+    println!(
+        "Writing {} sectors of {} channels to {:?}...",
+        pp, fft_point_half, &output_path
+    );
 
     for i in 0..(pp as usize) {
         let start = i * fft_point_half;
         let end = start + fft_point_half;
         let sector_data = &spectra[start..end];
-        
+
         let record: Vec<String> = sector_data
             .iter()
             .map(|c| format!("{}+{}j", c.re, c.im))

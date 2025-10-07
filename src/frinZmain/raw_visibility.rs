@@ -6,8 +6,9 @@ use std::path::Path;
 
 use crate::args::Args;
 use crate::header::parse_header;
-use crate::read::read_visibility_data;
 use crate::plot;
+use crate::read::read_visibility_data;
+use crate::utils::safe_arg;
 use num_complex::Complex;
 type C32 = Complex<f32>;
 
@@ -35,8 +36,8 @@ pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
         let (complex_vec, _, _) = match read_visibility_data(
             &mut cursor,
             &header,
-            1, // length in sectors
-            0, // skip in sectors
+            1,  // length in sectors
+            0,  // skip in sectors
             l1, // loop_idx, which acts as sector index here
             false,
             &[], // Add empty pp_flag_ranges
@@ -46,7 +47,7 @@ pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
         };
         if complex_vec.is_empty() {
             eprintln!("Warning: Empty sector {} found, stopping read.", l1);
-            break; 
+            break;
         }
         all_spectra.push(complex_vec);
     }
@@ -56,13 +57,44 @@ pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let amp_filename = format!("{}_heatmap_amp.png", base_filename);
-    let phase_filename = format!("{}_heatmap_phs.png", base_filename);
-    let amp_filepath = output_dir.join(amp_filename);
-    let phase_filepath = output_dir.join(phase_filename);
+    let heatmap_filename = format!("{}_heatmap_amp_phase.png", base_filename);
+    let scatter_filename = format!("{}_scatter_real_imag.png", base_filename);
+    let amp_phase_filename = format!("{}_scatter_amp_phase.png", base_filename);
+    let hist_filename = format!("{}_hist_complex.png", base_filename);
+    let hist_report_filename = format!("{}_hist_complex.txt", base_filename);
+    let heatmap_filepath = output_dir.join(&heatmap_filename);
+    let scatter_filepath = output_dir.join(&scatter_filename);
+    let amp_phase_filepath = output_dir.join(&amp_phase_filename);
+    let hist_filepath = output_dir.join(&hist_filename);
+    let hist_report_filepath = output_dir.join(&hist_report_filename);
 
     // Use a default sigma of 0.0 for blurring, as in the original frinZrawvis.
-    plot::plot_spectrum_heatmaps(&amp_filepath, &phase_filepath, &all_spectra, 0.0)?;
+    plot::plot_spectrum_heatmaps(&heatmap_filepath, &all_spectra, 0.0)?;
+
+    let mut real_values = Vec::new();
+    let mut imag_values = Vec::new();
+    let mut amp_values = Vec::new();
+    let mut phase_values = Vec::new();
+
+    for spectra in &all_spectra {
+        for value in spectra {
+            real_values.push(value.re);
+            imag_values.push(value.im);
+            amp_values.push(value.norm());
+            phase_values.push(safe_arg(value));
+        }
+    }
+
+    plot::plot_complex_scatter(&scatter_filepath, &real_values, &imag_values)?;
+    plot::plot_amp_phase_scatter(&amp_phase_filepath, &amp_values, &phase_values)?;
+    plot::plot_complex_histograms(
+        &hist_filepath,
+        &hist_report_filepath,
+        &real_values,
+        &imag_values,
+        &amp_values,
+        &phase_values,
+    )?;
 
     //println!("#Raw visibility heatmaps saved to {} and {}", amp_filepath.display(), phase_filepath.display());
 

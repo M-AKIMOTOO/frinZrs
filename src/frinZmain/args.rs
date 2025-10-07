@@ -1,8 +1,6 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-
-
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "frinZ",
@@ -149,26 +147,31 @@ pub struct Args {
     /// Requires --length and --loop to be set to generate a time series.
     #[arg(long, aliases = ["allan","allan-dev"])]
     pub allan_deviance: bool,
-    
+
     /// Generate heatmaps of raw visibility data (amplitude and phase).
     /// Requires --input. The program will exit after plotting.
     #[arg(long, aliases = ["ra","raw","raw-v","raw-vi","raw-vis","raw-visi","raw-visib","raw-visibi","raw-visibils","raw-visibili","raw-visibilit"])]
     pub raw_visibility: bool,
 
-    
+    /// Generate UV coverage plot; optional value (0 = planar, 1 = 3D). Defaults to 1.
+    #[arg(long, num_args = 0..=1, default_missing_value = "1")]
+    pub uv: Option<i32>,
+
     #[arg(long, aliases = ["frmap"])]
     pub fringe_rate_map: bool,
 
-    /// Perform maser analysis with velocity correction.
+    /// Perform maser analysis.
     ///
-    /// Arguments:
-    /// 1. OFF_SOURCE_PATH: Path to the off-source .cor file.
-    /// 2. VELOCITY_CORRECTION (optional): Velocity correction in km/s. Defaults to 0.0.
-    /// 3. REST_FREQUENCY (optional): Rest frequency in MHz. Defaults to 6668.5192 MHz.
+    /// Accepts key-value pairs such as:
+    ///   off:<path>     -- Off-source .cor file (required)
+    ///   rest:<MHz>     -- Rest frequency override (defaults to 6668.5192)
+    ///   Vlst:<km/s>    -- Override LSR velocity correction
+    ///   corrfreq:<x>   -- Multiplier applied to the sampling frequency
+    ///   band:<start-end> -- Frequency window offsets in MHz relative to observing frequency
+    ///   gauss:amp,Vlst,fwhm,[amp,Vlst,fwhm...] -- Apply Gaussian mixture fits on the velocity spectrum
     ///
-    /// The velocity correction should be the topocentric-to-heliocentric correction value, obtainable from online tools (e.g., https://www.gb.nrao.edu/cgi-bin/radvelcalc.py).
-    /// For a list of methanol maser rest frequencies, see Muller et al. 2004 (https://www.aanda.org/articles/aa/pdf/2004/48/aa1384.pdf).
-    #[arg(long, num_args = 1..=3, value_names = ["OFF_SOURCE_PATH", "VELOCITY_CORRECTION", "REST_FREQUENCY"])]
+    /// Positional arguments (legacy): first token = off-source path, second = rest frequency.
+    #[arg(long, num_args = 1.., value_name = "KEY:VALUE")]
     pub maser: Vec<String>,
 
     /// Perform multi-sideband analysis.
@@ -181,4 +184,8 @@ pub struct Args {
     /// 6. X_BAND_DELAY: Delay for X-band in seconds.
     #[arg(long, num_args = 6, value_names = ["C_BAND_DATA", "C_BAND_BP", "C_BAND_DELAY", "X_BAND_DATA", "X_BAND_BP", "X_BAND_DELAY"], aliases = ["msb"], allow_negative_numbers = true)]
     pub multi_sideband: Vec<String>,
+
+    /// Plot antenna uptime (Az/El) over UT.
+    #[arg(long)]
+    pub uptimeplot: bool,
 }

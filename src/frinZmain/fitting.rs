@@ -1,7 +1,7 @@
-use std::f64;
-use std::error::Error; // Import Error trait
-use std::fmt; // Import fmt for custom error display
 use nalgebra::{DMatrix, DVector};
+use std::error::Error; // Import Error trait
+use std::f64;
+use std::fmt; // Import fmt for custom error display
 
 // Custom error type for fitting
 #[derive(Debug)]
@@ -24,7 +24,7 @@ pub struct QuadraticFitResult {
     pub a: f64, // y = ax^2 + bx + c の係数 a
     pub b: f64, // y = ax^2 + bx + c の係数 b
     pub c: f64, // y = ax^2 + bx + c の係数 c
-    // pub message: String,
+                // pub message: String,
 }
 
 /// Fits a quadratic function y = ax^2 + bx + c to N points using least squares.
@@ -33,13 +33,15 @@ pub struct QuadraticFitResult {
 pub fn fit_quadratic_least_squares(
     x_coords: &[f64],
     y_values: &[f64],
-) -> Result<QuadraticFitResult, Box<dyn Error>> { // Changed return type
+) -> Result<QuadraticFitResult, Box<dyn Error>> {
+    // Changed return type
 
     let n = x_coords.len();
     let epsilon = 1e-9;
 
     if n < 3 || n != y_values.len() {
-        return Err(Box::new(FittingError("Input vectors must be of the same size and contain at least 3 points for least squares.".to_string()))); // Changed error return
+        return Err(Box::new(FittingError("Input vectors must be of the same size and contain at least 3 points for least squares.".to_string())));
+        // Changed error return
     }
 
     // Shift x-coordinates by the central value to improve numerical stability.
@@ -74,12 +76,13 @@ pub fn fit_quadratic_least_squares(
     // S2*c + S3*b + S4*a = T2
 
     // Denominator D
-    let d = s0 * (s2 * s4 - s3 * s3) -
-            s1 * (s1 * s4 - s2 * s3) +
-            s2 * (s1 * s3 - s2 * s2);
+    let d = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s2 * s3) + s2 * (s1 * s3 - s2 * s2);
 
     if d.abs() < epsilon {
-        return Err(Box::new(FittingError(format!("Denominator D ({}) is almost zero. Matrix is singular or ill-conditioned.", d)))); // Changed error return
+        return Err(Box::new(FittingError(format!(
+            "Denominator D ({}) is almost zero. Matrix is singular or ill-conditioned.",
+            d
+        )))); // Changed error return
     }
 
     // Numerators for c, b, a (using Cramer's rule implicitly)
@@ -92,22 +95,20 @@ pub fn fit_quadratic_least_squares(
     let c = dc_num / d;
 
     if a.abs() < epsilon {
-        return Err(Box::new(FittingError("Coefficient 'a' is almost zero. Quadratic function is degenerate.".to_string()))); // Changed error return
+        return Err(Box::new(FittingError(
+            "Coefficient 'a' is almost zero. Quadratic function is degenerate.".to_string(),
+        ))); // Changed error return
     }
 
     if a > 0.0 {
-        return Err(Box::new(FittingError("Coefficient 'a' is positive. Quadratic function is convex downwards, no maximum exists.".to_string()))); // Changed error return
+        return Err(Box::new(FittingError("Coefficient 'a' is positive. Quadratic function is convex downwards, no maximum exists.".to_string())));
+        // Changed error return
     }
 
     let peak_x_shifted = -b / (2.0 * a);
     let peak_x = peak_x_shifted + x_center; // Add the offset back
 
-    Ok(QuadraticFitResult {
-        peak_x,
-        a,
-        b,
-        c,
-    })
+    Ok(QuadraticFitResult { peak_x, a, b, c })
 }
 
 #[allow(dead_code)]
@@ -122,7 +123,11 @@ pub fn fit_linear_least_squares(
     let n = x_coords.len() as f64;
     let sum_x: f64 = x_coords.iter().sum();
     let sum_y: f64 = y_values.iter().sum();
-    let sum_xy: f64 = x_coords.iter().zip(y_values.iter()).map(|(x, y)| x * y).sum();
+    let sum_xy: f64 = x_coords
+        .iter()
+        .zip(y_values.iter())
+        .map(|(x, y)| x * y)
+        .sum();
     let sum_x_sq: f64 = x_coords.iter().map(|x| x * x).sum();
 
     let denominator = n * sum_x_sq - sum_x * sum_x;
@@ -173,12 +178,14 @@ pub fn fit_polynomial_least_squares(
     // Solve the linear system using LU decomposition
     let lu = ata.lu();
     let coeffs = lu.solve(&aty).ok_or_else(|| {
-        Box::new(FittingError("Failed to solve linear system for polynomial fitting. Matrix might be singular.".to_string()))
+        Box::new(FittingError(
+            "Failed to solve linear system for polynomial fitting. Matrix might be singular."
+                .to_string(),
+        ))
     })?;
 
     Ok(coeffs.iter().cloned().collect())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -197,7 +204,7 @@ mod tests {
         // assert!(fit_result.success);
         assert!((fit_result.peak_x - 1.0).abs() < 1e-9);
         assert!((fit_result.a - (-1.0)).abs() < 1e-9);
-            assert!((fit_result.b - 0.0).abs() < 1e-9);
+        assert!((fit_result.b - 0.0).abs() < 1e-9);
         assert!((fit_result.c - 4.0).abs() < 1e-9);
     }
 
@@ -226,7 +233,8 @@ mod tests {
 
         let result = fit_quadratic_least_squares(&x_coords, &y_values);
         assert!(result.is_err());
-        if let Err(e) = result { // Changed error handling
+        if let Err(e) = result {
+            // Changed error handling
             let err_msg = e.to_string();
             assert!(err_msg.contains("Coefficient 'a' is positive"));
         } else {
@@ -242,7 +250,8 @@ mod tests {
 
         let result = fit_quadratic_least_squares(&x_coords, &y_values);
         assert!(result.is_err());
-        if let Err(e) = result { // Changed error handling
+        if let Err(e) = result {
+            // Changed error handling
             let err_msg = e.to_string();
             assert!(err_msg.contains("Coefficient 'a' is almost zero"));
         } else {
@@ -257,7 +266,8 @@ mod tests {
 
         let result = fit_quadratic_least_squares(&x_coords, &y_values);
         assert!(result.is_err());
-        if let Err(e) = result { // Changed error handling
+        if let Err(e) = result {
+            // Changed error handling
             let err_msg = e.to_string();
             assert!(err_msg.contains("at least 3 points"));
         } else {

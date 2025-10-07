@@ -18,7 +18,7 @@ pub fn process_fft(
     let length_usize = length as usize;
     let fft_point_half = (fft_point / 2) as usize;
     //let padding_length = (length as u32).next_power_of_two() as usize * rate_padding as usize; // FFTのビン（周波数の区切り）と実際の信号周波数のズレによって生じる「スカロッピング損失」という現象
-    let mut padding_length = length as usize * rate_padding as usize; 
+    let mut padding_length = length as usize * rate_padding as usize;
     if length == 1 {
         padding_length *= 2.0 as usize
     }
@@ -27,10 +27,12 @@ pub fn process_fft(
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(padding_length);
 
-    let complex_array = Array::from_shape_vec((length_usize, fft_point_half), complex_vec.to_vec()).unwrap();
+    let complex_array =
+        Array::from_shape_vec((length_usize, fft_point_half), complex_vec.to_vec()).unwrap();
     let mut freq_rate_array = Array2::<C32>::zeros((fft_point_half, padding_length));
 
-    for i in 1..fft_point_half { // DC成分（FFTシフト前のインデックス0）を0+0jに設定
+    for i in 1..fft_point_half {
+        // DC成分（FFTシフト前のインデックス0）を0+0jに設定
         let mut fft_exe = vec![C32::new(0.0, 0.0); padding_length];
         let is_rfi_channel = rfi_ranges.iter().any(|(min, max)| i >= *min && i <= *max);
 
@@ -55,7 +57,9 @@ pub fn process_fft(
             .map(|val| *val * (fft_point as f32 / length as f32) * (512.0 / bandwidth))
             .collect();
 
-        freq_rate_array.row_mut(i).assign(&ArrayView::from(&scaled_shifted_out));
+        freq_rate_array
+            .row_mut(i)
+            .assign(&ArrayView::from(&scaled_shifted_out));
     }
 
     (freq_rate_array, padding_length)
@@ -72,12 +76,13 @@ pub fn process_ifft(
     for i in 0..freq_rate_array.dim().1 {
         let freq_data_col = freq_rate_array.column(i);
         let ifft_result = perform_ifft_on_vec(&freq_data_col.to_vec(), fft_point_usize);
-        delay_rate_array.row_mut(i).assign(&ArrayView::from(&ifft_result));
+        delay_rate_array
+            .row_mut(i)
+            .assign(&ArrayView::from(&ifft_result));
     }
 
     delay_rate_array
 }
-
 
 pub fn perform_ifft_on_vec(input: &[C32], ifft_size: usize) -> Vec<C32> {
     let mut planner = FftPlanner::new();
@@ -96,7 +101,7 @@ pub fn perform_ifft_on_vec(input: &[C32], ifft_size: usize) -> Vec<C32> {
     for val in &mut shifted_out {
         *val /= ifft_size as f32;
     }
-    
+
     shifted_out.reverse(); // Common reverse operation
 
     shifted_out
@@ -116,22 +121,40 @@ pub fn apply_phase_correction(
     let mut corrected_data = input_data.to_vec();
 
     let n_rows_original = input_data.len();
-    let n_cols_original = if n_rows_original > 0 { input_data[0].len() } else { 0 };
+    let n_cols_original = if n_rows_original > 0 {
+        input_data[0].len()
+    } else {
+        0
+    };
 
-    let can_phase_correct = sampling_speed > 0 && fft_point >= 2 && (effective_integration_length as f64).abs() > 1e-9 && n_cols_original > 0;
+    let can_phase_correct = sampling_speed > 0
+        && fft_point >= 2
+        && (effective_integration_length as f64).abs() > 1e-9
+        && n_cols_original > 0;
 
     if can_phase_correct {
         let freq_resolution_hz = sampling_speed as f64 / fft_point as f64;
         let delay_seconds = delay_samples_for_correction as f64 / sampling_speed as f64;
 
         for r_orig in 0..n_rows_original {
-            let time_for_rate_corr_sec = (r_orig as f64 * effective_integration_length as f64) + start_time_offset_sec as f64;
-            let rate_corr_factor = Complex::new(0.0, -2.0 * PI * rate_hz_for_correction as f64 * time_for_rate_corr_sec).exp() * Complex::new(0.0, -1.0 * PI * acel_hz_for_correction as f64 * time_for_rate_corr_sec.powi(2)).exp();
+            let time_for_rate_corr_sec = (r_orig as f64 * effective_integration_length as f64)
+                + start_time_offset_sec as f64;
+            let rate_corr_factor = Complex::new(
+                0.0,
+                -2.0 * PI * rate_hz_for_correction as f64 * time_for_rate_corr_sec,
+            )
+            .exp()
+                * Complex::new(
+                    0.0,
+                    -1.0 * PI * acel_hz_for_correction as f64 * time_for_rate_corr_sec.powi(2),
+                )
+                .exp();
 
             for c_orig in 0..n_cols_original {
                 let freq_k_hz_for_delay_corr = c_orig as f64 * freq_resolution_hz;
-                let delay_corr_factor = Complex::new(0.0, -2.0 * PI * delay_seconds * freq_k_hz_for_delay_corr).exp();
-                
+                let delay_corr_factor =
+                    Complex::new(0.0, -2.0 * PI * delay_seconds * freq_k_hz_for_delay_corr).exp();
+
                 corrected_data[r_orig][c_orig] *= rate_corr_factor * delay_corr_factor;
             }
         }

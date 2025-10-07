@@ -24,7 +24,6 @@ pub fn check_memory_usage(args: &Args, input_path: &Path) -> Result<bool, Box<dy
     let quarter_ram = total_ram / 4;
 
     if required_memory > quarter_ram {
-
         println!(
             "Warning: The estimated memory usage ({:.2} GB) exceeds 25% of your system RAM ({:.2} GB).",
             required_memory as f64 / 1_073_741_824.0,

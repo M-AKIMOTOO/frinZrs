@@ -1,9 +1,9 @@
-use ndarray::prelude::*;
-use num_complex::Complex;
-use chrono::{DateTime, Utc, Datelike, Timelike, TimeZone};
 use astro::coords;
 use astro::time;
+use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use nav_types::{ECEF, WGS84};
+use ndarray::prelude::*;
+use num_complex::Complex;
 
 //use crate::header::CorHeader;
 
@@ -11,9 +11,10 @@ use nav_types::{ECEF, WGS84};
 
 type C32 = Complex<f32>;
 
-pub fn safe_arg(z: &C32) -> f32 { // An argument of the complex 0+0j in Rust is 180 deg = pi
+pub fn safe_arg(z: &C32) -> f32 {
+    // An argument of the complex 0+0j in Rust is 180 deg = pi
     if z.re == 0.0 && z.im == 0.0 {
-        0.0  // Python の仕様に合わせる
+        0.0 // Python の仕様に合わせる
     } else {
         z.arg()
     }
@@ -43,7 +44,12 @@ pub fn noise_level(array: ArrayView2<C32>, array_mean: C32) -> f32 {
     array_sum / (rows * cols) as f32
 }
 
-pub fn radec2azalt(ant_position: [f32; 3], time: DateTime<Utc>, obs_ra: f32, obs_dec: f32) -> (f32, f32, f32) {
+pub fn radec2azalt(
+    ant_position: [f32; 3],
+    time: DateTime<Utc>,
+    obs_ra: f32,
+    obs_dec: f32,
+) -> (f32, f32, f32) {
     let obs_year = time.year() as i16;
     let obs_month = time.month() as u8;
     let obs_day = time.day() as u8;
@@ -51,7 +57,10 @@ pub fn radec2azalt(ant_position: [f32; 3], time: DateTime<Utc>, obs_ra: f32, obs
     let obs_minute = time.minute() as u8;
     let obs_second = time.second() as f64; // + (time.nanosecond() as f64 / 1_000_000_000.0);
 
-    let decimal_day_calc = obs_day as f64 + obs_hour as f64 / 24.0 + obs_minute as f64 / 60.0 / 24.0 + obs_second as f64 / 24.0 / 60.0 / 60.0;
+    let decimal_day_calc = obs_day as f64
+        + obs_hour as f64 / 24.0
+        + obs_minute as f64 / 60.0 / 24.0
+        + obs_second as f64 / 24.0 / 60.0 / 60.0;
 
     let date = time::Date {
         year: obs_year,
@@ -60,7 +69,11 @@ pub fn radec2azalt(ant_position: [f32; 3], time: DateTime<Utc>, obs_ra: f32, obs
         cal_type: time::CalType::Gregorian,
     };
 
-    let ecef_position = ECEF::new(ant_position[0] as f64, ant_position[1] as f64, ant_position[2] as f64);
+    let ecef_position = ECEF::new(
+        ant_position[0] as f64,
+        ant_position[1] as f64,
+        ant_position[2] as f64,
+    );
     let wgs84_position: WGS84<f64> = ecef_position.into();
     let longitude_radian = wgs84_position.longitude_radians();
     let latitude_radian = wgs84_position.latitude_radians();
@@ -68,10 +81,13 @@ pub fn radec2azalt(ant_position: [f32; 3], time: DateTime<Utc>, obs_ra: f32, obs
 
     let julian_day = time::julian_day(&date);
     let mean_sidereal = time::mn_sidr(julian_day);
-    let hour_angle = coords::hr_angl_frm_observer_long(mean_sidereal, -longitude_radian, obs_ra as f64);
+    let hour_angle =
+        coords::hr_angl_frm_observer_long(mean_sidereal, -longitude_radian, obs_ra as f64);
 
-    let source_az = coords::az_frm_eq(hour_angle, obs_dec as f64, latitude_radian).to_degrees() as f32 +180.0;
-    let source_el = coords::alt_frm_eq(hour_angle, obs_dec as f64, latitude_radian).to_degrees() as f32;
+    let source_az =
+        coords::az_frm_eq(hour_angle, obs_dec as f64, latitude_radian).to_degrees() as f32 + 180.0;
+    let source_el =
+        coords::alt_frm_eq(hour_angle, obs_dec as f64, latitude_radian).to_degrees() as f32;
 
     (source_az, source_el, height_meter as f32)
 }
@@ -84,7 +100,10 @@ pub fn mjd_cal(time: DateTime<Utc>) -> f64 {
     let obs_minute = time.minute() as u8;
     let obs_second = time.second() as f64; // + (time.nanosecond() as f64 / 1_000_000_000.0);
 
-    let decimal_day_calc = obs_day as f64 + obs_hour as f64 / 24.0 + obs_minute as f64 / 60.0 / 24.0 + obs_second as f64 / 24.0 / 60.0 / 60.0;
+    let decimal_day_calc = obs_day as f64
+        + obs_hour as f64 / 24.0
+        + obs_minute as f64 / 60.0 / 24.0
+        + obs_second as f64 / 24.0 / 60.0 / 60.0;
 
     let date = time::Date {
         year: obs_year,
@@ -137,7 +156,7 @@ pub fn unwrap_phase_radians(phases: &mut [f32]) {
     }
 }
 
-use chrono::{NaiveDate, NaiveTime, NaiveDateTime};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 pub fn parse_flag_time(time_str: &str) -> Option<DateTime<Utc>> {
     if time_str.len() != 13 {
@@ -168,7 +187,9 @@ pub fn calculate_allan_deviation(phases: &[f32], tau0: f32, obs_freq_hz: f64) ->
     let max_m = n / 3; // Calculate for cluster sizes up to 1/3 of the data length
 
     for m in 1..=max_m {
-        if m == 0 { continue; }
+        if m == 0 {
+            continue;
+        }
         let tau = m as f64 * tau0_f64;
         let mut sum_sq_diff = 0.0;
         let num_terms = n - 2 * m;
@@ -218,35 +239,50 @@ pub fn uvw_cal(
     time: DateTime<Utc>,
     obs_ra_rad: f64,
     obs_dec_rad: f64,
+    include_vertical: bool,
 ) -> (f64, f64, f64, f64, f64) {
-    // Baseline vector
-    let b_x = ant1_pos[0] - ant2_pos[0];
-    let b_y = ant1_pos[1] - ant2_pos[1];
-    let b_z = ant1_pos[2] - ant2_pos[2];
+    let (b_x, b_y, mut b_z) = (
+        ant2_pos[0] - ant1_pos[0],
+        ant2_pos[1] - ant1_pos[1],
+        ant2_pos[2] - ant1_pos[2],
+    );
 
-    // Get geodetic longitude for hour angle calculation (using antenna 1's position)
+    // Get geodetic latitude/longitude for planar correction and hour angle
     let ecef_position = ECEF::new(ant1_pos[0], ant1_pos[1], ant1_pos[2]);
     let wgs84_position: WGS84<f64> = ecef_position.into();
+    let latitude_rad = wgs84_position.latitude_radians();
     let longitude_rad = wgs84_position.longitude_radians();
+
+    let v_offset = if !include_vertical {
+        let offset = b_z * latitude_rad.cos();
+        b_z = 0.0;
+        offset
+    } else {
+        0.0
+    };
     // Calculate Hour Angle (H)
     let date = time::Date {
         year: time.year() as i16,
         month: time.month() as u8,
-        decimal_day: time.day() as f64 + (time.hour() as f64 / 24.0) + (time.minute() as f64 / 1440.0) + (time.second() as f64 / 86400.0),
+        decimal_day: time.day() as f64
+            + (time.hour() as f64 / 24.0)
+            + (time.minute() as f64 / 1440.0)
+            + (time.second() as f64 / 86400.0),
         cal_type: time::CalType::Gregorian,
     };
     let julian_day = time::julian_day(&date);
     let mean_sidereal = time::mn_sidr(julian_day);
-    let hour_angle = mean_sidereal + longitude_rad - obs_ra_rad;
+    let hour_angle = coords::hr_angl_frm_observer_long(mean_sidereal, -longitude_rad, obs_ra_rad);
+    let east_positive_hour_angle = -hour_angle;
 
-    let sin_h = hour_angle.sin();
-    let cos_h = hour_angle.cos();
+    let sin_h = east_positive_hour_angle.sin();
+    let cos_h = east_positive_hour_angle.cos();
     let sin_d = obs_dec_rad.sin();
     let cos_d = obs_dec_rad.cos();
 
     // UVW calculation
     let u = b_x * sin_h + b_y * cos_h;
-    let v = -b_x * cos_h * sin_d + b_y * sin_h * sin_d + b_z * cos_d;
+    let v = -b_x * cos_h * sin_d + b_y * sin_h * sin_d + b_z * cos_d + v_offset;
     let w = b_x * cos_h * cos_d - b_y * sin_h * cos_d + b_z * sin_d;
 
     // Time derivatives
@@ -255,7 +291,6 @@ pub fn uvw_cal(
 
     (u, v, w, du_dt, dv_dt)
 }
-
 
 /*
 /// Converts rate (Hz) and delay (samples) to sky coordinates (l, m).
@@ -303,5 +338,3 @@ pub fn rate_delay_to_lm(
     (l, m)
 }
 */
-
-

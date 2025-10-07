@@ -19,4 +19,6 @@ pub mod raw_visibility;
 pub mod read;
 pub mod rfi;
 pub mod single_file;
+pub mod uptimeplot;
 pub mod utils;
+pub mod uv_plot;

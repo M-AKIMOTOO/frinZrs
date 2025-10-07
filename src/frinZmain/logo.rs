@@ -1,19 +1,22 @@
-use image::{imageops::{resize, FilterType}, ImageReader, DynamicImage, Rgba, RgbaImage, GenericImageView};
+use image::{
+    imageops::{resize, FilterType},
+    DynamicImage, GenericImageView, ImageReader, Rgba, RgbaImage,
+};
+use std::error::Error;
 use std::io::{self, Write};
 use terminal_size::{terminal_size, Height, Width};
-use std::error::Error;
 
 // The logo PNG is placed in the assets/ directory directly under the project.
 const LOGO_PNG: &[u8] = include_bytes!("./logo1.png");
 
 // ===== Default Parameters (rewrite only the numbers if necessary) =====
-const SCALE: f32 = 0.5;        // Scale factor for the maximum size that fits in the terminal (fixed at 0.5 = half)
-const CELL_ASPECT: f32 = 2.0;  // Height:width of a single character cell (most terminals are ~2.0)
-const MARGIN_X: u16 = 2;       // Left and right margin (number of characters)
-const MARGIN_Y: u16 = 1;       // Top and bottom margin (number of lines)
+const SCALE: f32 = 0.5; // Scale factor for the maximum size that fits in the terminal (fixed at 0.5 = half)
+const CELL_ASPECT: f32 = 2.0; // Height:width of a single character cell (most terminals are ~2.0)
+const MARGIN_X: u16 = 2; // Left and right margin (number of characters)
+const MARGIN_Y: u16 = 1; // Top and bottom margin (number of lines)
 const BG_RGB: [u8; 3] = [255, 255, 255]; // Background for transparent parts (white)
-const GAMMA: f32 = 2.2;        // Gamma for sRGB <-> linear
-// =====================================================
+const GAMMA: f32 = 2.2; // Gamma for sRGB <-> linear
+                        // =====================================================
 
 pub fn show_logo() -> Result<(), Box<dyn Error>> {
     // Load PNG
@@ -139,8 +142,11 @@ fn print_braille_cells(sub: &RgbaImage) -> Result<(), Box<dyn Error>> {
                         sb += p[2] as u32;
 
                         // Set points based on lightness threshold (simple ordered dither)
-                        let lum = 0.2126 * (p[0] as f32) + 0.7152 * (p[1] as f32) + 0.0722 * (p[2] as f32);
-                        let thresh = 128.0 + [0.0, 16.0, 8.0, 24.0][dy as usize] + (dx as f32) * 8.0;
+                        let lum = 0.2126 * (p[0] as f32)
+                            + 0.7152 * (p[1] as f32)
+                            + 0.0722 * (p[2] as f32);
+                        let thresh =
+                            128.0 + [0.0, 16.0, 8.0, 24.0][dy as usize] + (dx as f32) * 8.0;
                         if lum > thresh {
                             mask |= match (dx, dy) {
                                 (0, 0) => 0x01,
@@ -159,7 +165,11 @@ fn print_braille_cells(sub: &RgbaImage) -> Result<(), Box<dyn Error>> {
             }
 
             if pixel_count > 0 {
-                let avg = [(sr / pixel_count) as u8, (sg / pixel_count) as u8, (sb / pixel_count) as u8];
+                let avg = [
+                    (sr / pixel_count) as u8,
+                    (sg / pixel_count) as u8,
+                    (sb / pixel_count) as u8,
+                ];
                 let ch = char::from_u32(0x2800 + mask as u32).unwrap_or(' ');
                 write!(out, "\x1b[38;2;{};{};{}m{}", avg[0], avg[1], avg[2], ch)?;
             }

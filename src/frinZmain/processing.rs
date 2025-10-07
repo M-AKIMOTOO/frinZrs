@@ -4,22 +4,28 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process;
 
+use crate::analysis::AnalysisResults;
 use chrono::{DateTime, Utc};
 use image::ImageBuffer;
 use imageproc::filter;
-use num_complex::Complex;
 use ndarray::Array;
-use crate::analysis::AnalysisResults;
 use ndarray::Array2;
+use num_complex::Complex;
 
-use crate::args::Args;
 use crate::analysis::analyze_results;
-use crate::bandpass::{apply_bandpass_correction, read_bandpass_file, write_complex_spectrum_binary};
+use crate::args::Args;
+use crate::bandpass::{
+    apply_bandpass_correction, read_bandpass_file, write_complex_spectrum_binary,
+};
 use crate::deep_search;
 use crate::fft::{self, process_fft, process_ifft};
 use crate::header::{parse_header, CorHeader};
-use crate::output::{format_delay_output, format_freq_output, generate_output_names, output_header_info};
-use crate::plot::{delay_plane, frequency_plane, plot_dynamic_spectrum_freq, plot_dynamic_spectrum_lag};
+use crate::output::{
+    format_delay_output, format_freq_output, generate_output_names, output_header_info,
+};
+use crate::plot::{
+    delay_plane, frequency_plane, plot_dynamic_spectrum_freq, plot_dynamic_spectrum_lag,
+};
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
 use crate::utils::safe_arg;
@@ -43,7 +49,6 @@ pub struct ProcessResult {
     pub add_plot_res_delay: Vec<f32>,
     pub add_plot_res_rate: Vec<f32>,
 }
-
 
 pub fn process_cor_file(
     input_path: &Path,
@@ -134,15 +139,8 @@ pub fn process_cor_file(
 
     // --- Loop and Processing Setup ---
     cursor.set_position(0);
-    let (_, obs_time, effective_integ_time) = read_visibility_data(
-        &mut cursor,
-        &header,
-        1,
-        0,
-        0,
-        false,
-        pp_flag_ranges,
-    )?;
+    let (_, obs_time, effective_integ_time) =
+        read_visibility_data(&mut cursor, &header, 1, 0, 0, false, pp_flag_ranges)?;
     cursor.set_position(256);
 
     let pp = header.number_of_sector;
@@ -166,8 +164,7 @@ pub fn process_cor_file(
         if args.cumulate >= pp {
             eprintln!(
                 "The specified cumulation length, {} s, is more than the observation time, {} s.",
-                args.cumulate,
-                pp
+                args.cumulate, pp
             );
             process::exit(1);
         }
@@ -188,7 +185,11 @@ pub fn process_cor_file(
     let mut add_plot_res_rate: Vec<f32> = Vec::new();
 
     for l1 in 0..loop_count {
-        let current_length = if args.cumulate != 0 { (l1 + 1) * length } else { length };
+        let current_length = if args.cumulate != 0 {
+            (l1 + 1) * length
+        } else {
+            length
+        };
         let (complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(
             &mut cursor,
             &header,
@@ -214,7 +215,10 @@ pub fn process_cor_file(
             continue;
         }
 
-        let (analysis_results, freq_rate_array, delay_rate_2d_data_comp) = match args.search.as_deref() {
+        let (analysis_results, freq_rate_array, delay_rate_2d_data_comp) = match args
+            .search
+            .as_deref()
+        {
             Some("deep") => {
                 let deep_search_result = deep_search::run_deep_search(
                     &complex_vec,
@@ -243,21 +247,22 @@ pub fn process_cor_file(
                 let mut delay_rate_2d_data_comp_mut = None;
 
                 for _ in 0..args.iter {
-                    let (iter_results, iter_freq_rate_array, iter_delay_rate_2d_data_comp) = run_analysis_pipeline(
-                        &complex_vec,
-                        &header,
-                        args,
-                        Some("peak"),
-                        total_delay_correct,
-                        total_rate_correct,
-                        args.acel_correct,
-                        current_length,
-                        effective_integ_time,
-                        &current_obs_time,
-                        &obs_time,
-                        &rfi_ranges,
-                        &bandpass_data,
-                    )?;
+                    let (iter_results, iter_freq_rate_array, iter_delay_rate_2d_data_comp) =
+                        run_analysis_pipeline(
+                            &complex_vec,
+                            &header,
+                            args,
+                            Some("peak"),
+                            total_delay_correct,
+                            total_rate_correct,
+                            args.acel_correct,
+                            current_length,
+                            effective_integ_time,
+                            &current_obs_time,
+                            &obs_time,
+                            &rfi_ranges,
+                            &bandpass_data,
+                        )?;
                     total_delay_correct += iter_results.delay_offset;
                     total_rate_correct += iter_results.rate_offset;
                     analysis_results_mut = Some(iter_results);
@@ -278,22 +283,24 @@ pub fn process_cor_file(
                     delay_rate_2d_data_comp_mut.unwrap(),
                 )
             }
-            _ => { // No search or other modes not handled here
-                let (mut analysis_results, freq_rate_array, delay_rate_2d_data_comp) = run_analysis_pipeline(
-                    &complex_vec,
-                    &header,
-                    args,
-                    None,
-                    args.delay_correct,
-                    args.rate_correct,
-                    args.acel_correct,
-                    current_length,
-                    effective_integ_time,
-                    &current_obs_time,
-                    &obs_time,
-                    &rfi_ranges,
-                    &bandpass_data,
-                )?;
+            _ => {
+                // No search or other modes not handled here
+                let (mut analysis_results, freq_rate_array, delay_rate_2d_data_comp) =
+                    run_analysis_pipeline(
+                        &complex_vec,
+                        &header,
+                        args,
+                        None,
+                        args.delay_correct,
+                        args.rate_correct,
+                        args.acel_correct,
+                        current_length,
+                        effective_integ_time,
+                        &current_obs_time,
+                        &obs_time,
+                        &rfi_ranges,
+                        &bandpass_data,
+                    )?;
                 analysis_results.length_f32 = (current_length as f32 * effective_integ_time).ceil();
                 (analysis_results, freq_rate_array, delay_rate_2d_data_comp)
             }
@@ -319,7 +326,10 @@ pub fn process_cor_file(
                     header.fft_point,
                     1,
                 )?;
-                println!("Cross-power spectrum file written to {:?}", output_file_path);
+                println!(
+                    "Cross-power spectrum file written to {:?}",
+                    output_file_path
+                );
             }
         }
 
@@ -351,8 +361,10 @@ pub fn process_cor_file(
             );
             let fft_point_half = (header.fft_point / 2) as usize;
             let time_samples = complex_vec.len() / fft_point_half;
-            let spectrum_array = Array::from_shape_vec((time_samples, fft_point_half), complex_vec.clone()).unwrap();
-            let output_path_freq = dynamic_spectrum_dir.join(format!("{}_dynamic_spectrum_frequency.png", base_filename));
+            let spectrum_array =
+                Array::from_shape_vec((time_samples, fft_point_half), complex_vec.clone()).unwrap();
+            let output_path_freq = dynamic_spectrum_dir
+                .join(format!("{}_dynamic_spectrum_frequency.png", base_filename));
             plot_dynamic_spectrum_freq(
                 output_path_freq.to_str().unwrap(),
                 &spectrum_array,
@@ -364,12 +376,14 @@ pub fn process_cor_file(
             let mut lag_data = Array::zeros((time_samples, header.fft_point as usize));
             let fft_point_usize = header.fft_point as usize;
             for (i, row) in spectrum_array.rows().into_iter().enumerate() {
-                let shifted_out = fft::perform_ifft_on_vec(row.as_slice().unwrap(), fft_point_usize);
+                let shifted_out =
+                    fft::perform_ifft_on_vec(row.as_slice().unwrap(), fft_point_usize);
                 for (j, val) in shifted_out.iter().enumerate() {
                     lag_data[[i, j]] = val.norm();
                 }
             }
-            let output_path_lag = dynamic_spectrum_dir.join(format!("{}_dynamic_spectrum_time_lag.png", base_filename));
+            let output_path_lag = dynamic_spectrum_dir
+                .join(format!("{}_dynamic_spectrum_time_lag.png", base_filename));
             plot_dynamic_spectrum_lag(
                 output_path_lag.to_str().unwrap(),
                 &lag_data,
@@ -455,8 +469,11 @@ pub fn process_cor_file(
 
         if args.plot && args.cumulate == 0 {
             if let Some(path) = &plot_path {
-                let length_label =
-                    if args.length == 0 { "0".to_string() } else { args.length.to_string() };
+                let length_label = if args.length == 0 {
+                    "0".to_string()
+                } else {
+                    args.length.to_string()
+                };
                 let plot_dir = if !args.frequency {
                     path.join(format!("time_domain/len{}s", length_label))
                 } else {
@@ -492,16 +509,25 @@ pub fn process_cor_file(
                     for y in 0..rows {
                         for x in 0..cols {
                             let val = delay_rate_2d_data_comp[[y as usize, x as usize]].norm();
-                            let normalized_val =
-                                if max_norm > 0.0 { (val / max_norm * 255.0) as u8 } else { 0 };
+                            let normalized_val = if max_norm > 0.0 {
+                                (val / max_norm * 255.0) as u8
+                            } else {
+                                0
+                            };
                             img.put_pixel(x, y, image::Luma([normalized_val]));
                         }
                     }
                     let blurred_img = filter::gaussian_blur_f32(&img, 1.0);
-                    let delay_data: Vec<f32> =
-                        analysis_results.delay_range.iter().map(|&x| x as f32).collect();
-                    let rate_data: Vec<f32> =
-                        analysis_results.rate_range.iter().map(|&x| x as f32).collect();
+                    let delay_data: Vec<f32> = analysis_results
+                        .delay_range
+                        .iter()
+                        .map(|&x| x as f32)
+                        .collect();
+                    let rate_data: Vec<f32> = analysis_results
+                        .rate_range
+                        .iter()
+                        .map(|&x| x as f32)
+                        .collect();
                     let heatmap_func = move |delay: f64, rate: f64| -> f64 {
                         let d_min = delay_data[0] as f64;
                         let d_max = *delay_data.last().unwrap() as f64;
@@ -540,12 +566,12 @@ pub fn process_cor_file(
                             .join(", ");
                         (
                             "Length (flag) [s]".to_string(),
-                            format!("{:.3} ({})", analysis_results.length_f32.ceil(), flag_str)
+                            format!("{:.3} ({})", analysis_results.length_f32.ceil(), flag_str),
                         )
                     } else {
                         (
                             "Length [s]".to_string(),
-                            format!("{:.3}", analysis_results.length_f32.ceil())
+                            format!("{:.3}", analysis_results.length_f32.ceil()),
                         )
                     };
 
@@ -606,7 +632,10 @@ pub fn process_cor_file(
                         .freq_range
                         .iter()
                         .zip(
-                            analysis_results.freq_rate_spectrum.iter().map(|c| safe_arg(c).to_degrees()),
+                            analysis_results
+                                .freq_rate_spectrum
+                                .iter()
+                                .map(|c| safe_arg(c).to_degrees()),
                         )
                         .map(|(&x, y)| (x as f64, y as f64))
                         .collect();
@@ -616,10 +645,16 @@ pub fn process_cor_file(
                         .zip(analysis_results.freq_rate.iter())
                         .map(|(&x, &y)| (x as f64, y as f64))
                         .collect();
-                    let freq_data: Vec<f32> =
-                        analysis_results.freq_range.iter().map(|&x| x as f32).collect();
-                    let rate_data: Vec<f32> =
-                        analysis_results.rate_range.iter().map(|&x| x as f32).collect();
+                    let freq_data: Vec<f32> = analysis_results
+                        .freq_range
+                        .iter()
+                        .map(|&x| x as f32)
+                        .collect();
+                    let rate_data: Vec<f32> = analysis_results
+                        .rate_range
+                        .iter()
+                        .map(|&x| x as f32)
+                        .collect();
                     let heatmap_func = |freq: f64, rate: f64| -> f64 {
                         let f_min = freq_data[0] as f64;
                         let f_max = *freq_data.last().unwrap() as f64;
@@ -630,10 +665,10 @@ pub fn process_cor_file(
                         }
                         let rows = freq_rate_array.shape()[0];
                         let cols = freq_rate_array.shape()[1];
-                        let freq_idx =
-                            (((freq - f_min) / (f_max - f_min)) * (rows - 1) as f64).round() as usize;
-                        let rate_idx =
-                            (((rate - r_min) / (r_max - r_min)) * (cols - 1) as f64).round() as usize;
+                        let freq_idx = (((freq - f_min) / (f_max - f_min)) * (rows - 1) as f64)
+                            .round() as usize;
+                        let rate_idx = (((rate - r_min) / (r_max - r_min)) * (cols - 1) as f64)
+                            .round() as usize;
                         if freq_idx < rows && rate_idx < cols {
                             freq_rate_array[[freq_idx, rate_idx]].norm() as f64
                         } else {
@@ -649,25 +684,34 @@ pub fn process_cor_file(
                             .join(", ");
                         (
                             "Length (flag) [s]".to_string(),
-                            format!("{:.3} ({})", analysis_results.length_f32.ceil(), flag_str)
+                            format!("{:.3} ({})", analysis_results.length_f32.ceil(), flag_str),
                         )
                     } else {
                         (
                             "Length [s]".to_string(),
-                            format!("{:.3}", analysis_results.length_f32.ceil())
+                            format!("{:.3}", analysis_results.length_f32.ceil()),
                         )
                     };
 
                     let (freq_key, freq_val) = if !args.rfi.is_empty() {
-                        let rfi_str = args.rfi.iter().map(|s| s.replace(',', "-")).collect::<Vec<String>>().join(", ");
+                        let rfi_str = args
+                            .rfi
+                            .iter()
+                            .map(|s| s.replace(',', "-"))
+                            .collect::<Vec<String>>()
+                            .join(", ");
                         (
                             "Frequency (RFI) [MHz]".to_string(),
-                            format!("{:.3} ({})", header.observing_frequency as f32 / 1e6, rfi_str)
+                            format!(
+                                "{:.3} ({})",
+                                header.observing_frequency as f32 / 1e6,
+                                rfi_str
+                            ),
                         )
                     } else {
                         (
                             "Frequency [MHz]".to_string(),
-                            format!("{:.3}", header.observing_frequency as f32 / 1e6)
+                            format!("{:.3}", header.observing_frequency as f32 / 1e6),
                         )
                     };
 
@@ -699,8 +743,10 @@ pub fn process_cor_file(
                         ),
                         format!("{:+.6}", analysis_results.residual_rate * 1000.0),
                     ];
-                    let max_norm_freq =
-                        freq_rate_array.iter().map(|c| c.norm()).fold(0.0f32, |acc, x| acc.max(x));
+                    let max_norm_freq = freq_rate_array
+                        .iter()
+                        .map(|c| c.norm())
+                        .fold(0.0f32, |acc, x| acc.max(x));
                     frequency_plane(
                         &freq_amp_profile,
                         &freq_phase_profile,
@@ -754,36 +800,36 @@ fn run_analysis_pipeline(
     temp_args.rate_correct = rate_correct;
     temp_args.acel_correct = acel_correct;
 
-    let corrected_complex_vec = if delay_correct != 0.0 || rate_correct != 0.0 || acel_correct != 0.0 {
-        let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
-            .chunks(header.fft_point as usize / 2)
-            .map(|chunk| {
-                chunk
-                    .iter()
-                    .map(|&c| Complex::new(c.re as f64, c.im as f64))
-                    .collect()
-            })
-            .collect();
-        let start_time_offset_sec =
-            (*current_obs_time - *obs_time).num_seconds() as f32;
-        let corrected_complex_vec_2d = fft::apply_phase_correction(
-            &input_data_2d,
-            rate_correct,
-            delay_correct,
-            acel_correct,
-            effective_integ_time,
-            header.sampling_speed as u32,
-            header.fft_point as u32,
-            start_time_offset_sec,
-        );
-        corrected_complex_vec_2d
-            .into_iter()
-            .flatten()
-            .map(|v| Complex::new(v.re as f32, v.im as f32))
-            .collect()
-    } else {
-        complex_vec.to_vec()
-    };
+    let corrected_complex_vec =
+        if delay_correct != 0.0 || rate_correct != 0.0 || acel_correct != 0.0 {
+            let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
+                .chunks(header.fft_point as usize / 2)
+                .map(|chunk| {
+                    chunk
+                        .iter()
+                        .map(|&c| Complex::new(c.re as f64, c.im as f64))
+                        .collect()
+                })
+                .collect();
+            let start_time_offset_sec = (*current_obs_time - *obs_time).num_seconds() as f32;
+            let corrected_complex_vec_2d = fft::apply_phase_correction(
+                &input_data_2d,
+                rate_correct,
+                delay_correct,
+                acel_correct,
+                effective_integ_time,
+                header.sampling_speed as u32,
+                header.fft_point as u32,
+                start_time_offset_sec,
+            );
+            corrected_complex_vec_2d
+                .into_iter()
+                .flatten()
+                .map(|v| Complex::new(v.re as f32, v.im as f32))
+                .collect()
+        } else {
+            complex_vec.to_vec()
+        };
 
     let (mut freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
@@ -798,8 +844,7 @@ fn run_analysis_pipeline(
         apply_bandpass_correction(&mut freq_rate_array, bp_data);
     }
 
-    let delay_rate_2d_data_comp =
-        process_ifft(&freq_rate_array, header.fft_point, padding_length);
+    let delay_rate_2d_data_comp = process_ifft(&freq_rate_array, header.fft_point, padding_length);
 
     let analysis_results = analyze_results(
         &freq_rate_array,

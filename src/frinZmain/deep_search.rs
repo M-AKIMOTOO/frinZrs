@@ -1,27 +1,27 @@
-use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
-use num_complex::Complex;
-use ndarray::prelude::*;
-use std::error::Error;
 use chrono::{DateTime, Utc};
+use ndarray::prelude::*;
+use num_complex::Complex;
+use rayon::prelude::*;
+use std::error::Error;
+use std::sync::{Arc, Mutex};
 
-use crate::header::CorHeader;
-use crate::fft::{process_fft, process_ifft, apply_phase_correction};
-use crate::bandpass::apply_bandpass_correction;
 use crate::analysis::{analyze_results, AnalysisResults};
 use crate::args::Args;
+use crate::bandpass::apply_bandpass_correction;
+use crate::fft::{apply_phase_correction, process_fft, process_ifft};
+use crate::header::CorHeader;
 
 type C32 = Complex<f32>;
 
 /// Deep searchで使用する探索パラメータ
 #[derive(Debug, Clone)]
 pub struct DeepSearchParams {
-    pub delay_fine_step: f32,      // 0.1 sample
-    pub rate_fine_step_factor: f32, // 1/(10*pp)
-    pub delay_search_range: f32,   // ±0.5 sample
+    pub delay_fine_step: f32,          // 0.1 sample
+    pub rate_fine_step_factor: f32,    // 1/(10*pp)
+    pub delay_search_range: f32,       // ±0.5 sample
     pub rate_search_range_factor: f32, // ±1/(2*pp) Hz
-    
-    pub max_iterations: usize,     // 階層の深さ
+
+    pub max_iterations: usize, // 階層の深さ
 }
 
 impl Default for DeepSearchParams {
@@ -31,7 +31,7 @@ impl Default for DeepSearchParams {
             rate_fine_step_factor: 0.1,
             delay_search_range: 0.5,
             rate_search_range_factor: 0.5,
-            
+
             max_iterations: 6,
         }
     }
@@ -59,11 +59,10 @@ pub fn run_deep_search(
     pp: i32,
     cpu_count_arg: u32, // New argument
 ) -> Result<DeepSearchResult, Box<dyn Error>> {
-    
     println!("[DEEP SEARCH] Starting deep hierarchical search algorithm");
-    
+
     let start_time_offset_sec = (*current_obs_time - obs_time).num_seconds() as f32;
-    
+
     // Step 1: 粗い遅延・レート推定
     let (coarse_delay, coarse_rate) = get_coarse_estimates(
         complex_vec,
@@ -75,31 +74,40 @@ pub fn run_deep_search(
         bandpass_data,
         args,
     )?;
-    
-    println!("[DEEP SEARCH] Coarse estimates - Delay: {:.6} samples, Rate: {:.6} Hz", 
-             coarse_delay, coarse_rate);
-    
+
+    println!(
+        "[DEEP SEARCH] Coarse estimates - Delay: {:.6} samples, Rate: {:.6} Hz",
+        coarse_delay, coarse_rate
+    );
+
     // Step 2: 階層的探索
     let search_params = DeepSearchParams::default();
     let mut current_delay = coarse_delay;
     let mut current_rate = coarse_rate;
-    
+
     for iteration in 0..search_params.max_iterations {
         println!("[DEEP SEARCH] Iteration {} starting", iteration + 1);
-        
+
         // 現在の階層での探索範囲とステップサイズを計算
         let scale_factor = 10.0_f32.powi(iteration as i32);
         let delay_range = search_params.delay_search_range / scale_factor;
         let rate_range = search_params.rate_search_range_factor / (2.0 * pp as f32) / scale_factor;
         let delay_step = search_params.delay_fine_step / scale_factor;
         let rate_step = search_params.rate_fine_step_factor / (10.0 * pp as f32) / scale_factor;
-        
-        println!("[DEEP SEARCH]   Delay range: +/- {:.6} samples, step: {:.6}", delay_range, delay_step);
-        println!("[DEEP SEARCH]   Rate range: +/- {:.6} Hz, step: {:.6}", rate_range, rate_step);
-        
+
+        println!(
+            "[DEEP SEARCH]   Delay range: +/- {:.6} samples, step: {:.6}",
+            delay_range, delay_step
+        );
+        println!(
+            "[DEEP SEARCH]   Rate range: +/- {:.6} Hz, step: {:.6}",
+            rate_range, rate_step
+        );
 
         // Determine effective CPU count
-        let num_available_cpus = std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1);
+        let num_available_cpus = std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(1);
         let mut effective_cpu_count = if cpu_count_arg == 0 {
             num_available_cpus
         } else if (cpu_count_arg as usize) > num_available_cpus {
@@ -132,20 +140,24 @@ pub fn run_deep_search(
             effective_cpu_count,
             start_time_offset_sec,
         )?;
-        
+
         // 結果を更新
         current_delay = best_delay;
         current_rate = best_rate;
-        
-        println!("[DEEP SEARCH]   Best result: delay={:.6} samples, rate={:.6} Hz, SNR={:.3}", 
-                 current_delay, current_rate, best_snr);
+
+        println!(
+            "[DEEP SEARCH]   Best result: delay={:.6} samples, rate={:.6} Hz, SNR={:.3}",
+            current_delay, current_rate, best_snr
+        );
     }
-    
+
     // Step 3: 最終的な解析を実行
-    println!("[DEEP SEARCH] Final result - Delay: {:.6} samples, Rate: {:.6} Hz", 
-             current_delay, current_rate);
-    
-    let (final_analysis_results, final_freq_rate_array, final_delay_rate_2d_data) = 
+    println!(
+        "[DEEP SEARCH] Final result - Delay: {:.6} samples, Rate: {:.6} Hz",
+        current_delay, current_rate
+    );
+
+    let (final_analysis_results, final_freq_rate_array, final_delay_rate_2d_data) =
         perform_final_analysis(
             complex_vec,
             header,
@@ -159,7 +171,7 @@ pub fn run_deep_search(
             current_rate,
             start_time_offset_sec,
         )?;
-    
+
     Ok(DeepSearchResult {
         analysis_results: final_analysis_results,
         freq_rate_array: final_freq_rate_array,
@@ -178,11 +190,10 @@ fn get_coarse_estimates(
     bandpass_data: &Option<Vec<C32>>,
     args: &Args,
 ) -> Result<(f32, f32), Box<dyn Error>> {
-    
     // delay-windowとrate-windowが指定されている場合は、その範囲で探索
     if !args.delay_window.is_empty() && !args.rate_window.is_empty() {
         println!("[DEEP SEARCH] Using specified delay and rate windows for coarse estimation");
-        
+
         let (mut freq_rate_array, padding_length) = process_fft(
             complex_vec,
             current_length,
@@ -191,13 +202,14 @@ fn get_coarse_estimates(
             rfi_ranges,
             args.rate_padding,
         );
-        
+
         if let Some(bp_data) = bandpass_data {
             apply_bandpass_correction(&mut freq_rate_array, bp_data);
         }
-        
-        let delay_rate_2d_data_comp = process_ifft(&freq_rate_array, header.fft_point, padding_length);
-        
+
+        let delay_rate_2d_data_comp =
+            process_ifft(&freq_rate_array, header.fft_point, padding_length);
+
         let analysis_results = analyze_results(
             &freq_rate_array,
             &delay_rate_2d_data_comp,
@@ -209,18 +221,18 @@ fn get_coarse_estimates(
             args,
             args.search.as_deref(),
         );
-        
+
         let coarse_delay = analysis_results.delay_offset;
         let coarse_rate = analysis_results.rate_offset;
-        
+
         Ok((coarse_delay, coarse_rate))
     } else {
         // delay-windowとrate-windowが指定されていない場合は、二次関数フィッティングなしの粗い探索を実行
         println!("[DEEP SEARCH] No windows specified, running coarse search (no fitting) for initial estimates");
-        
+
         let mut search_args = args.clone();
         search_args.search = Some("deep".to_string()); // Enable global max search, disable fitting
-        
+
         let (mut freq_rate_array, padding_length) = process_fft(
             complex_vec,
             current_length,
@@ -229,13 +241,14 @@ fn get_coarse_estimates(
             rfi_ranges,
             args.rate_padding,
         );
-        
+
         if let Some(bp_data) = bandpass_data {
             apply_bandpass_correction(&mut freq_rate_array, bp_data);
         }
-        
-        let delay_rate_2d_data_comp = process_ifft(&freq_rate_array, header.fft_point, padding_length);
-        
+
+        let delay_rate_2d_data_comp =
+            process_ifft(&freq_rate_array, header.fft_point, padding_length);
+
         let analysis_results = analyze_results(
             &freq_rate_array,
             &delay_rate_2d_data_comp,
@@ -247,12 +260,12 @@ fn get_coarse_estimates(
             &search_args,
             search_args.search.as_deref(),
         );
-        
+
         // 粗い探索の結果（フィッティングなし）を取得
         // delay_offsetとrate_offsetは0になるので、delay_rangeとrate_rangeから直接ピーク位置を取得
         let coarse_delay = analysis_results.residual_delay;
         let coarse_rate = analysis_results.residual_rate;
-        
+
         Ok((coarse_delay, coarse_rate))
     }
 }
@@ -276,14 +289,17 @@ fn parallel_grid_search(
     effective_cpu_count: usize,
     start_time_offset_sec: f32,
 ) -> Result<(f32, f32, f32), Box<dyn Error>> {
-    
     // 探索グリッドを生成
     let delay_points = generate_search_points(center_delay, delay_range, delay_step);
     let rate_points = generate_search_points(center_rate, rate_range, rate_step);
-    
-    println!("[DEEP SEARCH]   Grid: {} delay x {} rate = {} combinations", 
-             delay_points.len(), rate_points.len(), delay_points.len() * rate_points.len());
-    
+
+    println!(
+        "[DEEP SEARCH]   Grid: {} delay x {} rate = {} combinations",
+        delay_points.len(),
+        rate_points.len(),
+        delay_points.len() * rate_points.len()
+    );
+
     // 全ての組み合わせを生成
     let mut search_combinations = Vec::new();
     for &delay in &delay_points {
@@ -291,14 +307,14 @@ fn parallel_grid_search(
             search_combinations.push((delay, rate));
         }
     }
-    
+
     // 並列処理の設定
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(effective_cpu_count)
         .build()?;
-    
+
     let best_result = Arc::new(Mutex::new((center_delay, center_rate, 0.0f32)));
-    
+
     // 並列探索実行
     pool.install(|| {
         search_combinations.par_iter().for_each(|&(delay, rate)| {
@@ -322,7 +338,7 @@ fn parallel_grid_search(
             }
         });
     });
-    
+
     let final_result = best_result.lock().unwrap().clone();
     Ok(final_result)
 }
@@ -341,18 +357,17 @@ fn evaluate_delay_rate_snr(
     rate: f32,
     start_time_offset_sec: f32,
 ) -> Result<f32, Box<dyn Error>> {
-    
     // 位相補正を適用
     let corrected_complex_vec = apply_corrections(
-        complex_vec, 
-        rate, 
-        delay, 
-        args.acel_correct, 
-        effective_integ_time, 
+        complex_vec,
+        rate,
+        delay,
+        args.acel_correct,
+        effective_integ_time,
         header,
-        start_time_offset_sec
+        start_time_offset_sec,
     )?;
-    
+
     // FFT処理
     let (mut freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
@@ -362,15 +377,15 @@ fn evaluate_delay_rate_snr(
         rfi_ranges,
         args.rate_padding,
     );
-    
+
     // バンドパス補正
     if let Some(bp_data) = bandpass_data {
         apply_bandpass_correction(&mut freq_rate_array, bp_data);
     }
-    
+
     // IFFT処理
     let delay_rate_2d_data_comp = process_ifft(&freq_rate_array, header.fft_point, padding_length);
-    
+
     // 解析実行
     let temp_args = create_corrected_args(args, delay, rate);
     let analysis_results = analyze_results(
@@ -384,7 +399,7 @@ fn evaluate_delay_rate_snr(
         &temp_args,
         None, // No search fitting during deep search iterations
     );
-    
+
     Ok(analysis_results.delay_snr)
 }
 
@@ -402,18 +417,17 @@ fn perform_final_analysis(
     final_rate: f32,
     start_time_offset_sec: f32,
 ) -> Result<(AnalysisResults, Array2<C32>, Array2<C32>), Box<dyn Error>> {
-    
     // 最適解で最終的な処理を実行
     let corrected_complex_vec = apply_corrections(
-        complex_vec, 
-        final_rate, 
-        final_delay, 
-        args.acel_correct, 
-        effective_integ_time, 
+        complex_vec,
+        final_rate,
+        final_delay,
+        args.acel_correct,
+        effective_integ_time,
         header,
-        start_time_offset_sec
+        start_time_offset_sec,
     )?;
-    
+
     let (mut final_freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
         current_length,
@@ -422,13 +436,14 @@ fn perform_final_analysis(
         rfi_ranges,
         args.rate_padding,
     );
-    
+
     if let Some(bp_data) = bandpass_data {
         apply_bandpass_correction(&mut final_freq_rate_array, bp_data);
     }
-    
-    let final_delay_rate_2d_data_comp = process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
-    
+
+    let final_delay_rate_2d_data_comp =
+        process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
+
     let final_args = create_corrected_args(args, final_delay, final_rate);
     let mut analysis_results = analyze_results(
         &final_freq_rate_array,
@@ -441,13 +456,17 @@ fn perform_final_analysis(
         &final_args,
         Some("deep"), // Final analysis for deep search should find the global max
     );
-    
+
     // Deep searchの結果を反映
     analysis_results.residual_delay = final_delay;
     analysis_results.residual_rate = final_rate;
     analysis_results.length_f32 = current_length as f32 * effective_integ_time;
-    
-    Ok((analysis_results, final_freq_rate_array, final_delay_rate_2d_data_comp))
+
+    Ok((
+        analysis_results,
+        final_freq_rate_array,
+        final_delay_rate_2d_data_comp,
+    ))
 }
 
 /// 探索点を生成
@@ -470,21 +489,21 @@ fn generate_search_points(center: f32, range: f32, step: f32) -> Vec<f32> {
 
     let start = center64 - range64;
     let end = center64 + range64;
-    
+
     let mut current = start;
     // Add a small tolerance to the end condition to handle floating point inaccuracies
     while current <= end + step64 * 0.5 {
         points.push(current as f32);
         current += step64;
     }
-    
+
     // 最大10点に制限（計算量制御）
     if points.len() > 10 {
         // Ensure step_by is at least 1 to avoid panic
         let step_by = (points.len() / 10).max(1);
         points = points.into_iter().step_by(step_by).collect();
     }
-    
+
     points
 }
 
@@ -498,11 +517,10 @@ fn apply_corrections(
     header: &CorHeader,
     start_time_offset_sec: f32,
 ) -> Result<Vec<C32>, Box<dyn Error>> {
-    
     if rate == 0.0 && delay == 0.0 {
         return Ok(complex_vec.to_vec());
     }
-    
+
     let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
         .chunks(header.fft_point as usize / 2)
         .map(|chunk| {
@@ -512,7 +530,7 @@ fn apply_corrections(
                 .collect()
         })
         .collect();
-    
+
     let corrected_complex_vec_2d = apply_phase_correction(
         &input_data_2d,
         rate,
@@ -523,13 +541,13 @@ fn apply_corrections(
         header.fft_point as u32,
         start_time_offset_sec,
     );
-    
+
     let corrected_vec = corrected_complex_vec_2d
         .into_iter()
         .flatten()
         .map(|v| Complex::new(v.re as f32, v.im as f32))
         .collect();
-    
+
     Ok(corrected_vec)
 }
 

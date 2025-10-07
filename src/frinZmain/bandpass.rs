@@ -1,9 +1,9 @@
-use std::io::{self, BufReader, BufWriter, ErrorKind};
-use std::fs::File;
-use num_complex::Complex;
-use byteorder::{ReadBytesExt, LittleEndian, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use ndarray::prelude::*;
+use num_complex::Complex;
 use plotters::prelude::*;
+use std::fs::File;
+use std::io::{self, BufReader, BufWriter, ErrorKind};
 
 use crate::utils::safe_arg;
 
@@ -52,10 +52,7 @@ pub fn write_complex_spectrum_binary(
     Ok(())
 }
 
-pub fn apply_bandpass_correction(
-    freq_rate_array: &mut Array2<C32>,
-    bandpass_data: &[C32],
-) {
+pub fn apply_bandpass_correction(freq_rate_array: &mut Array2<C32>, bandpass_data: &[C32]) {
     if bandpass_data.is_empty() {
         return;
     }
@@ -65,7 +62,11 @@ pub fn apply_bandpass_correction(
     let bandpass_sum: C32 = bandpass_data.iter().copied().sum();
     let bandpass_mean = bandpass_sum / bandpass_data.len() as f32;
 
-    for (mut row, &bp_val) in freq_rate_array.rows_mut().into_iter().zip(bandpass_data.iter()) {
+    for (mut row, &bp_val) in freq_rate_array
+        .rows_mut()
+        .into_iter()
+        .zip(bandpass_data.iter())
+    {
         // Avoid division by zero or near-zero values
         if bp_val.norm() > EPSILON {
             row.iter_mut()
@@ -118,7 +119,10 @@ pub fn plot_bandpass_spectrum(
 
     phase_chart
         .draw_series(LineSeries::new(
-            spectrum.iter().enumerate().map(|(i, c)| (i as i32, safe_arg(c).to_degrees())),
+            spectrum
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i as i32, safe_arg(c).to_degrees())),
             color,
         ))
         .map_err(to_io_error)?;
@@ -149,7 +153,10 @@ pub fn plot_bandpass_spectrum(
 
     amp_chart
         .draw_series(LineSeries::new(
-            spectrum.iter().enumerate().map(|(i, c)| (i as i32, c.norm())),
+            spectrum
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i as i32, c.norm())),
             color,
         ))
         .map_err(to_io_error)?;

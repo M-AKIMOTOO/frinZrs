@@ -8,11 +8,10 @@ use chrono::{DateTime, Utc};
 
 use crate::args::Args;
 use crate::output;
+use crate::output::generate_output_names;
 use crate::plot::{self, add_plot, cumulate_plot};
 use crate::processing::process_cor_file;
 use crate::utils;
-use crate::output::generate_output_names;
-
 
 pub fn run_single_file_analysis(
     args: &Args,
@@ -32,7 +31,11 @@ pub fn run_single_file_analysis(
             &result.cumulate_snr,
             &path,
             &result.header,
-            &result.label.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+            &result
+                .label
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>(),
             &result.obs_time,
             args.cumulate,
         )?;
@@ -43,7 +46,11 @@ pub fn run_single_file_analysis(
         let base_filename = generate_output_names(
             &result.header,
             &result.obs_time,
-            &result.label.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+            &result
+                .label
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>(),
             !args.rfi.is_empty(),
             args.frequency,
             args.bandpass.is_some(),
@@ -107,7 +114,11 @@ pub fn run_single_file_analysis(
             let base_filename = generate_output_names(
                 &result.header,
                 &result.obs_time,
-                &result.label.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                &result
+                    .label
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<&str>>(),
                 !args.rfi.is_empty(),
                 args.frequency,
                 args.bandpass.is_some(),

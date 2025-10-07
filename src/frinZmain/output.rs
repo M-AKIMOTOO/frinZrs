@@ -1,16 +1,20 @@
-use std::io::{self, Write, BufWriter};
-use std::path::{Path};
-use std::fs::File;
+use byteorder::{LittleEndian, WriteBytesExt};
 use chrono::{DateTime, Utc};
 use num_complex::Complex;
-use byteorder::{WriteBytesExt, LittleEndian};
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
+use std::path::Path;
 
-use crate::header::CorHeader;
 use crate::analysis::AnalysisResults;
+use crate::header::CorHeader;
 
 type C32 = Complex<f32>;
 
-pub fn output_header_info(header: &CorHeader, output_dir: &Path, basename: &str) -> io::Result<String> {
+pub fn output_header_info(
+    header: &CorHeader,
+    output_dir: &Path,
+    basename: &str,
+) -> io::Result<String> {
     let header_file_path = output_dir.join(format!("{}_header.txt", basename));
     let header_info = format!(
         "### header region information
@@ -60,7 +64,6 @@ pub fn output_header_info(header: &CorHeader, output_dir: &Path, basename: &str)
         header.number_of_sector,
         header.sampling_speed as f32 / 2.0 / 1e6,
         (header.sampling_speed as f32 / 2.0 / 1e6) / header.fft_point as f32 * 2.0,
-        
         header.station1_name,
         header.station1_code,
         header.station1_clock_delay,
@@ -110,19 +113,30 @@ pub fn generate_output_names(
         "x"
     } else if (11923.0..=12435.0).contains(&(header.observing_frequency as f32 / 1e6)) {
         "ku"
-    } else {  
+    } else {
         "n"
     };
 
     let base = format!(
         "{}_{}_{}_{}_{}_len{}s{}{}",
-        header.station1_name, header.station2_name, yyyydddhhmmss2, label[3], observing_band, length, rfi_suffix, bp_suffix
+        header.station1_name,
+        header.station2_name,
+        yyyydddhhmmss2,
+        label[3],
+        observing_band,
+        length,
+        rfi_suffix,
+        bp_suffix
     );
     base
 }
 
 pub fn format_delay_output(results: &AnalysisResults, label: &[&str], args_length: i32) -> String {
-    let display_length = if args_length != 0 { args_length as f32 } else { results.length_f32.ceil() };
+    let display_length = if args_length != 0 {
+        args_length as f32
+    } else {
+        results.length_f32.ceil()
+    };
     format!(" {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.8}   {:>+4.8}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}", // {:>+10.6} {:>+10.6}",
         results.yyyydddhhmmss1,
         label[3],
@@ -147,7 +161,11 @@ pub fn format_delay_output(results: &AnalysisResults, label: &[&str], args_lengt
 }
 
 pub fn format_freq_output(results: &AnalysisResults, label: &[&str], args_length: i32) -> String {
-    let display_length = if args_length != 0 { args_length as f32 } else { results.length_f32.ceil() };
+    let display_length = if args_length != 0 {
+        args_length as f32
+    } else {
+        results.length_f32.ceil()
+    };
     format!(" {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}", // {:>+10.6} {:>+10.6}",
         results.yyyydddhhmmss1,
         label[3],
@@ -213,13 +231,25 @@ pub fn write_add_plot_data_to_file(
     let mut writer = BufWriter::new(file);
 
     // Write header
-    writeln!(writer, "#{:<18} {:<18} {:<18} {:<18} {:<18} {:<18} {:<18}",
-             "Elapsed Time [s]", "Amplitude [%]", "SNR", "Phase [deg]", "Noise Level [%]", "Res Delay [samp]", "Res Rate [Hz]")?;
+    writeln!(
+        writer,
+        "#{:<18} {:<18} {:<18} {:<18} {:<18} {:<18} {:<18}",
+        "Elapsed Time [s]",
+        "Amplitude [%]",
+        "SNR",
+        "Phase [deg]",
+        "Noise Level [%]",
+        "Res Delay [samp]",
+        "Res Rate [Hz]"
+    )?;
 
     // Write data
     for i in 0..elapsed_times.len() {
-        writeln!(writer, "{:<18.3} {:<18.6} {:<18.2} {:<18.3} {:<18.6} {:<18.6} {:<18.6e}",
-                 elapsed_times[i], amp[i], snr[i], phase[i], noise[i], res_delay[i], res_rate[i])?;
+        writeln!(
+            writer,
+            "{:<18.3} {:<18.6} {:<18.2} {:<18.3} {:<18.6} {:<18.6} {:<18.6e}",
+            elapsed_times[i], amp[i], snr[i], phase[i], noise[i], res_delay[i], res_rate[i]
+        )?;
     }
 
     writer.flush()?;

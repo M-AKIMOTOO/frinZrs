@@ -1,11 +1,11 @@
+use chrono::{DateTime, Utc};
 use ndarray::prelude::*;
 use num_complex::Complex;
-use chrono::{DateTime, Utc};
 
-use crate::header::CorHeader;
 use crate::args::Args;
-use crate::utils::{rate_cal, noise_level, radec2azalt, mjd_cal, safe_arg};
 use crate::fitting;
+use crate::header::CorHeader;
+use crate::utils::{mjd_cal, noise_level, radec2azalt, rate_cal, safe_arg};
 
 type C32 = Complex<f32>;
 
@@ -74,18 +74,26 @@ pub fn analyze_results(
     let padding_length_half = padding_length / 2;
 
     // --- Ranges ---
-    let delay_range = Array::linspace(-(fft_point_f32 / 2.0) + 1.0, fft_point_f32 / 2.0, fft_point_usize);
+    let delay_range = Array::linspace(
+        -(fft_point_f32 / 2.0) + 1.0,
+        fft_point_f32 / 2.0,
+        fft_point_usize,
+    );
 
-    let freq_range = Array::linspace(0.0f32, (header.sampling_speed as f32 / 2.0) / 1e6, fft_point_half);
+    let freq_range = Array::linspace(
+        0.0f32,
+        (header.sampling_speed as f32 / 2.0) / 1e6,
+        fft_point_half,
+    );
     let rate_range = rate_cal(padding_length as f32, effective_integ_time);
 
     // --- Delay Analysis ---
     let delay_rate_2d_data_array = delay_rate_array.clone().mapv(|x| x.norm());
     let delay_noise = noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap());
 
-    
-
-    let (peak_rate_idx, peak_delay_idx) = if !args.delay_window.is_empty() && !args.rate_window.is_empty() {
+    let (peak_rate_idx, peak_delay_idx) = if !args.delay_window.is_empty()
+        && !args.rate_window.is_empty()
+    {
         // Case 3: Window options are specified, search within them.
         let delay_win_low = args.delay_window[0];
         let delay_win_high = args.delay_window[1];
@@ -129,7 +137,7 @@ pub fn analyze_results(
         // Case 1: No window and no --search. Use the center point (delay=0, rate=0).
         (padding_length_half, fft_point_half - 1)
     };
-    
+
     let delay_max_amp = delay_rate_2d_data_array[[peak_rate_idx, peak_delay_idx]];
     let delay_phase = safe_arg(&delay_rate_array[[peak_rate_idx, peak_delay_idx]]).to_degrees();
     let delay_rate_slice = delay_rate_2d_data_array.column(peak_delay_idx).to_owned();
@@ -149,7 +157,8 @@ pub fn analyze_results(
             let current_idx = peak_delay_idx as isize + i;
             if current_idx >= 0 && current_idx < delay_range.len() as isize {
                 x_coords.push(delay_range[current_idx as usize] as f64);
-                y_values.push(delay_rate_2d_data_array[[peak_rate_idx, current_idx as usize]] as f64);
+                y_values
+                    .push(delay_rate_2d_data_array[[peak_rate_idx, current_idx as usize]] as f64);
             }
         }
 
@@ -170,53 +179,62 @@ pub fn analyze_results(
     // --- Frequency Analysis ---
     let freq_rate_2d_data_array = freq_rate_array.clone().mapv(|x| x.norm());
 
-    let (peak_freq_row_idx, peak_rate_col_idx) = if !args.rate_window.is_empty() {
-        // Case 3: Window option is specified.
-        let rate_win_low = args.rate_window[0];
-        let rate_win_high = args.rate_window[1];
+    let (peak_freq_row_idx, peak_rate_col_idx) =
+        if !args.rate_window.is_empty() {
+            // Case 3: Window option is specified.
+            let rate_win_low = args.rate_window[0];
+            let rate_win_high = args.rate_window[1];
 
-        let mut max_val_in_window = 0.0f32;
-        let mut temp_peak_freq_row_idx = 0;
-        let mut temp_peak_rate_col_idx = padding_length_half;
+            let mut max_val_in_window = 0.0f32;
+            let mut temp_peak_freq_row_idx = 0;
+            let mut temp_peak_rate_col_idx = padding_length_half;
 
-        for r_idx in 0..rate_range.len() {
-            if rate_range[r_idx] >= rate_win_low && rate_range[r_idx] <= rate_win_high {
-                for f_idx in 0..freq_range.len() {
-                    let current_val = freq_rate_2d_data_array[[f_idx, r_idx]];
-                    if current_val > max_val_in_window {
-                        max_val_in_window = current_val;
-                        temp_peak_freq_row_idx = f_idx;
-                        temp_peak_rate_col_idx = r_idx;
+            for r_idx in 0..rate_range.len() {
+                if rate_range[r_idx] >= rate_win_low && rate_range[r_idx] <= rate_win_high {
+                    for f_idx in 0..freq_range.len() {
+                        let current_val = freq_rate_2d_data_array[[f_idx, r_idx]];
+                        if current_val > max_val_in_window {
+                            max_val_in_window = current_val;
+                            temp_peak_freq_row_idx = f_idx;
+                            temp_peak_rate_col_idx = r_idx;
+                        }
                     }
                 }
             }
-        }
-        (temp_peak_freq_row_idx, temp_peak_rate_col_idx)
-    } else if search_mode == Some("peak") || search_mode == Some("deep") {
-        // Case 2: --search or --search_deep is specified, no window. Find the global maximum.
-        let (mut max_val, mut max_f_idx, mut max_r_idx) = (0.0f32, 0, 0);
-        for f_idx in 0..freq_rate_2d_data_array.shape()[0] {
-            for r_idx in 0..freq_rate_2d_data_array.shape()[1] {
-                let current_val = freq_rate_2d_data_array[[f_idx, r_idx]];
-                if current_val > max_val {
-                    max_val = current_val;
-                    max_f_idx = f_idx;
-                    max_r_idx = r_idx;
+            (temp_peak_freq_row_idx, temp_peak_rate_col_idx)
+        } else if search_mode == Some("peak") || search_mode == Some("deep") {
+            // Case 2: --search or --search_deep is specified, no window. Find the global maximum.
+            let (mut max_val, mut max_f_idx, mut max_r_idx) = (0.0f32, 0, 0);
+            for f_idx in 0..freq_rate_2d_data_array.shape()[0] {
+                for r_idx in 0..freq_rate_2d_data_array.shape()[1] {
+                    let current_val = freq_rate_2d_data_array[[f_idx, r_idx]];
+                    if current_val > max_val {
+                        max_val = current_val;
+                        max_f_idx = f_idx;
+                        max_r_idx = r_idx;
+                    }
                 }
             }
-        }
-        (max_f_idx, max_r_idx)
-    } else {
-        // Case 1: No window and no --search. Use the center point (rate=0) and find max frequency.
-        let cross_power_slice = freq_rate_2d_data_array.column(padding_length_half);
-        let (max_f_idx, _) = cross_power_slice.iter().enumerate().fold((0, 0.0f32), |(i_max, v_max), (i, &v)| {
-            if v > v_max { (i, v) } else { (i_max, v_max) }
-        });
-        (max_f_idx, padding_length_half)
-    };
+            (max_f_idx, max_r_idx)
+        } else {
+            // Case 1: No window and no --search. Use the center point (rate=0) and find max frequency.
+            let cross_power_slice = freq_rate_2d_data_array.column(padding_length_half);
+            let (max_f_idx, _) = cross_power_slice.iter().enumerate().fold(
+                (0, 0.0f32),
+                |(i_max, v_max), (i, &v)| {
+                    if v > v_max {
+                        (i, v)
+                    } else {
+                        (i_max, v_max)
+                    }
+                },
+            );
+            (max_f_idx, padding_length_half)
+        };
 
     let freq_max_amp = freq_rate_2d_data_array[[peak_freq_row_idx, peak_rate_col_idx]];
-    let freq_phase = safe_arg(&freq_rate_array[[peak_freq_row_idx, peak_rate_col_idx]]).to_degrees();
+    let freq_phase =
+        safe_arg(&freq_rate_array[[peak_freq_row_idx, peak_rate_col_idx]]).to_degrees();
     let freq_freq = freq_range[peak_freq_row_idx];
 
     // Calculate noise from regions away from the peak rate
@@ -235,7 +253,10 @@ pub fn analyze_results(
     let freq_noise = if !noise_complex_values.is_empty() {
         let noise_sum: C32 = noise_complex_values.iter().sum();
         let noise_mean: C32 = noise_sum / (noise_complex_values.len() as f32);
-        let noise_abs_dev_sum: f32 = noise_complex_values.iter().map(|c| (c - noise_mean).norm()).sum();
+        let noise_abs_dev_sum: f32 = noise_complex_values
+            .iter()
+            .map(|c| (c - noise_mean).norm())
+            .sum();
         noise_abs_dev_sum / noise_complex_values.len() as f32
     } else {
         // Fallback to old method if no noise region is found
@@ -271,14 +292,19 @@ pub fn analyze_results(
                 let current_idx = peak_rate_col_idx as isize + i;
                 if current_idx >= 0 && current_idx < rate_range.len() as isize {
                     x_coords.push(rate_range[current_idx as usize] as f64);
-                    y_values.push(freq_rate_2d_data_array[[peak_freq_row_idx, current_idx as usize]] as f64);
+                    y_values.push(
+                        freq_rate_2d_data_array[[peak_freq_row_idx, current_idx as usize]] as f64,
+                    );
                 }
             }
 
             let rate_scale_factor = (10.0 * padding_length as f64) * effective_integ_time as f64;
-            let scaled_x_coords: Vec<f64> = x_coords.iter().map(|&x| x * rate_scale_factor).collect();
+            let scaled_x_coords: Vec<f64> =
+                x_coords.iter().map(|&x| x * rate_scale_factor).collect();
 
-            if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&scaled_x_coords, &y_values) {
+            if let Ok(fit_result) =
+                fitting::fit_quadratic_least_squares(&scaled_x_coords, &y_values)
+            {
                 rate_offset = (fit_result.peak_x / rate_scale_factor) as f32;
                 residual_rate_val = args.rate_correct + rate_offset;
             }
@@ -293,14 +319,19 @@ pub fn analyze_results(
                 let current_idx = peak_rate_idx as isize + i;
                 if current_idx >= 0 && current_idx < rate_range.len() as isize {
                     x_coords.push(rate_range[current_idx as usize] as f64);
-                    y_values.push(delay_rate_array[[current_idx as usize, peak_delay_idx]].norm() as f64);
+                    y_values.push(
+                        delay_rate_array[[current_idx as usize, peak_delay_idx]].norm() as f64,
+                    );
                 }
             }
 
             let rate_scale_factor = (10.0 * padding_length as f64) * effective_integ_time as f64;
-            let scaled_x_coords: Vec<f64> = x_coords.iter().map(|&x| x * rate_scale_factor).collect();
+            let scaled_x_coords: Vec<f64> =
+                x_coords.iter().map(|&x| x * rate_scale_factor).collect();
 
-            if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&scaled_x_coords, &y_values) {
+            if let Ok(fit_result) =
+                fitting::fit_quadratic_least_squares(&scaled_x_coords, &y_values)
+            {
                 rate_offset = (fit_result.peak_x / rate_scale_factor) as f32;
                 residual_rate_val = args.rate_correct + rate_offset;
             }
@@ -315,6 +346,7 @@ pub fn analyze_results(
         *obs_time,
         header.source_position_ra,
         header.source_position_dec,
+        true,
     );
 
     let (l_coord, m_coord) = rate_delay_to_lm(
@@ -328,17 +360,28 @@ pub fn analyze_results(
     );
     */
 
-
     // --- Antenna Az/El Calculation ---
     let (ant1_az, ant1_el, ant1_hgt) = radec2azalt(
-        [header.station1_position[0] as f32, header.station1_position[1] as f32, header.station1_position[2] as f32],
-        *obs_time, header.source_position_ra as f32, header.source_position_dec as f32
+        [
+            header.station1_position[0] as f32,
+            header.station1_position[1] as f32,
+            header.station1_position[2] as f32,
+        ],
+        *obs_time,
+        header.source_position_ra as f32,
+        header.source_position_dec as f32,
     );
     let (ant2_az, ant2_el, ant2_hgt) = radec2azalt(
-        [header.station2_position[0] as f32, header.station2_position[1] as f32, header.station2_position[2] as f32],
-        *obs_time, header.source_position_ra as f32, header.source_position_dec as f32
+        [
+            header.station2_position[0] as f32,
+            header.station2_position[1] as f32,
+            header.station2_position[2] as f32,
+        ],
+        *obs_time,
+        header.source_position_ra as f32,
+        header.source_position_dec as f32,
     );
-    
+
     AnalysisResults {
         yyyydddhhmmss1: obs_time.format("%Y/%j %H:%M:%S").to_string(),
         source_name: header.source_name.clone(),

@@ -16,7 +16,6 @@ use crate::utils;
 
 type C32 = Complex<f32>;
 
-
 pub fn run_phase_reference_analysis(
     args: &Args,
     time_flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
@@ -81,8 +80,8 @@ pub fn run_phase_reference_analysis(
         },
         loop_count
     );
-    let mut target_results = process_cor_file(&target_path, &target_args, time_flag_ranges, pp_flag_ranges)?;
-
+    let mut target_results =
+        process_cor_file(&target_path, &target_args, time_flag_ranges, pp_flag_ranges)?;
 
     // --- Phase Unwrapping ---
     utils::unwrap_phase(&mut cal_results.add_plot_phase);
@@ -120,24 +119,35 @@ pub fn run_phase_reference_analysis(
             .iter()
             .map(|t| t.signed_duration_since(first_time).num_milliseconds() as f64 / 1000.0)
             .collect();
-        let cal_phases_f64: Vec<f64> = cal_results.add_plot_phase.iter().map(|&p| p as f64).collect();
+        let cal_phases_f64: Vec<f64> = cal_results
+            .add_plot_phase
+            .iter()
+            .map(|&p| p as f64)
+            .collect();
 
-        match fitting::fit_polynomial_least_squares(&cal_times_f64, &cal_phases_f64, fit_degree as usize) {
+        match fitting::fit_polynomial_least_squares(
+            &cal_times_f64,
+            &cal_phases_f64,
+            fit_degree as usize,
+        ) {
             Ok(coeffs) => {
                 println!(
                     "Polynomial fit (degree {}) to calibrator phase. Coefficients: {:?}",
-                    fit_degree,
-                    coeffs
+                    fit_degree, coeffs
                 );
 
                 // Helper function to evaluate polynomial
                 let evaluate_polynomial = |x: f64, coeffs: &[f64]| -> f64 {
-                    coeffs.iter().enumerate().map(|(i, &c)| c * x.powi(i as i32)).sum()
+                    coeffs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &c)| c * x.powi(i as i32))
+                        .sum()
                 };
 
                 // Calculate fitted_cal_phases
                 fitted_cal_phases = cal_times_f64
-                    .iter() 
+                    .iter()
                     .map(|&t| evaluate_polynomial(t, &coeffs) as f32)
                     .collect();
 
@@ -152,7 +162,9 @@ pub fn run_phase_reference_analysis(
                     let target_times_f64: Vec<f64> = target_results
                         .add_plot_times
                         .iter()
-                        .map(|t| t.signed_duration_since(first_time).num_milliseconds() as f64 / 1000.0)
+                        .map(|t| {
+                            t.signed_duration_since(first_time).num_milliseconds() as f64 / 1000.0
+                        })
                         .collect();
                     for (i, t) in target_times_f64.iter().enumerate() {
                         let fitted_val = evaluate_polynomial(*t, &coeffs);
@@ -178,15 +190,16 @@ pub fn run_phase_reference_analysis(
 
                 let num_sectors = target_results.header.number_of_sector;
                 for l1 in 0..num_sectors {
-                    let (complex_vec, current_obs_time, _effective_integ_time) = read_visibility_data(
-                        &mut Cursor::new(target_buffer.as_slice()),
-                        &target_results.header,
-                        1,
-                        l1,
-                        0,
-                        false,
-                        pp_flag_ranges,
-                    )?;
+                    let (complex_vec, current_obs_time, _effective_integ_time) =
+                        read_visibility_data(
+                            &mut Cursor::new(target_buffer.as_slice()),
+                            &target_results.header,
+                            1,
+                            l1,
+                            0,
+                            false,
+                            pp_flag_ranges,
+                        )?;
 
                     let sector_headers = read_sector_header(
                         &mut Cursor::new(target_buffer.as_slice()),
@@ -198,9 +211,10 @@ pub fn run_phase_reference_analysis(
                     )?;
                     sector_headers_raw.push(sector_headers[0].clone());
 
-                    let time_since_start_sec =
-                        current_obs_time.signed_duration_since(first_time).num_milliseconds() as f64
-                            / 1000.0;
+                    let time_since_start_sec = current_obs_time
+                        .signed_duration_since(first_time)
+                        .num_milliseconds() as f64
+                        / 1000.0;
                     let phase_correction_deg = evaluate_polynomial(time_since_start_sec, &coeffs);
                     let phase_correction_rad = (phase_correction_deg as f32).to_radians();
 
@@ -215,9 +229,7 @@ pub fn run_phase_reference_analysis(
                 if parts.len() >= 3 {
                     let new_basename = parts[..3].join("_");
                     let output_filename_str = format!("{}_phsref.cor", new_basename);
-                    let phase_reference_dir = target_path
-                        .parent() 
-                        .unwrap_or_else(|| Path::new(""));
+                    let phase_reference_dir = target_path.parent().unwrap_or_else(|| Path::new(""));
                     fs::create_dir_all(&phase_reference_dir)?;
                     let output_path = phase_reference_dir.join(output_filename_str);
 
@@ -227,7 +239,10 @@ pub fn run_phase_reference_analysis(
                         &sector_headers_raw,
                         &calibrated_spectra,
                     )?;
-                    println!("Successfully wrote phase-calibrated data to: {:?}", output_path);
+                    println!(
+                        "Successfully wrote phase-calibrated data to: {:?}",
+                        output_path
+                    );
                 } else {
                     eprintln!("Warning: Could not generate output filename for calibrated data due to unexpected format of target filename.");
                 }
@@ -240,7 +255,7 @@ pub fn run_phase_reference_analysis(
 
     // --- Plotting ---
     let plot_dir = target_path
-        .parent() 
+        .parent()
         .unwrap_or_else(|| Path::new(""))
         .join("frinZ")
         .join("phase_reference");

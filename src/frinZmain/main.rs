@@ -1,9 +1,9 @@
 #![allow(unused_imports)]
+use byteorder::{LittleEndian, WriteBytesExt};
 use std::error::Error;
-use std::process::exit;
-use std::io::{self, Read, Write, Cursor};
 use std::fs;
-use byteorder::{WriteBytesExt, LittleEndian};
+use std::io::{self, Cursor, Read, Write};
+use std::process::exit;
 
 use chrono::{DateTime, Utc};
 use clap::{CommandFactory, Parser};
@@ -28,23 +28,27 @@ mod output;
 mod phase_reference;
 mod plot;
 mod plot_msb;
+mod pre_check;
 mod processing;
 mod raw_visibility;
 mod read;
 mod rfi;
 mod single_file;
+mod uptimeplot;
 mod utils;
-mod pre_check;
+mod uv_plot;
 
 use crate::acel_search::run_acel_search_analysis;
 use crate::args::Args;
 use crate::fringe_rate_map::run_fringe_rate_map_analysis;
+use crate::maser::run_maser_analysis;
 use crate::multisideband::run_multisideband_analysis;
 use crate::phase_reference::run_phase_reference_analysis;
+use crate::pre_check::check_memory_usage;
 use crate::raw_visibility::run_raw_visibility_plot;
 use crate::single_file::run_single_file_analysis;
-use crate::pre_check::check_memory_usage;
-use crate::maser::run_maser_analysis;
+use crate::uptimeplot::run_uptime_plot;
+use crate::uv_plot::run_uv_plot;
 
 // --- Type Aliases for Clarity ---
 pub type C32 = Complex<f32>;
@@ -125,8 +129,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let (complex_vec, _, _) = match crate::read::read_visibility_data(
                 &mut cursor,
                 &header,
-                1, // length in sectors
-                0, // skip in sectors
+                1,  // length in sectors
+                0,  // skip in sectors
                 l1, // loop_idx, which acts as sector index here
                 false,
                 &[], // pp_flag_ranges
@@ -179,11 +183,32 @@ fn main() -> Result<(), Box<dyn Error>> {
                 exit(1);
             }
         }
-        println!("Raw complex visibility data written to {:?}.", output_file_path);
+        println!(
+            "Raw complex visibility data written to {:?}.",
+            output_file_path
+        );
         println!("このバイナリファイルは以下のフォーマットで構成されています:");
-        println!("- 先頭 4 byte: FFT点数 (f32, little-endian) = {}", header.fft_point);
-        println!("- 次の 4 byte: セクター数(pp) (f32, little-endian) = {}", header.number_of_sector);
+        println!(
+            "- 先頭 4 byte: FFT点数 (f32, little-endian) = {}",
+            header.fft_point
+        );
+        println!(
+            "- 次の 4 byte: セクター数(pp) (f32, little-endian) = {}",
+            header.number_of_sector
+        );
         println!("- それ以降: 複素スペクトルデータ (f32 real, f32 imag の繰り返し)");
+        return Ok(());
+    }
+
+    if let Some(uv_mode) = args.uv {
+        if args.input.is_none() {
+            eprintln!("Error: --uv requires an --input file.");
+            exit(1);
+        }
+        if let Err(e) = run_uv_plot(&args, uv_mode) {
+            eprintln!("Error during UV plotting: {}", e);
+            exit(1);
+        }
         return Ok(());
     }
 
@@ -197,6 +222,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             exit(1);
         }
         return Ok(());
+    }
+
+    if args.uptimeplot {
+        if args.input.is_none() {
+            eprintln!("Error: --uptimeplot requires an --input file.");
+            exit(1);
+        }
+        if let Err(e) = run_uptime_plot(&args) {
+            eprintln!("Error during uptime plotting: {}", e);
+            exit(1);
+        }
+        if args.maser.is_empty() {
+            return Ok(());
+        }
     }
 
     if !args.maser.is_empty() {
@@ -249,7 +288,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             "pp" => {
                 if params.len() % 2 != 0 {
-                    eprintln!("Error: --flagging pp requires pairs of start and end sector numbers.");
+                    eprintln!(
+                        "Error: --flagging pp requires pairs of start and end sector numbers."
+                    );
                     exit(1);
                 }
                 pp_flag_ranges = params
@@ -329,13 +370,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             if args.loop_ == 1 {
                 eprintln!("Warning: --search={} is used, but --loop is not specified or is 1. Multiple loops are usually needed for fitting.", search_mode);
             }
-            let degrees = if search_mode == "rate" { vec![1] } else { vec![2] };
-            return run_acel_search_analysis(
-                &args,
-                &degrees,
-                &time_flag_ranges,
-                &pp_flag_ranges,
-            );
+            let degrees = if search_mode == "rate" {
+                vec![1]
+            } else {
+                vec![2]
+            };
+            return run_acel_search_analysis(&args, &degrees, &time_flag_ranges, &pp_flag_ranges);
         }
     }
 
