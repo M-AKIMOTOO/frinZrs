@@ -17,7 +17,7 @@ use astro::nutation;
 use astro::planet::{self, earth, Planet};
 use astro::time::{self, Date};
 
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use levenberg_marquardt::{LeastSquaresProblem, LevenbergMarquardt, TerminationReason};
 use nalgebra::{storage::Owned, DMatrix, DVector, Dyn, Matrix3, Vector3};
 
@@ -206,11 +206,73 @@ fn fit_gaussian_mixture(
 }
 
 /// Extracts the cross-power spectrum at zero fringe rate from a .cor file.
-fn get_spectrum_from_file(
+struct SpectrumData {
+    header: CorHeader,
+    spectrum: Array1<f32>,
+    start_time: DateTime<Utc>,
+    sector_count: usize,
+    effective_integration_time: f32,
+}
+
+struct SegmentSummary {
+    index: usize,
+    start_time: DateTime<Utc>,
+    segment_seconds: f32,
+    lsr_average: f64,
+    peak_freq_mhz: f64,
+    peak_velocity_kms: f64,
+    peak_value: f32,
+    median: f32,
+    mad: f32,
+    peak_minus_median: f32,
+    snr_mad: f32,
+    snr_stdev: f32,
+    sigma_est: f32,
+}
+
+fn compute_lsr_average(
+    header: &CorHeader,
+    start_time: DateTime<Utc>,
+    effective_integration_time: f32,
+    sector_count: usize,
+) -> f64 {
+    if sector_count == 0 {
+        return calculate_lsr_velocity_correction(
+            header.station1_position,
+            &start_time,
+            header.source_position_ra,
+            header.source_position_dec,
+        );
+    }
+
+    let step_seconds = if effective_integration_time.abs() > 1e-9 {
+        effective_integration_time as f64
+    } else {
+        1.0
+    };
+
+    let mut total = 0.0;
+    for idx in 0..sector_count {
+        let offset_nanos = (step_seconds * idx as f64 * 1e9).round() as i64;
+        let sector_time = start_time + Duration::nanoseconds(offset_nanos);
+        total += calculate_lsr_velocity_correction(
+            header.station1_position,
+            &sector_time,
+            header.source_position_ra,
+            header.source_position_dec,
+        );
+    }
+
+    total / sector_count as f64
+}
+
+fn get_spectrum_segment(
     file_path: &Path,
     args: &Args,
     sampling_scale: f64,
-) -> Result<(CorHeader, Array1<f32>), Box<dyn Error>> {
+    chunk_length: i32,
+    loop_index: i32,
+) -> Result<Option<SpectrumData>, Box<dyn Error>> {
     let mut file = File::open(file_path)?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
@@ -221,22 +283,43 @@ fn get_spectrum_from_file(
     let scaled_sampling_speed = (header.sampling_speed as f64 * sampling_scale) as f32;
     let sampling_speed_for_fft = (header.sampling_speed as f64 * sampling_scale).round() as i32;
 
-    let (complex_vec, _, _) = read_visibility_data(
+    let desired_length = if chunk_length > 0 {
+        chunk_length
+    } else {
+        header.number_of_sector
+    };
+
+    let (complex_vec, obs_time, effective_integ_time) = read_visibility_data(
         &mut cursor,
         &header,
-        header.number_of_sector,
-        0,
-        0,
+        desired_length,
+        args.skip,
+        loop_index,
         false,
         &[],
     )?;
 
+    if complex_vec.is_empty() {
+        return Ok(None);
+    }
+
     let rbw = (scaled_sampling_speed / header.fft_point as f32) / 1e6;
     let rfi_ranges = parse_rfi_ranges(&args.rfi, rbw)?;
 
+    let fft_point_half = (header.fft_point / 2) as usize;
+    let sector_count = if fft_point_half > 0 {
+        complex_vec.len() / fft_point_half
+    } else {
+        0
+    };
+
+    if sector_count == 0 {
+        return Ok(None);
+    }
+
     let (freq_rate_array, padding_length) = process_fft(
         &complex_vec,
-        header.number_of_sector,
+        sector_count as i32,
         header.fft_point,
         sampling_speed_for_fft,
         &rfi_ranges,
@@ -249,17 +332,30 @@ fn get_spectrum_from_file(
 
     let spectrum_abs = spectrum_complex.mapv(|x| x.norm());
 
-    Ok((header, spectrum_abs))
+    Ok(Some(SpectrumData {
+        header,
+        spectrum: spectrum_abs,
+        start_time: obs_time,
+        sector_count,
+        effective_integration_time: effective_integ_time,
+    }))
 }
 
 fn plot_maser_spectrum(
     output_path: &Path,
     data: &[(f64, f32)],
     x_label: &str,
+    title: &str,
+    y_label: &str,
+    antenna_label: &str,
     peak_freq: f64,
     peak_velocity: f64,
     peak_val: f32,
-    snr: f32,
+    snr_mad: f32,
+    snr_stdev: f32,
+    median: f32,
+    mad: f32,
+    sigma_est: f32,
     freq_resolution_mhz: f64,
     channel_width_kms: f64,
     gaussian_fit: Option<&[(f64, f32)]>,
@@ -282,10 +378,7 @@ fn plot_maser_spectrum(
     let y_margin = (max_y - min_y) * 0.1;
 
     let mut chart = ChartBuilder::on(&root)
-        .caption(
-            "Maser Analysis: (ON-OFF)/OFF Spectrum",
-            ("sans-serif", 30).into_font(),
-        )
+        .caption(title, ("sans-serif", 30).into_font())
         .margin(10)
         .x_label_area_size(60)
         .y_label_area_size(80)
@@ -294,8 +387,9 @@ fn plot_maser_spectrum(
     chart
         .configure_mesh()
         .x_desc(x_label)
-        .y_desc("Normalized Intensity")
+        .y_desc(y_label)
         .label_style(("sans-serif", 20))
+        .light_line_style(&TRANSPARENT)
         .draw()?;
 
     chart.draw_series(LineSeries::new(data.iter().cloned(), &BLUE))?;
@@ -304,14 +398,41 @@ fn plot_maser_spectrum(
         chart.draw_series(LineSeries::new(fit_data.iter().cloned(), &RED))?;
     }
 
+    // Draw reference lines for median and MAD bounds
+    let median_line: Vec<(f64, f32)> = vec![(min_x, median), (max_x, median)];
+    chart.draw_series(LineSeries::new(
+        median_line,
+        ShapeStyle::from(&RED.mix(0.9)).stroke_width(3),
+    ))?;
+
+    let upper_val = median + mad;
+    let upper_line: Vec<(f64, f32)> = vec![(min_x, upper_val), (max_x, upper_val)];
+    chart.draw_series(LineSeries::new(
+        upper_line,
+        ShapeStyle::from(&RED.mix(0.6)).stroke_width(2),
+    ))?;
+
+    let lower_val = median - mad;
+    let lower_line: Vec<(f64, f32)> = vec![(min_x, lower_val), (max_x, lower_val)];
+    chart.draw_series(LineSeries::new(
+        lower_line,
+        ShapeStyle::from(&RED.mix(0.6)).stroke_width(2),
+    ))?;
+
     // Draw legend as text
     let style = TextStyle::from(("sans-serif", 20)).color(&BLACK);
     let legend_lines = vec![
-        format!("Peak Freq: {:.4} MHz", peak_freq),
-        format!("Peak Velocity: {:.2} km/s", peak_velocity),
-        format!("Peak Value: {:.4}", peak_val),
-        format!("SNR: {:.2}", snr),
-        format!("Δf: {:.4} MHz", freq_resolution_mhz),
+        format!("Antennas: {}", antenna_label),
+        format!("Peak Freq: {:.6} MHz", peak_freq),
+        format!("Peak Velocity: {:.3} km/s", peak_velocity),
+        format!("Peak Value: {:.5}", peak_val),
+        format!("Peak - Median: {:.5}", peak_val - median),
+        format!("SNR (MAD): {:.3}", snr_mad),
+        format!("SNR (stdev): {:.3}", snr_stdev),
+        format!("Median: {:.5}", median),
+        format!("MAD: {:.5}", mad),
+        format!("stdev = MAD/0.6745 = {:.5}", sigma_est),
+        format!("Δf: {:.6} MHz", freq_resolution_mhz),
         format!("Δv: {:.3} km/s", channel_width_kms),
     ];
     let mut y_pos = 40;
@@ -350,6 +471,7 @@ fn plot_on_off_spectra(
     off_data: &[(f64, f32)],
     x_label: &str,
     peak_velocity: f64,
+    antenna_label: &str,
 ) -> Result<(), Box<dyn Error>> {
     let root = BitMapBackend::new(output_path, (1200, 700)).into_drawing_area();
     root.fill(&WHITE)?;
@@ -393,6 +515,7 @@ fn plot_on_off_spectra(
         .x_desc(x_label)
         .y_desc("Intensity")
         .label_style(("sans-serif", 20))
+        .light_line_style(&TRANSPARENT)
         .draw()?;
 
     chart
@@ -413,8 +536,15 @@ fn plot_on_off_spectra(
 
     // Draw legend as text
     let style = TextStyle::from(("sans-serif", 20)).color(&BLACK);
-    let legend_text = format!("Peak Velocity: {:.2} km/s", peak_velocity);
-    root.draw(&Text::new(legend_text, (800, 40), style))?;
+    let legend_lines = vec![
+        format!("Antennas: {}", antenna_label),
+        format!("Peak Velocity: {:.2} km/s", peak_velocity),
+    ];
+    let mut y_pos = 40;
+    for line in legend_lines {
+        root.draw(&Text::new(line, (800, y_pos), style.clone()))?;
+        y_pos += 25;
+    }
 
     root.present()?;
     Ok(())
@@ -431,8 +561,11 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let mut override_vlsr: Option<f64> = None;
     let mut corrfreq: f64 = 1.0;
     let mut user_band_range: Option<(f64, f64)> = None;
+    let mut user_subt_range: Option<(f64, f64)> = None;
     let mut gaussian_initial_components: Vec<(f64, f64, f64)> = Vec::new();
     let mut positional_args: Vec<&String> = Vec::new();
+    let mut onoff_mode: u8 = 0;
+    let mut onoff_specified = false;
 
     for entry in &args.maser {
         if let Some((key, value)) = entry.split_once(':') {
@@ -470,6 +603,35 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                         return Err("Error: band start must be less than band end.".into());
                     }
                     user_band_range = Some((start, end));
+                }
+                "subt" => {
+                    let mut parts = value.trim().split('-');
+                    let start: f64 = parts
+                        .next()
+                        .ok_or("Error: subt requires start-end in MHz.")?
+                        .parse()?;
+                    let end: f64 = parts
+                        .next()
+                        .ok_or("Error: subt requires start-end in MHz.")?
+                        .parse()?;
+                    if parts.next().is_some() {
+                        return Err(
+                            "Error: subt accepts exactly one start-end pair (e.g., subt:6664-6672)."
+                                .into(),
+                        );
+                    }
+                    if start >= end {
+                        return Err("Error: subt start must be less than subt end.".into());
+                    }
+                    user_subt_range = Some((start, end));
+                }
+                "onoff" => {
+                    let mode: u8 = value.trim().parse()?;
+                    if mode > 1 {
+                        return Err("Error: onoff accepts only 0 ((ON-OFF)/OFF) or 1 (ON-OFF).".into());
+                    }
+                    onoff_mode = mode;
+                    onoff_specified = true;
                 }
                 "gauss" => {
                     let params: Vec<&str> = value
@@ -548,6 +710,9 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             start, end
         );
     }
+    if let Some((start, end)) = user_subt_range {
+        println!("  Absolute frequency window: {:.3} MHz to {:.3} MHz", start, end);
+    }
     if !gaussian_initial_components.is_empty() {
         println!("  Gaussian initial guesses (amp, center[km/s], fwhm[km/s]):");
         for (amp, center, fwhm) in &gaussian_initial_components {
@@ -555,16 +720,54 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Get full spectra
-    let (header_on, spec_on) = get_spectrum_from_file(on_source_path, args, corrfreq)?;
-    let (header_off, spec_off) = get_spectrum_from_file(&off_source_path, args, corrfreq)?;
+    // Load spectra per integration segment
+    let chunk_length = if args.length > 0 { args.length } else { 0 };
+    let mut segments: Vec<(SpectrumData, SpectrumData)> = Vec::new();
+    let mut loop_index: usize = 0;
+    let loop_limit: usize = if chunk_length > 0 { args.loop_.max(1) as usize } else { 1 };
+
+    loop {
+        if chunk_length > 0 && loop_index >= loop_limit {
+            break;
+        }
+
+        let on_chunk = get_spectrum_segment(on_source_path, args, corrfreq, chunk_length, loop_index as i32)?;
+        let off_chunk = get_spectrum_segment(&off_source_path, args, corrfreq, chunk_length, loop_index as i32)?;
+
+        match (on_chunk, off_chunk) {
+            (Some(on_data), Some(off_data)) => segments.push((on_data, off_data)),
+            (None, None) => break,
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(format!(
+                    "Mismatch in available data between ON ({:?}) and OFF ({:?}) for loop {}.",
+                    on_source_path, off_source_path, loop_index
+                )
+                .into());
+            }
+        }
+
+        if chunk_length == 0 {
+            break;
+        }
+        loop_index += 1;
+    }
+
+    if segments.is_empty() {
+        return Err("No data available for maser analysis after applying --length/--loop.".into());
+    }
+
+    let header_on = &segments[0].0.header;
+    let header_off = &segments[0].1.header;
 
     if header_on.fft_point != header_off.fft_point
         || header_on.observing_frequency.to_bits() != header_off.observing_frequency.to_bits()
         || header_on.sampling_speed != header_off.sampling_speed
     {
         return Err(format!(
-            "Error: Header mismatch between {:?} and {:?}.\n  fft_point: {} (ON) vs {} (OFF)\n  observing_frequency: {:.6} Hz (ON) vs {:.6} Hz (OFF)\n  sampling_speed: {} Hz (ON) vs {} Hz (OFF)",
+            "Error: Header mismatch between {:?} and {:?}.
+  fft_point: {} (ON) vs {} (OFF)
+  observing_frequency: {:.6} Hz (ON) vs {:.6} Hz (OFF)
+  sampling_speed: {} Hz (ON) vs {} Hz (OFF)",
             on_source_path,
             off_source_path,
             header_on.fft_point,
@@ -577,35 +780,64 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         .into());
     }
 
-    // Get obs_time from the first sector of the ON source file
-    let mut on_file = File::open(on_source_path)?;
-    let mut on_buffer = Vec::new();
-    on_file.read_to_end(&mut on_buffer)?;
-    let mut on_cursor = Cursor::new(on_buffer.as_slice());
-    let (_, on_obs_time, _) = crate::read::read_visibility_data(
-        &mut on_cursor,
-        &header_on,
-        1, // length
-        0, // skip
-        0, // loop_index
-        false,
-        &[],
-    )?;
-
-    // Calculate LSR velocity correction
-    let mut lsr_vel_corr = calculate_lsr_velocity_correction(
-        header_on.station1_position, // Using station1_position as the observer location
-        &on_obs_time,
-        header_on.source_position_ra,
-        header_on.source_position_dec,
-    );
-    if let Some(v) = override_vlsr {
-        lsr_vel_corr = v;
+    for (idx, (on_seg, off_seg)) in segments.iter().enumerate() {
+        if on_seg.header.fft_point != header_on.fft_point
+            || on_seg.header.observing_frequency.to_bits() != header_on.observing_frequency.to_bits()
+            || on_seg.header.sampling_speed != header_on.sampling_speed
+        {
+            return Err(format!("ON segment header mismatch at loop {}.", idx).into());
+        }
+        if off_seg.header.fft_point != header_off.fft_point
+            || off_seg.header.observing_frequency.to_bits() != header_off.observing_frequency.to_bits()
+            || off_seg.header.sampling_speed != header_off.sampling_speed
+        {
+            return Err(format!("OFF segment header mismatch at loop {}.", idx).into());
+        }
     }
-    println!(
-        "  Calculated LSR Velocity Correction: {:.6} km/s",
-        lsr_vel_corr
-    );
+
+    let station1_name = header_on.station1_name.trim();
+    let station2_name = header_on.station2_name.trim();
+    let station1_code = header_on.station1_code.trim();
+    let station2_code = header_on.station2_code.trim();
+    let recommended_onoff = if station1_name.eq_ignore_ascii_case(station2_name)
+        && station1_code.eq_ignore_ascii_case(station2_code)
+    {
+        0
+    } else {
+        1
+    };
+
+    if onoff_specified {
+        if onoff_mode != recommended_onoff {
+            println!(
+                "  Warning: onoff:{} differs from recommended {} for {}-{} baseline.",
+                onoff_mode,
+                recommended_onoff,
+                station1_name,
+                station2_name
+            );
+        }
+        println!(
+            "  Normalization mode: {}",
+            if onoff_mode == 0 {
+                "(ON-OFF)/OFF"
+            } else {
+                "(ON-OFF)"
+            }
+        );
+    } else {
+        onoff_mode = recommended_onoff;
+        println!(
+            "  Normalization auto-set to {} for {}-{} baseline.",
+            if onoff_mode == 0 {
+                "(ON-OFF)/OFF"
+            } else {
+                "(ON-OFF)"
+            },
+            station1_name,
+            station2_name
+        );
+    }
 
     if !rest_freq_overridden {
         let obs_freq_mhz = header_on.observing_frequency / 1e6;
@@ -617,7 +849,6 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // 3. Setup paths and full-range vectors
     let parent_dir = on_source_path.parent().unwrap_or_else(|| Path::new(""));
     let output_dir = parent_dir.join("frinZ").join("maser");
     fs::create_dir_all(&output_dir)?;
@@ -628,17 +859,26 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let channel_width_kms = C_KM_S * freq_resolution_mhz / rest_freq_mhz;
     println!("  Frequency Resolution: {:.6} MHz", freq_resolution_mhz);
     println!("  Channel Width: {:.6} km/s", channel_width_kms);
+    let station1_label = header_on.station1_name.trim().to_string();
+    let station2_label = header_on.station2_name.trim().to_string();
+    let antenna_label = if station1_label.eq_ignore_ascii_case(&station2_label) {
+        station1_label.clone()
+    } else {
+        format!("{}/{}", station1_label, station2_label)
+    };
     let base_freq_mhz = header_on.observing_frequency / 1e6;
     let freq_range_mhz: Vec<f64> = (0..header_on.fft_point as usize / 2)
         .map(|i| i as f64 * freq_resolution_mhz + base_freq_mhz)
         .collect();
-    let velocity_range_kms: Vec<f64> = freq_range_mhz
-        .iter()
-        .map(|&f_obs| C_KM_S * (rest_freq_mhz - f_obs) / rest_freq_mhz + lsr_vel_corr)
-        .collect();
 
-    // 5. Conditional analysis range selection
-    let analysis_indices: Vec<usize> = if let Some((start_offset, end_offset)) = user_band_range {
+    let analysis_indices: Vec<usize> = if let Some((start_abs, end_abs)) = user_subt_range {
+        freq_range_mhz
+            .iter()
+            .enumerate()
+            .filter(|(_, &freq)| freq >= start_abs && freq <= end_abs)
+            .map(|(i, _)| i)
+            .collect()
+    } else if let Some((start_offset, end_offset)) = user_band_range {
         let min_freq = base_freq_mhz + start_offset;
         let max_freq = base_freq_mhz + end_offset;
         freq_range_mhz
@@ -648,11 +888,11 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             .map(|(i, _)| i)
             .collect()
     } else if rest_freq_mhz >= 6600.0 && rest_freq_mhz <= 7112.0 {
-        println!("  C-band maser detected. Restricting analysis to 6660-6675 MHz range.");
+        println!("  C-band maser detected. Restricting analysis to 6664-6672 MHz range.");
         freq_range_mhz
             .iter()
             .enumerate()
-            .filter(|(_, &freq)| freq >= 6660.0 && freq <= 6675.0)
+            .filter(|(_, &freq)| freq >= 6664.0 && freq <= 6672.0)
             .map(|(i, _)| i)
             .collect()
     } else {
@@ -663,26 +903,137 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         return Err("No data found in the specified frequency range for analysis.".into());
     }
 
-    // 6. Create data slices for analysis
-    let analysis_freq_mhz: Vec<f64> = analysis_indices
+    let (spec_title_base, spec_y_label_base) = if onoff_mode == 0 {
+        (
+            "Maser Analysis: (ON-OFF)/OFF Spectrum".to_string(),
+            "Normalized Intensity".to_string(),
+        )
+    } else {
+        (
+            "Maser Analysis: (ON-OFF) Spectrum".to_string(),
+            "Intensity Difference".to_string(),
+        )
+    };
+
+    let total_segments = segments.len();
+    let mut summaries: Vec<SegmentSummary> = Vec::with_capacity(total_segments);
+
+    for (seg_idx, (on_seg, off_seg)) in segments.iter().enumerate() {
+        let summary = analyze_segment(
+            seg_idx,
+            total_segments,
+            on_seg,
+            off_seg,
+            &freq_range_mhz,
+            &analysis_indices,
+            rest_freq_mhz,
+            override_vlsr,
+            onoff_mode,
+            &gaussian_initial_components,
+            &spec_title_base,
+            &spec_y_label_base,
+            &antenna_label,
+            base_freq_mhz,
+            freq_resolution_mhz,
+            channel_width_kms,
+            &output_dir,
+            on_stem,
+        )?;
+        summaries.push(summary);
+    }
+
+    println!("  Maser segments (N={}):", total_segments);
+    println!(
+        "    idx start_time_utc         seg_s lsr_km/s peak_freq_MHz peak_vlsr_km/s peak_val median   mad      peak_diff  snr_mad snr_std stdev"
+    );
+    for summary in &summaries {
+        println!(
+            "    {:>3} {} {:>6.1} {:>9.3} {:>12.6} {:>13.3} {:>9.6} {:>8.6} {:>9.6} {:>11.6} {:>8.3} {:>8.3} {:>8.6}",
+            summary.index,
+            summary.start_time.format("%Y-%m-%d %H:%M:%S"),
+            summary.segment_seconds,
+            summary.lsr_average,
+            summary.peak_freq_mhz,
+            summary.peak_velocity_kms,
+            summary.peak_value,
+            summary.median,
+            summary.mad,
+            summary.peak_minus_median,
+            summary.snr_mad,
+            summary.snr_stdev,
+            summary.sigma_est,
+        );
+    }
+
+    println!("make some plots in {:?}", output_dir);
+
+    Ok(())
+}
+
+fn analyze_segment(
+    seg_idx: usize,
+    total_segments: usize,
+    on_seg: &SpectrumData,
+    off_seg: &SpectrumData,
+    freq_range_mhz: &[f64],
+    analysis_indices: &[usize],
+    rest_freq_mhz: f64,
+    override_vlsr: Option<f64>,
+    onoff_mode: u8,
+    gaussian_initial_components: &[(f64, f64, f64)],
+    spec_title: &str,
+    spec_y_label: &str,
+    antenna_label: &str,
+    base_freq_mhz: f64,
+    freq_resolution_mhz: f64,
+    channel_width_kms: f64,
+    output_dir: &Path,
+    on_stem: &str,
+) -> Result<SegmentSummary, Box<dyn Error>> {
+    let mut lsr_vel_corr = compute_lsr_average(
+        &on_seg.header,
+        on_seg.start_time,
+        on_seg.effective_integration_time,
+        on_seg.sector_count,
+    );
+    if let Some(v) = override_vlsr {
+        lsr_vel_corr = v;
+    }
+
+    let velocity_range_kms: Vec<f64> = freq_range_mhz
         .iter()
-        .map(|&i| freq_range_mhz[i])
+        .map(|&f_obs| C_KM_S * (rest_freq_mhz - f_obs) / rest_freq_mhz + lsr_vel_corr)
         .collect();
+
     let analysis_velocity_kms: Vec<f64> = analysis_indices
         .iter()
         .map(|&i| velocity_range_kms[i])
         .collect();
-    let analysis_spec_on: Vec<f32> = analysis_indices.iter().map(|&i| spec_on[i]).collect();
-    let analysis_spec_off: Vec<f32> = analysis_indices.iter().map(|&i| spec_off[i]).collect();
+
+    let spec_on_slice = on_seg
+        .spectrum
+        .as_slice()
+        .ok_or("ON spectrum data not contiguous")?;
+    let spec_off_slice = off_seg
+        .spectrum
+        .as_slice()
+        .ok_or("OFF spectrum data not contiguous")?;
+
+    let analysis_spec_on: Vec<f32> = analysis_indices.iter().map(|&i| spec_on_slice[i]).collect();
+    let analysis_spec_off: Vec<f32> = analysis_indices.iter().map(|&i| spec_off_slice[i]).collect();
 
     let mut normalized_spec = Array1::<f32>::zeros(analysis_indices.len());
     for i in 0..analysis_indices.len() {
-        if analysis_spec_off[i] > 1e-9 {
-            normalized_spec[i] =
-                (analysis_spec_on[i] - analysis_spec_off[i]) / analysis_spec_off[i];
+        let diff = analysis_spec_on[i] - analysis_spec_off[i];
+        normalized_spec[i] = if onoff_mode == 0 {
+            if analysis_spec_off[i] > 1e-9 {
+                diff / analysis_spec_off[i]
+            } else {
+                0.0
+            }
         } else {
-            normalized_spec[i] = 0.0;
-        }
+            diff
+        };
     }
 
     let normalized_spec_f64: Vec<f64> = normalized_spec.iter().map(|&v| v as f64).collect();
@@ -694,12 +1045,15 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         match fit_gaussian_mixture(
             &analysis_velocity_kms,
             &normalized_spec_f64,
-            &gaussian_initial_components,
+            gaussian_initial_components,
         ) {
             Ok(result) => {
                 println!(
-                    "  Gaussian fit termination: {:?}, residual norm: {:.6}, evaluations: {}",
-                    result.termination, result.residual_norm, result.evaluations
+                    "  [seg {:03}] Gaussian fit termination: {:?}, residual norm: {:.6}, evaluations: {}",
+                    seg_idx,
+                    result.termination,
+                    result.residual_norm,
+                    result.evaluations
                 );
                 gaussian_fit_data_vel = Some(evaluate_gaussian_mixture(
                     &analysis_velocity_kms,
@@ -710,52 +1064,89 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             }
             Err(err) => {
                 eprintln!(
-                    "Warning: Gaussian fit failed ({}). Using initial parameters for overlay.",
-                    err
+                    "Warning: [seg {:03}] Gaussian fit failed ({}). Using initial parameters for overlay.",
+                    seg_idx, err
                 );
                 gaussian_fit_data_vel = Some(evaluate_gaussian_mixture(
                     &analysis_velocity_kms,
-                    &gaussian_initial_components,
+                    gaussian_initial_components,
                 ));
-                gaussian_fit_components = Some(gaussian_initial_components.clone());
+                gaussian_fit_components = Some(gaussian_initial_components.to_vec());
             }
-        }
-    }
-
-    if let Some(ref comps) = gaussian_fit_components {
-        println!("  Gaussian fit result (amp, center[km/s], fwhm[km/s]):");
-        for (idx, (amp, center, fwhm)) in comps.iter().enumerate() {
-            println!("    G{}: {:.4}, {:.4}, {:.4}", idx + 1, amp, center, fwhm);
         }
     }
 
     if let Some(summary) = &gaussian_fit_summary {
         println!(
-            "  Gaussian fit residual norm: {:.6} (objective: {:.6})",
+            "  [seg {:03}] Gaussian fit residual norm: {:.6} (objective: {:.6})",
+            seg_idx,
             summary.residual_norm,
             0.5 * summary.residual_norm * summary.residual_norm
         );
     }
 
-    // Write NARROWED data and final fit parameters to TSV
-    let tsv_filename = output_dir.join(format!("{}_maser_data.tsv", on_stem));
+    let mut peak_val = f32::NEG_INFINITY;
+    let mut peak_idx_in_analysis = 0;
+    for (i, &val) in normalized_spec.iter().enumerate() {
+        if val > peak_val {
+            peak_val = val;
+            peak_idx_in_analysis = i;
+        }
+    }
+    let peak_freq_mhz = analysis_indices
+        .get(peak_idx_in_analysis)
+        .map(|&i| freq_range_mhz[i])
+        .unwrap_or(base_freq_mhz);
+    let peak_velocity_kms = analysis_velocity_kms[peak_idx_in_analysis];
+    let mut sorted_spec = normalized_spec.to_vec();
+    sorted_spec.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = sorted_spec[sorted_spec.len() / 2];
+    let mut deviations: Vec<f32> = normalized_spec
+        .iter()
+        .map(|&val| (val - median).abs())
+        .collect();
+    deviations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mad = deviations[deviations.len() / 2];
+    let peak_minus_median = peak_val - median;
+    let snr_mad = if mad > 1e-9 {
+        peak_minus_median / mad
+    } else {
+        0.0
+    };
+    let sigma_est = if mad > 1e-9 { mad / 0.6745_f32 } else { 0.0 };
+    let snr_stdev = if sigma_est > 1e-9 {
+        peak_minus_median / sigma_est
+    } else {
+        0.0
+    };
+
+    let suffix = if total_segments > 1 {
+        format!("_seg{:03}", seg_idx)
+    } else {
+        String::new()
+    };
+
+    let tsv_filename = output_dir.join(format!("{}{}_maser_data.tsv", on_stem, suffix));
     let mut file = File::create(&tsv_filename)?;
     writeln!(file, "# Base Frequency (MHz): {}", base_freq_mhz)?;
     writeln!(
         file,
         "Frequency_Offset_MHz\tVelocity_km/s\tonsourc\toffsource"
     )?;
-    for i in 0..analysis_freq_mhz.len() {
-        let freq_offset_mhz = analysis_freq_mhz[i] - base_freq_mhz;
+    for (idx, &freq_idx) in analysis_indices.iter().enumerate() {
+        let freq_offset_mhz = freq_range_mhz[freq_idx] - base_freq_mhz;
         writeln!(
             file,
             "{}\t{}\t{}\t{}",
-            freq_offset_mhz, analysis_velocity_kms[i], analysis_spec_on[i], analysis_spec_off[i]
+            freq_offset_mhz,
+            analysis_velocity_kms[idx],
+            analysis_spec_on[idx],
+            analysis_spec_off[idx]
         )?;
     }
 
     if let Some(ref comps) = gaussian_fit_components {
-        let fit_filename = output_dir.join(format!("{}_maser_fit.txt", on_stem));
+        let fit_filename = output_dir.join(format!("{}{}_maser_fit.txt", on_stem, suffix));
         let mut fit_file = File::create(&fit_filename)?;
         writeln!(fit_file, "Gaussian Fit Summary")?;
         if let Some(summary) = &gaussian_fit_summary {
@@ -790,84 +1181,74 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // 7. Find peak on (potentially narrowed) normalized spectrum
-    let mut peak_val = f32::NEG_INFINITY;
-    let mut peak_idx_in_analysis = 0;
-    for (i, &val) in normalized_spec.iter().enumerate() {
-        if val > peak_val {
-            peak_val = val;
-            peak_idx_in_analysis = i;
-        }
-    }
-    let peak_freq_mhz = analysis_freq_mhz[peak_idx_in_analysis];
-    let peak_velocity_kms = analysis_velocity_kms[peak_idx_in_analysis];
-    let mut sorted_spec = normalized_spec.to_vec();
-    sorted_spec.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let median = sorted_spec[sorted_spec.len() / 2];
-    let snr = if median > 1e-9 {
-        peak_val / median
-    } else {
-        0.0
-    };
-
-    // 8. Generate plots
-    // Plot 1: ON/OFF vs Frequency (Full Range)
     let on_plot_data_freq: Vec<(f64, f32)> = freq_range_mhz
         .iter()
-        .zip(spec_on.iter())
+        .zip(on_seg.spectrum.iter())
         .map(|(&x, &y)| (x, y))
         .collect();
     let off_plot_data_freq: Vec<(f64, f32)> = freq_range_mhz
         .iter()
-        .zip(spec_off.iter())
+        .zip(off_seg.spectrum.iter())
         .map(|(&x, &y)| (x, y))
         .collect();
-    let on_off_freq_plot_filename = output_dir.join(format!("{}_on_off_freq.png", on_stem));
+    let on_off_freq_plot_filename = output_dir.join(format!("{}{}_maser_onoff.png", on_stem, suffix));
     plot_on_off_spectra(
         &on_off_freq_plot_filename,
         &on_plot_data_freq,
         &off_plot_data_freq,
         "Frequency [MHz]",
-        peak_velocity_kms, // Use peak velocity found in analysis range
+        peak_velocity_kms,
+        antenna_label,
     )?;
 
-    // Plot 2: (ON-OFF)/OFF vs Frequency (Analysis Range)
-    let normalized_plot_data_freq: Vec<(f64, f32)> = analysis_freq_mhz
+    let normalized_plot_data_freq: Vec<(f64, f32)> = analysis_indices
         .iter()
         .zip(normalized_spec.iter())
-        .map(|(&x, &y)| (x, y))
+        .map(|(&idx, &y)| (freq_range_mhz[idx], y))
         .collect();
-    let maser_freq_plot_filename = output_dir.join(format!("{}_maser_freq.png", on_stem));
+    let maser_freq_plot_filename = output_dir.join(format!("{}{}_maser_subt.png", on_stem, suffix));
     plot_maser_spectrum(
         &maser_freq_plot_filename,
         &normalized_plot_data_freq,
         "Frequency [MHz]",
+        spec_title,
+        spec_y_label,
+        antenna_label,
         peak_freq_mhz,
         peak_velocity_kms,
         peak_val,
-        snr,
+        snr_mad,
+        snr_stdev,
+        median,
+        mad,
+        sigma_est,
         freq_resolution_mhz,
         channel_width_kms,
         None,
         None,
     )?;
 
-    // Plot 3: (ON-OFF)/OFF vs Velocity (Analysis Range)
     let normalized_plot_data_vel: Vec<(f64, f32)> = analysis_velocity_kms
         .iter()
         .zip(normalized_spec.iter())
         .map(|(&x, &y)| (x, y))
         .collect();
-
-    let maser_vel_plot_filename = output_dir.join(format!("{}_maser_vel.png", on_stem));
+    let maser_vel_plot_filename = output_dir.join(format!("{}{}_maser_Vlsr1.png", on_stem, suffix));
     plot_maser_spectrum(
         &maser_vel_plot_filename,
         &normalized_plot_data_vel,
         "LSR Velocity [km/s]",
+        spec_title,
+        spec_y_label,
+        antenna_label,
         peak_freq_mhz,
         peak_velocity_kms,
         peak_val,
-        snr,
+        snr_mad,
+        snr_stdev,
+        median,
+        mad,
+        sigma_est,
         freq_resolution_mhz,
         channel_width_kms,
         gaussian_fit_data_vel.as_ref().map(|v| v.as_slice()),
@@ -876,12 +1257,11 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             .map(|components| components.as_slice()),
     )?;
 
-    // Plot 4: Zoomed-in (ON-OFF)/OFF vs Velocity
     let vel_window_kms = 10.0;
     let min_zoom_vel = peak_velocity_kms - vel_window_kms;
     let max_zoom_vel = peak_velocity_kms + vel_window_kms;
     let zoomed_plot_data: Vec<(f64, f32)> = analysis_velocity_kms
-        .iter() // Use analysis range for zoom
+        .iter()
         .zip(normalized_spec.iter())
         .filter(|(&vel, _)| vel >= min_zoom_vel && vel <= max_zoom_vel)
         .map(|(&vel, &norm_val)| (vel, norm_val))
@@ -896,15 +1276,22 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                     .cloned()
                     .collect()
             });
-        let maser_zoom_plot_filename = output_dir.join(format!("{}_maser_vel_zoom.png", on_stem));
+        let maser_zoom_plot_filename = output_dir.join(format!("{}{}_maser_Vlsr2.png", on_stem, suffix));
         plot_maser_spectrum(
             &maser_zoom_plot_filename,
             &zoomed_plot_data,
             "LSR Velocity [km/s]",
+            spec_title,
+            spec_y_label,
+            antenna_label,
             peak_freq_mhz,
             peak_velocity_kms,
             peak_val,
-            snr,
+            snr_mad,
+            snr_stdev,
+            median,
+            mad,
+            sigma_est,
             freq_resolution_mhz,
             channel_width_kms,
             gaussian_fit_zoom.as_ref().map(|v| v.as_slice()),
@@ -914,9 +1301,21 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         )?;
     }
 
-    println!("make some plots in {:?}", output_dir);
-
-    Ok(())
+    Ok(SegmentSummary {
+        index: seg_idx,
+        start_time: on_seg.start_time,
+        segment_seconds: on_seg.effective_integration_time * on_seg.sector_count as f32,
+        lsr_average: lsr_vel_corr,
+        peak_freq_mhz,
+        peak_velocity_kms,
+        peak_value: peak_val,
+        median,
+        mad,
+        peak_minus_median,
+        snr_mad,
+        snr_stdev,
+        sigma_est,
+    })
 }
 
 // New function starts here

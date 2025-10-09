@@ -168,10 +168,24 @@ pub struct Args {
     ///   Vlst:<km/s>    -- Override LSR velocity correction
     ///   corrfreq:<x>   -- Multiplier applied to the sampling frequency
     ///   band:<start-end> -- Frequency window offsets in MHz relative to observing frequency
+    ///   subt:<start-end> -- Absolute frequency window in MHz (overrides band)
+    ///   onoff:<0|1>   -- Use (ON-OFF)/OFF when 0 (default), or (ON-OFF) when 1
     ///   gauss:amp,Vlst,fwhm,[amp,Vlst,fwhm...] -- Apply Gaussian mixture fits on the velocity spectrum
     ///
     /// Positional arguments (legacy): first token = off-source path, second = rest frequency.
-    #[arg(long, num_args = 1.., value_name = "KEY:VALUE")]
+    #[arg(
+        long,
+        num_args = 1..,
+        value_name = "KEY:VALUE",
+        help = "Perform maser analysis using paired ON/OFF .cor files.",
+        long_help = "Perform maser analysis using paired ON/OFF .cor files. \
+Supply key-value tokens such as: off:<path> (required), rest:<MHz>, Vlst:<km/s>, corrfreq:<x>, \
+band:<start-end> for offsets relative to the observing frequency, \
+subt:<start-end> for absolute MHz range (overrides band), \
+onoff:<0|1> to select (ON-OFF)/OFF (0) or ON-OFF (1), \
+gauss:amp,Vlst,fwhm[,amp,Vlst,fwhm...] to seed Gaussian fits. \
+You may also pass positional arguments (legacy): first token = off-source path, second = rest frequency."
+    )]
     pub maser: Vec<String>,
 
     /// Perform multi-sideband analysis.
