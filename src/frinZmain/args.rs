@@ -182,7 +182,6 @@ pub struct Args {
 Supply key-value tokens such as: off:<path> (required), rest:<MHz>, Vlst:<km/s>, corrfreq:<x>, \
 band:<start-end> for offsets relative to the observing frequency, \
 subt:<start-end> for absolute MHz range (overrides band), \
-onoff:<0|1> to select (ON-OFF)/OFF (0) or ON-OFF (1), \
 gauss:amp,Vlst,fwhm[,amp,Vlst,fwhm...] to seed Gaussian fits. \
 You may also pass positional arguments (legacy): first token = off-source path, second = rest frequency."
     )]

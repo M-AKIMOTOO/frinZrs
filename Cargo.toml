@@ -21,6 +21,10 @@ path = "src/frinZmain/main.rs"
 name = "cormerge"
 path = "src/cormerge/main.rs"
 
+[[bin]]
+name = "bandscythe"
+path = "src/bandscythe/main.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
