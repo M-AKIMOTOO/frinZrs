@@ -309,7 +309,7 @@ pub fn process_cor_file(
         let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
         let base_filename = generate_output_names(
             &header,
-            &obs_time,
+            &current_obs_time,
             &label_str,
             !rfi_ranges.is_empty(),
             args.frequency,

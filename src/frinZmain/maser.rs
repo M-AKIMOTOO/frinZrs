@@ -26,6 +26,22 @@ const C_KM_S: f64 = 299792.458; // Speed of light in km/s
 const FWHM_TO_SIGMA: f64 = 0.42466090014400953; // 1 / (2 * sqrt(2 ln 2))
 const MIN_FWHM_KMS: f64 = 1.0e-3; // clamp to avoid zero-width components
 
+macro_rules! maser_logln {
+    ($log:expr, $($arg:tt)*) => {{
+        let line = format!($($arg)*);
+        println!("{}", line);
+        $log.push(line);
+    }};
+}
+
+fn write_maser_log(path: &Path, lines: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut file = File::create(path)?;
+    for line in lines {
+        writeln!(file, "{}", line)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MaserMode {
     Seg,
@@ -258,6 +274,7 @@ fn fit_gaussian_mixture(
 }
 
 /// Extracts the cross-power spectrum at zero fringe rate from a .cor file.
+#[derive(Clone)]
 struct SpectrumData {
     header: CorHeader,
     spectrum: Array1<f32>,
@@ -488,6 +505,7 @@ fn get_spectrum_segment(
     sampling_scale: f64,
     chunk_length: i32,
     loop_index: i32,
+    log_lines: &mut Vec<String>,
 ) -> Result<Option<SpectrumData>, Box<dyn Error>> {
     let mut file = File::open(file_path)?;
     let mut buffer = Vec::new();
@@ -516,6 +534,15 @@ fn get_spectrum_segment(
     )?;
 
     if complex_vec.is_empty() {
+        maser_logln!(
+            log_lines,
+            "  [maser] loop {}: {:?} のデータ長 {} セクターが不足 (skip={}, loop offset {}) ため空データ。",
+            loop_index,
+            file_path,
+            desired_length,
+            args.skip,
+            loop_index
+        );
         return Ok(None);
     }
 
@@ -530,6 +557,13 @@ fn get_spectrum_segment(
     };
 
     if sector_count == 0 {
+        maser_logln!(
+            log_lines,
+            "  [maser] loop {}: {:?} で FFT 点数 {} に対する複素データが得られず、セクター数 0。",
+            loop_index,
+            file_path,
+            header.fft_point
+        );
         return Ok(None);
     }
 
@@ -768,7 +802,8 @@ fn plot_on_off_spectra(
 
 pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     // 1. Parse args
-    println!("Running Maser Analysis...");
+    let mut log_lines: Vec<String> = Vec::new();
+    maser_logln!(log_lines, "Running Maser Analysis...");
     let on_source_path = args.input.as_ref().unwrap();
 
     let mut off_source_path: Option<PathBuf> = None;
@@ -919,35 +954,52 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
     let off_source_path = off_source_path.unwrap();
 
-    println!("  ON Source: {:?}", on_source_path);
-    println!("  OFF Source: {:?}", off_source_path);
-    println!("  Rest Frequency: {} MHz", rest_freq_mhz);
-    println!("  Frequency Correction Factor: {:.6}", corrfreq);
-    println!("  Maser mode: {}", maser_mode.as_str());
+    maser_logln!(log_lines, "  ON Source: {:?}", on_source_path);
+    maser_logln!(log_lines, "  OFF Source: {:?}", off_source_path);
+    maser_logln!(log_lines, "  Rest Frequency: {} MHz", rest_freq_mhz);
+    maser_logln!(log_lines, "  Frequency Correction Factor: {:.6}", corrfreq);
+    maser_logln!(log_lines, "  Maser mode: {}", maser_mode.as_str());
     if let Some(v) = override_vlsr {
-        println!("  Override LSR Velocity Correction: {:.6} km/s", v);
+        maser_logln!(log_lines, "  Override LSR Velocity Correction: {:.6} km/s", v);
     }
     if let Some((start, end)) = user_band_range {
-        println!(
+        maser_logln!(
+            log_lines,
             "  Frequency window offsets: {:.3} MHz to {:.3} MHz relative to observing frequency",
             start, end
         );
     }
     if let Some((start, end)) = user_subt_range {
-        println!(
+        maser_logln!(
+            log_lines,
             "  Absolute frequency window: {:.3} MHz to {:.3} MHz",
             start, end
         );
     }
     if !gaussian_initial_components.is_empty() {
-        println!("  Gaussian initial guesses (amp, center[km/s], fwhm[km/s]):");
+        maser_logln!(
+            log_lines,
+            "  Gaussian initial guesses (amp, center[km/s], fwhm[km/s]):"
+        );
         for (amp, center, fwhm) in &gaussian_initial_components {
-            println!("    {:.4}, {:.4}, {:.4}", amp, center, fwhm);
+            maser_logln!(log_lines, "    {:.4}, {:.4}, {:.4}", amp, center, fwhm);
         }
     }
 
-    // Load spectra per integration segment
-    let chunk_length = if args.length > 0 { args.length } else { 0 };
+    let chunk_length = if args.length > 0 {
+        maser_logln!(
+            log_lines,
+            "  Maser processing will segment the ON source with --length={} and --loop={} (OFF source uses full span).",
+            args.length, args.loop_
+        );
+        args.length
+    } else {
+        maser_logln!(
+            log_lines,
+            "  Maser processing will use the full data span (single segment)."
+        );
+        0
+    };
     let mut segments: Vec<(SpectrumData, SpectrumData)> = Vec::new();
     let mut loop_index: usize = 0;
     let loop_limit: usize = if chunk_length > 0 {
@@ -955,6 +1007,21 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     } else {
         1
     };
+
+    let off_full_segment = get_spectrum_segment(
+        &off_source_path,
+        args,
+        corrfreq,
+        0,
+        0,
+        &mut log_lines,
+    )?
+    .ok_or_else(|| {
+        format!(
+            "Off-source file {:?} contains no usable data for maser analysis.",
+            off_source_path
+        )
+    })?;
 
     loop {
         if chunk_length > 0 && loop_index >= loop_limit {
@@ -967,24 +1034,22 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             corrfreq,
             chunk_length,
             loop_index as i32,
-        )?;
-        let off_chunk = get_spectrum_segment(
-            &off_source_path,
-            args,
-            corrfreq,
-            chunk_length,
-            loop_index as i32,
+            &mut log_lines,
         )?;
 
-        match (on_chunk, off_chunk) {
-            (Some(on_data), Some(off_data)) => segments.push((on_data, off_data)),
-            (None, None) => break,
-            (Some(_), None) | (None, Some(_)) => {
-                return Err(format!(
-                    "Mismatch in available data between ON ({:?}) and OFF ({:?}) for loop {}.",
-                    on_source_path, off_source_path, loop_index
-                )
-                .into());
+        match on_chunk {
+            Some(on_data) => {
+                segments.push((on_data, off_full_segment.clone()));
+            }
+            None => {
+                if chunk_length > 0 {
+                    maser_logln!(
+                        log_lines,
+                        "  [maser] loop {}: ON 側で追加のセグメントが読み出せなかったため終了します。",
+                        loop_index
+                    );
+                }
+                break;
             }
         }
 
@@ -1043,7 +1108,8 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         let obs_freq_mhz = header_on.observing_frequency / 1e6;
         if (11923.0..=12435.0).contains(&obs_freq_mhz) {
             rest_freq_mhz = 1217.8597;
-            println!(
+            maser_logln!(
+                log_lines,
                 "  Rest frequency automatically set to 1217.8597 MHz for 12.2 GHz methanol maser analysis."
             );
         }
@@ -1057,8 +1123,16 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let freq_resolution_mhz = (header_on.sampling_speed as f64 * corrfreq / 2.0 / 1e6)
         / (header_on.fft_point as f64 / 2.0);
     let channel_width_kms = C_KM_S * freq_resolution_mhz / rest_freq_mhz;
-    println!("  Frequency Resolution: {:.6} MHz", freq_resolution_mhz);
-    println!("  Channel Width: {:.6} km/s", channel_width_kms);
+    maser_logln!(
+        log_lines,
+        "  Frequency Resolution: {:.6} MHz",
+        freq_resolution_mhz
+    );
+    maser_logln!(
+        log_lines,
+        "  Channel Width: {:.6} km/s",
+        channel_width_kms
+    );
     let station1_label = header_on.station1_name.trim().to_string();
     let station2_label = header_on.station2_name.trim().to_string();
     let antenna_label = if station1_label.eq_ignore_ascii_case(&station2_label) {
@@ -1070,12 +1144,12 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         Some(val) => (val, Some("user-specified".to_string())),
         None => {
             let auto_val = if station1_label.eq_ignore_ascii_case(&station2_label) {
-                1
-            } else {
                 0
+            } else {
+                1
             };
-            let reason = if auto_val == 1 {
-                "auto-selected (station1 == station2)"
+            let reason = if auto_val == 0 {
+                "auto-selected (same station; (ON-OFF)/OFF)"
             } else {
                 "auto-selected (baseline combination)"
             };
@@ -1088,9 +1162,14 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         "(ON-OFF)"
     };
     if let Some(note) = normalization_note {
-        println!("  Normalization mode: {} [{}]", norm_label, note);
+        maser_logln!(
+            log_lines,
+            "  Normalization mode: {} [{}]",
+            norm_label,
+            note
+        );
     } else {
-        println!("  Normalization mode: {}", norm_label);
+        maser_logln!(log_lines, "  Normalization mode: {}", norm_label);
     }
     if maser_mode.accumulate_integration() && integration_state.is_none() {
         integration_state = Some(IntegrationState::new());
@@ -1119,7 +1198,10 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             .map(|(i, _)| i)
             .collect()
     } else if rest_freq_mhz >= 6600.0 && rest_freq_mhz <= 7112.0 {
-        println!("  C-band maser detected. Restricting analysis to 6664-6672 MHz range.");
+        maser_logln!(
+            log_lines,
+            "  C-band maser detected. Restricting analysis to 6664-6672 MHz range."
+        );
         freq_range_mhz
             .iter()
             .enumerate()
@@ -1171,17 +1253,20 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             on_stem,
             integration_state.as_mut(),
             write_segment_outputs,
+            &mut log_lines,
         )?;
         summaries.push(summary);
     }
 
     if print_segment_table {
-        println!("  Maser segments (N={}):", total_segments);
-        println!(
+        maser_logln!(log_lines, "  Maser segments (N={}):", total_segments);
+        maser_logln!(
+            log_lines,
             "    idx start_time_utc         seg_s lsr_km/s peak_freq_MHz peak_vlsr_km/s peak_val median   mad      peak_diff  snr_mad snr_std stdev"
         );
         for summary in &summaries {
-            println!(
+            maser_logln!(
+                log_lines,
                 "    {:>3} {} {:>6.1} {:>9.3} {:>12.6} {:>13.3} {:>9.6} {:>8.6} {:>9.6} {:>11.6} {:>8.3} {:>8.3} {:>8.6}",
                 summary.index,
                 summary.start_time.format("%Y-%m-%d %H:%M:%S"),
@@ -1204,7 +1289,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let integration_result = integration_state.and_then(|state| state.finalize());
     if let Some(integration) = integration_result {
         if integration.frequency_axis_mhz.is_empty() {
-            println!("Stacked spectrum: no data accumulated.");
+            maser_logln!(log_lines, "Stacked spectrum: no data accumulated.");
         } else {
             produced_outputs = true;
             let velocity_axis = integration.to_velocity_axis();
@@ -1236,10 +1321,14 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             let peak_freq_mhz = integration.frequency_axis_mhz[peak_idx];
             let peak_velocity_kms = velocity_axis[peak_idx];
 
-            let aggregated_idx = integration.segment_count;
-            println!(
-                "Stacked spectrum (seg{:03}): segs={:>3} integ_s={:>8.1} mean_lsr={:>9.3} peak_freq_MHz={:>12.6} peak_vlsr_km/s={:>13.3} peak_val={:>9.6} median={:>8.6} mad={:>9.6} peak_diff={:>11.6} snr_mad={:>8.3} snr_std={:>8.3} stdev={:>8.6}",
-                aggregated_idx,
+            maser_logln!(log_lines, "  Stacked spectrum:");
+            maser_logln!(
+                log_lines,
+                "    segs integ_s mean_lsr_km/s peak_freq_MHz peak_vlsr_km/s peak_val median   mad      peak_diff  snr_mad snr_std stdev"
+            );
+            maser_logln!(
+                log_lines,
+                "    {:>3} {:>8.1} {:>13.3} {:>12.6} {:>13.3} {:>9.6} {:>8.6} {:>9.6} {:>11.6} {:>8.3} {:>8.3} {:>8.6}",
                 integration.segment_count,
                 integration.total_segment_seconds,
                 integration.mean_lsr_corr,
@@ -1254,7 +1343,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                 sigma_est,
             );
 
-            let stacked_suffix = format!("_seg{:03}", aggregated_idx);
+            let stacked_suffix = "_stacked";
             let integ_tsv =
                 output_dir.join(format!("{}{}_maser_data.tsv", on_stem, stacked_suffix));
             let mut integ_file = File::create(&integ_tsv)?;
@@ -1410,8 +1499,12 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     }
 
     if produced_outputs {
-        println!("make some plots in {:?}", output_dir);
+        maser_logln!(log_lines, "make some plots in {:?}", output_dir);
     }
+
+    let log_path = output_dir.join(format!("{}_maser_stdout.txt", on_stem));
+    maser_logln!(log_lines, "  Maser stdout saved to {:?}", log_path);
+    write_maser_log(&log_path, &log_lines)?;
 
     Ok(())
 }
@@ -1437,6 +1530,7 @@ fn analyze_segment(
     on_stem: &str,
     integration_state: Option<&mut IntegrationState>,
     write_outputs: bool,
+    log_lines: &mut Vec<String>,
 ) -> Result<SegmentSummary, Box<dyn Error>> {
     let mut lsr_vel_corr = compute_lsr_average(
         &on_seg.header,
@@ -1501,7 +1595,8 @@ fn analyze_segment(
             gaussian_initial_components,
         ) {
             Ok(result) => {
-                println!(
+                maser_logln!(
+                    log_lines,
                     "  [seg {:03}] Gaussian fit termination: {:?}, residual norm: {:.6}, evaluations: {}",
                     seg_idx,
                     result.termination,
@@ -1516,6 +1611,12 @@ fn analyze_segment(
                 gaussian_fit_summary = Some(result);
             }
             Err(err) => {
+                maser_logln!(
+                    log_lines,
+                    "Warning: [seg {:03}] Gaussian fit failed ({}). Using initial parameters for overlay.",
+                    seg_idx,
+                    err
+                );
                 eprintln!(
                     "Warning: [seg {:03}] Gaussian fit failed ({}). Using initial parameters for overlay.",
                     seg_idx, err
@@ -1530,7 +1631,8 @@ fn analyze_segment(
     }
 
     if let Some(summary) = &gaussian_fit_summary {
-        println!(
+        maser_logln!(
+            log_lines,
             "  [seg {:03}] Gaussian fit residual norm: {:.6} (objective: {:.6})",
             seg_idx,
             summary.residual_norm,

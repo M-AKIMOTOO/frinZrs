@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{self, Cursor, Read};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CorHeader {
     pub magic_word: [u8; 4],
     pub header_version: i32,

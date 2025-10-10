@@ -22,6 +22,14 @@ name = "cormerge"
 path = "src/cormerge/main.rs"
 
 [[bin]]
+name = "gfrinZ"
+path = "src/gfrinZmain/main.rs"
+
+[[bin]]
+name = "corshow"
+path = "src/corshow/main.rs"
+
+[[bin]]
 name = "bandscythe"
 path = "src/bandscythe/main.rs"
 
@@ -59,10 +67,3 @@ codegen-units = 1
 panic = "abort"
 overflow-checks = false
 
-[[bin]]
-name = "gfrinZ"
-path = "src/gfrinZmain/main.rs"
-
-[[bin]]
-name = "corshow"
-path = "src/corshow/main.rs"
