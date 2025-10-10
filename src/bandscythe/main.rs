@@ -122,28 +122,12 @@ struct Cli {
     #[arg(long)]
     cor: PathBuf,
 
-    /// Frequency window to keep, in MHz (e.g. 6664-6672)
-    #[arg(long, value_name = "LOW-HIGH")]
-    band: String,
+    /// Frequency window to keep, in MHz (provide as two values, e.g. 6664 6672)
+    #[arg(long, value_names = ["LOW", "HIGH"], num_args = 2)]
+    band: Vec<f64>,
 }
 
-fn parse_band(spec: &str) -> Result<(f64, f64)> {
-    let mut parts = spec.split('-').map(|s| s.trim()).filter(|s| !s.is_empty());
-    let low = parts
-        .next()
-        .ok_or_else(|| anyhow!("band specification must contain a lower bound"))?
-        .parse::<f64>()
-        .context("failed to parse lower bound as MHz")?;
-    let high = parts
-        .next()
-        .ok_or_else(|| anyhow!("band specification must contain an upper bound"))?
-        .parse::<f64>()
-        .context("failed to parse upper bound as MHz")?;
-    if parts.next().is_some() {
-        return Err(anyhow!(
-            "band specification must be in the form LOW-HIGH (MHz)"
-        ));
-    }
+fn parse_band(low: f64, high: f64) -> Result<(f64, f64)> {
     if low >= high {
         return Err(anyhow!("band specification requires LOW < HIGH (MHz)"));
     }
@@ -296,7 +280,12 @@ fn write_cropped_cor(
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let (low_mhz, high_mhz) = parse_band(&cli.band)?;
+    if cli.band.len() != 2 {
+        return Err(anyhow!(
+            "--band requires two values, e.g. --band LOW HIGH (in MHz)"
+        ));
+    }
+    let (low_mhz, high_mhz) = parse_band(cli.band[0], cli.band[1])?;
     let input_path = cli.cor;
     let output_path = default_output_path(&input_path);
 
