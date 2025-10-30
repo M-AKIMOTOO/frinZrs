@@ -9,6 +9,7 @@ pub mod fringe_rate_map;
 pub mod header;
 pub mod maser;
 
+pub mod earth_rotation_imaging;
 pub mod multisideband;
 pub mod output;
 pub mod phase_reference;
@@ -18,6 +19,7 @@ pub mod processing;
 pub mod raw_visibility;
 pub mod read;
 pub mod rfi;
+pub mod scan_correct;
 pub mod single_file;
 pub mod uptimeplot;
 pub mod utils;

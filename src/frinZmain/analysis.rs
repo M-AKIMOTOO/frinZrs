@@ -67,9 +67,9 @@ pub fn analyze_results(
     args: &Args,
     search_mode: Option<&str>,
 ) -> AnalysisResults {
-    let fft_point_usize = header.fft_point as usize;
-    let fft_point_half = fft_point_usize / 2;
-    let fft_point_f32 = header.fft_point as f32;
+    let fft_point_half = freq_rate_array.dim().0;
+    let fft_point_usize = fft_point_half * 2;
+    let fft_point_f32 = fft_point_usize as f32;
     let length_f32 = length as f32;
     let padding_length_half = padding_length / 2;
 
@@ -164,7 +164,7 @@ pub fn analyze_results(
 
         if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&x_coords, &y_values) {
             delay_offset = fit_result.peak_x as f32;
-            residual_delay_val = args.delay_correct + delay_offset;
+            residual_delay_val = delay_offset;
         } else {
             eprintln!("Warning: Quadratic fitting for delay failed. Using original peak.");
         }
@@ -306,7 +306,7 @@ pub fn analyze_results(
                 fitting::fit_quadratic_least_squares(&scaled_x_coords, &y_values)
             {
                 rate_offset = (fit_result.peak_x / rate_scale_factor) as f32;
-                residual_rate_val = args.rate_correct + rate_offset;
+                residual_rate_val = rate_offset;
             }
         } else {
             let mut x_coords: Vec<f64> = Vec::new();
@@ -333,7 +333,7 @@ pub fn analyze_results(
                 fitting::fit_quadratic_least_squares(&scaled_x_coords, &y_values)
             {
                 rate_offset = (fit_result.peak_x / rate_scale_factor) as f32;
-                residual_rate_val = args.rate_correct + rate_offset;
+                residual_rate_val = rate_offset;
             }
         }
     }

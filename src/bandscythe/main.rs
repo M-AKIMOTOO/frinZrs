@@ -1,10 +1,13 @@
+use std::error::Error;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process;
 
 use anyhow::{anyhow, Context, Result};
-use byteorder::{ByteOrder, LittleEndian};
+use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
 use clap::Parser;
+use num_complex::Complex32;
 
 const FILE_HEADER_SIZE: usize = 256;
 const SECTOR_HEADER_SIZE: usize = 128;
@@ -125,6 +128,18 @@ struct Cli {
     /// Frequency window to keep, in MHz (provide as two values, e.g. 6664 6672)
     #[arg(long, value_names = ["LOW", "HIGH"], num_args = 2)]
     band: Vec<f64>,
+
+    /// Rebin FFT length after band selection (e.g. --fft-rebin 1024)
+    #[arg(long, value_name = "FFT_POINTS")]
+    fft_rebin: Option<usize>,
+
+    /// Number of sectors to skip from the beginning of the file
+    #[arg(long, value_name = "SECTORS", default_value_t = 0)]
+    skip: u32,
+
+    /// Number of sectors to process (0 means process all remaining sectors)
+    #[arg(long, value_name = "SECTORS", default_value_t = 0)]
+    length: u32,
 }
 
 fn parse_band(low: f64, high: f64) -> Result<(f64, f64)> {
@@ -135,14 +150,28 @@ fn parse_band(low: f64, high: f64) -> Result<(f64, f64)> {
 }
 
 fn default_output_path(input: &Path) -> PathBuf {
-    let stem = input
+    let stem_raw = input
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
+    let stem = normalize_stem_with_label(stem_raw);
     let ext = input.extension().and_then(|s| s.to_str()).unwrap_or("cor");
     input
         .with_file_name(format!("{stem}_bandscythe.{ext}"))
         .to_path_buf()
+}
+
+fn normalize_stem_with_label(stem: &str) -> String {
+    let parts: Vec<&str> = stem.split('_').collect();
+    if parts.len() > 3 {
+        let mut prefix = parts[..3].join("_");
+        let label = parts[3..].join("_");
+        prefix.push('_');
+        prefix.push_str(&label);
+        prefix
+    } else {
+        stem.to_string()
+    }
 }
 
 fn compute_frequency_indices(
@@ -198,10 +227,12 @@ fn update_header_bytes(
     new_sampling_speed: i32,
     new_observing_freq_hz: f64,
     new_fft_point: i32,
+    new_number_of_sector: i32,
 ) {
     LittleEndian::write_i32(&mut header_bytes[12..16], new_sampling_speed);
     LittleEndian::write_f64(&mut header_bytes[16..24], new_observing_freq_hz);
     LittleEndian::write_i32(&mut header_bytes[24..28], new_fft_point);
+    LittleEndian::write_i32(&mut header_bytes[28..32], new_number_of_sector);
     const SIGNATURE_OFFSET: usize = 248;
     const SIGNATURE: &[u8; 8] = b"bandscy\0";
     let target = &mut header_bytes[SIGNATURE_OFFSET..SIGNATURE_OFFSET + SIGNATURE.len()];
@@ -216,11 +247,16 @@ fn write_cropped_cor(
     start_idx: usize,
     end_idx: usize,
     freq_res_hz: f64,
+    fft_rebin_bins: Option<usize>,
+    skip_sectors: usize,
+    sectors_to_process: usize,
 ) -> Result<()> {
     let bins_keep = end_idx - start_idx;
     let total_bins = (header.fft_point / 2) as usize;
+    let output_bins = fft_rebin_bins.unwrap_or(bins_keep);
+    let rebin_ratio = bins_keep / output_bins.max(1);
 
-    let new_fft_point = (bins_keep * 2) as i32;
+    let new_fft_point = (output_bins * 2) as i32;
     let new_sampling_speed =
         ((header.sampling_speed as f64) * (bins_keep as f64) / (total_bins as f64)).round() as i32;
     let new_observing_freq_hz = header.observing_frequency + freq_res_hz * start_idx as f64;
@@ -228,12 +264,14 @@ fn write_cropped_cor(
     header.sampling_speed = new_sampling_speed;
     header.observing_frequency = new_observing_freq_hz;
     header.fft_point = new_fft_point;
+    header.number_of_sector = sectors_to_process as i32;
 
     update_header_bytes(
         &mut header_bytes,
         new_sampling_speed,
         new_observing_freq_hz,
         new_fft_point,
+        header.number_of_sector,
     );
 
     writer
@@ -243,7 +281,19 @@ fn write_cropped_cor(
     let mut sector_header = vec![0u8; SECTOR_HEADER_SIZE];
     let mut sample_buf = [0u8; BYTES_PER_COMPLEX];
 
-    for sector_idx in 0..header.number_of_sector {
+    for sector_idx in 0..skip_sectors {
+        reader.read_exact(&mut sector_header).with_context(|| {
+            format!("failed to read sector header {} while skipping", sector_idx)
+        })?;
+        for bin in 0..total_bins {
+            reader.read_exact(&mut sample_buf).with_context(|| {
+                format!("failed to skip data for sector {}, bin {}", sector_idx, bin)
+            })?;
+        }
+    }
+
+    for processed_idx in 0..sectors_to_process {
+        let sector_idx = skip_sectors + processed_idx;
         reader
             .read_exact(&mut sector_header)
             .with_context(|| format!("failed to read sector header {}", sector_idx))?;
@@ -251,34 +301,111 @@ fn write_cropped_cor(
             .write_all(&sector_header)
             .with_context(|| format!("failed to write sector header {}", sector_idx))?;
 
+        let mut selected = Vec::with_capacity(bins_keep);
         for bin in 0..total_bins {
             reader.read_exact(&mut sample_buf).with_context(|| {
                 format!("failed to read data for sector {}, bin {}", sector_idx, bin)
             })?;
             if bin >= start_idx && bin < end_idx {
-                writer.write_all(&sample_buf).with_context(|| {
+                let real = LittleEndian::read_f32(&sample_buf[0..4]);
+                let imag = LittleEndian::read_f32(&sample_buf[4..8]);
+                selected.push(Complex32::new(real, imag));
+            }
+        }
+
+        if selected.len() != bins_keep {
+            return Err(anyhow!(
+                "unexpected number of bins collected (expected {}, got {}) for sector {}",
+                bins_keep,
+                selected.len(),
+                sector_idx
+            ));
+        }
+
+        let rebinned_storage;
+        let data_to_write: &[Complex32] = if let Some(target_bins) = fft_rebin_bins {
+            rebinned_storage = rebin_complex_spectrum(&selected, target_bins)?;
+            &rebinned_storage
+        } else {
+            &selected
+        };
+
+        for (bin_idx, value) in data_to_write.iter().enumerate() {
+            writer
+                .write_f32::<LittleEndian>(value.re)
+                .with_context(|| {
                     format!(
-                        "failed to write data for sector {}, bin {}",
-                        sector_idx, bin
+                        "failed to write real part for sector {}, bin {}",
+                        sector_idx, bin_idx
                     )
                 })?;
-            }
+            writer
+                .write_f32::<LittleEndian>(value.im)
+                .with_context(|| {
+                    format!(
+                        "failed to write imag part for sector {}, bin {}",
+                        sector_idx, bin_idx
+                    )
+                })?;
         }
     }
 
     writer.flush().context("failed to flush output file")?;
-    println!(
-        "BandScythe complete: kept {} / {} channels ({:.2}%), new observing freq {:.6} MHz, sampling {:.3} MHz",
-        bins_keep,
-        total_bins,
-        (bins_keep as f64 / total_bins as f64) * 100.0,
-        new_observing_freq_hz / 1e6,
-        new_sampling_speed as f64 / 1e6
-    );
+    let percent = (bins_keep as f64 / total_bins as f64) * 100.0;
+    if let Some(target_bins) = fft_rebin_bins {
+        println!(
+            "BandScythe complete: kept {} / {} channels ({:.2}%) after band selection, rebinned to {} channels (ratio 1:{}), new observing freq {:.6} MHz, sampling {:.3} MHz",
+            bins_keep,
+            total_bins,
+            percent,
+            target_bins,
+            rebin_ratio,
+            new_observing_freq_hz / 1e6,
+            new_sampling_speed as f64 / 1e6
+        );
+    } else {
+        println!(
+            "BandScythe complete: kept {} / {} channels ({:.2}%), new observing freq {:.6} MHz, sampling {:.3} MHz",
+            bins_keep,
+            total_bins,
+            percent,
+            new_observing_freq_hz / 1e6,
+            new_sampling_speed as f64 / 1e6
+        );
+    }
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn rebin_complex_spectrum(data: &[Complex32], output_bins: usize) -> Result<Vec<Complex32>> {
+    if output_bins == 0 {
+        return Err(anyhow!("requested output bin count must be positive"));
+    }
+    if data.len() % output_bins != 0 {
+        return Err(anyhow!(
+            "cannot rebin {} samples into {} bins (non-integer ratio)",
+            data.len(),
+            output_bins
+        ));
+    }
+    let ratio = data.len() / output_bins;
+    if ratio == 0 {
+        return Err(anyhow!("invalid rebin ratio 0"));
+    }
+    let mut rebinned = Vec::with_capacity(output_bins);
+    for chunk in data.chunks(ratio) {
+        let mut sum_re = 0.0f32;
+        let mut sum_im = 0.0f32;
+        for value in chunk {
+            sum_re += value.re;
+            sum_im += value.im;
+        }
+        let scale = 1.0f32 / (ratio as f32);
+        rebinned.push(Complex32::new(sum_re * scale, sum_im * scale));
+    }
+    Ok(rebinned)
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     if cli.band.len() != 2 {
         return Err(anyhow!(
@@ -330,6 +457,87 @@ fn main() -> Result<()> {
         actual_low_mhz
     );
 
+    let total_sectors = header.number_of_sector.max(0) as usize;
+    if total_sectors == 0 {
+        return Err(anyhow!(
+            "input file declares zero sectors; nothing to process"
+        ));
+    }
+    let skip_sectors = cli.skip as usize;
+    if skip_sectors >= total_sectors {
+        return Err(anyhow!(
+            "no sectors remain after applying --skip {} (available {})",
+            cli.skip,
+            total_sectors
+        ));
+    }
+    let remaining_after_skip = total_sectors - skip_sectors;
+    let requested_length = cli.length as usize;
+    let sectors_to_process = if requested_length == 0 {
+        remaining_after_skip
+    } else {
+        requested_length.min(remaining_after_skip)
+    };
+    if sectors_to_process == 0 {
+        return Err(anyhow!(
+            "no sectors remain after applying --skip {} and --length {}",
+            cli.skip,
+            cli.length
+        ));
+    }
+    if requested_length > 0 && requested_length > sectors_to_process {
+        println!(
+            "Warning: requested --length {} reduced to available {} sectors",
+            cli.length, sectors_to_process
+        );
+    }
+    println!(
+        "Skipping {} sector(s), exporting {} sector(s) out of {}",
+        skip_sectors, sectors_to_process, total_sectors
+    );
+
+    let fft_rebin_bins = if let Some(target_fft) = cli.fft_rebin {
+        if target_fft % 2 != 0 {
+            return Err(anyhow!(
+                "--fft-rebin must be an even number of FFT points (got {})",
+                target_fft
+            ));
+        }
+        if target_fft == 0 {
+            return Err(anyhow!("--fft-rebin must be greater than zero"));
+        }
+        let target_bins = target_fft / 2;
+        if target_bins == 0 || target_bins > bins_keep {
+            return Err(anyhow!(
+                "--fft-rebin ({} points) results in {} channels, which exceeds the kept band ({} channels)",
+                target_fft,
+                target_bins,
+                bins_keep
+            ));
+        }
+        if target_bins & (target_bins - 1) != 0 {
+            return Err(anyhow!(
+                "--fft-rebin requires a power-of-two FFT length ({} is not)",
+                target_fft
+            ));
+        }
+        if bins_keep % target_bins != 0 {
+            return Err(anyhow!(
+                "cannot evenly rebin {} kept channels into {} channels (--fft-rebin {})",
+                bins_keep,
+                target_bins,
+                target_fft
+            ));
+        }
+        println!(
+            "Rebinning kept band from {} to {} channels (FFT {} points).",
+            bins_keep, target_bins, target_fft
+        );
+        Some(target_bins)
+    } else {
+        None
+    };
+
     let output_file = File::create(&output_path)
         .with_context(|| format!("failed to create output file {:?}", output_path))?;
     let writer = BufWriter::new(output_file);
@@ -342,8 +550,23 @@ fn main() -> Result<()> {
         start_idx,
         end_idx,
         freq_res_hz,
+        fft_rebin_bins,
+        skip_sectors,
+        sectors_to_process,
     )?;
 
     println!("Output written to {:?}", output_path);
     Ok(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("Error: {err}");
+        let mut source = err.source();
+        while let Some(inner) = source {
+            eprintln!("Caused by: {inner}");
+            source = inner.source();
+        }
+        process::exit(1);
+    }
 }

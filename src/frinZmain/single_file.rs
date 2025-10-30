@@ -56,8 +56,7 @@ pub fn run_single_file_analysis(
             args.bandpass.is_some(),
             result.length_arg,
         );
-        let add_plot_filename = format!("{}_{}", base_filename, result.header.source_name);
-        let add_plot_filepath = path.join(add_plot_filename);
+        let add_plot_filepath = path.join(&base_filename);
 
         if !result.add_plot_times.is_empty() {
             let first_time = result.add_plot_times[0];

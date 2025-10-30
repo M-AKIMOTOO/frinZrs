@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
@@ -50,7 +50,7 @@ pub struct Args {
     pub plot: bool,
 
     /// Calculate and display the cross-power spectrum instead of the fringe.
-    #[arg(long, aliases = ["fr", "fre", "freq", "frequ", "freque", "frequen", "frequenc"])]
+    #[arg(long, aliases = ["fre", "freq", "frequ", "freque", "frequen", "frequenc"])]
     pub frequency: bool,
 
     /// Output the raw complex visibility data to a binary file.
@@ -77,6 +77,12 @@ pub struct Args {
     #[arg(long, aliases = ["acel","acel-corr"], default_value_t = 0.0, allow_negative_numbers = true)]
     pub acel_correct: f32,
 
+    /// Correct delay and rate based on a scan table file.
+    /// The file should contain comma-separated values of:
+    /// start_time (YYYYDDDHHMMSS), integration_time (s), delay (samples), rate (Hz)
+    #[arg(long, value_name = "FILE")]
+    pub scan_correct: Option<PathBuf>,
+
     /// Delay window for fringe search (min, max).
     #[arg(long, aliases = ["delay-w", "delay-wi", "delay-win", "delay-wind", "delay-windo"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
     pub delay_window: Vec<f32>,
@@ -102,16 +108,27 @@ pub struct Args {
     #[arg(long)]
     pub header: bool,
 
+    /// FFT チャンネル数を平均化して縮小する目標 FFT 点数。
+    /// 元の FFT 点数以上は指定できません。
+    #[arg(long, value_name = "POINTS")]
+    pub fft_rebin: Option<i32>,
+
     /// Specifies the search mode. [possible values: peak, deep, rate, acel]
-    ///
     /// - peak: Precise search for the fringe peak using iterative fitting. (equivalent to the old --search flag).
     /// - deep: A deep, hierarchical search for fringes. Computationally expensive. (equivalent to the old --search-deep flag).
     /// - rate: A search for the fringe rate by performing a linear fit. (equivalent to the old --rate-search flag).
     /// - acel: A search for fringe acceleration by performing a quadratic fit.
     ///
     /// If `--search` is provided without a value, it defaults to `peak`.
-    #[arg(long, num_args = 0..=1, default_missing_value = "peak", value_name = "MODE")]
-    pub search: Option<String>,
+    #[arg(
+        long,
+        num_args = 0..=1,
+        default_missing_value = "peak",
+        value_name = "MODE",
+        value_parser = ["peak", "deep", "rate", "acel"],
+        action = ArgAction::Append
+    )]
+    pub search: Vec<String>,
 
     /// Number of iterations for the precise search mode (--search=peak).
     #[arg(long, default_value_t = 5)]
@@ -136,7 +153,6 @@ pub struct Args {
     pub cpu: u32,
 
     /// Flag data by time or sector number (pp).
-    ///
     /// Modes:
     ///  time <START> <END>... : Skips processing for segments within the YYYYDDDHHMMSS time ranges.
     ///  pp <START> <END>...   : Replaces visibility data with 0+0j for the given sector number ranges.
@@ -157,11 +173,10 @@ pub struct Args {
     #[arg(long, num_args = 0..=1, default_missing_value = "1")]
     pub uv: Option<i32>,
 
-    #[arg(long, aliases = ["frmap"])]
-    pub fringe_rate_map: bool,
+    #[arg(long, aliases = ["frmap"], num_args = 0.., value_name = "KEY[:VALUE]")]
+    pub fringe_rate_map: Option<Vec<String>>,
 
     /// Perform maser analysis.
-    ///
     /// Accepts key-value pairs such as:
     ///   off:<path>     -- Off-source .cor file (required)
     ///   rest:<MHz>     -- Rest frequency override (defaults to 6668.5192)
@@ -173,18 +188,7 @@ pub struct Args {
     ///   gauss:amp,Vlst,fwhm,[amp,Vlst,fwhm...] -- Apply Gaussian mixture fits on the velocity spectrum
     ///
     /// Positional arguments (legacy): first token = off-source path, second = rest frequency.
-    #[arg(
-        long,
-        num_args = 1..,
-        value_name = "KEY:VALUE",
-        help = "Perform maser analysis using paired ON/OFF .cor files.",
-        long_help = "Perform maser analysis using paired ON/OFF .cor files. \
-Supply key-value tokens such as: off:<path> (required), rest:<MHz>, Vlst:<km/s>, corrfreq:<x>, \
-band:<start-end> for offsets relative to the observing frequency, \
-subt:<start-end> for absolute MHz range (overrides band), \
-gauss:amp,Vlst,fwhm[,amp,Vlst,fwhm...] to seed Gaussian fits. \
-You may also pass positional arguments (legacy): first token = off-source path, second = rest frequency."
-    )]
+    #[arg(long, num_args = 1.., value_name = "KEY:VALUE")]
     pub maser: Vec<String>,
 
     /// Perform multi-sideband analysis.
@@ -201,4 +205,28 @@ You may also pass positional arguments (legacy): first token = off-source path, 
     /// Plot antenna uptime (Az/El) over UT.
     #[arg(long)]
     pub uptimeplot: bool,
+
+    /// Run Earth-rotation imaging on the input visibility data.
+    /// Sub-options (key[:value]):
+    ///   size:<pixels>        Image size per axis (default 256)
+    ///   cell:<arcsec>        Cell size in arcsec/pixel (auto if omitted)
+    ///   clean[:0|1]          Enable CLEAN (default 0 / disabled)
+    ///   gain:<value>         CLEAN loop gain (default 0.1)
+    ///   threshold:<Jy>       CLEAN stopping threshold Jy (default 0.01)
+    ///   iter:<count>         CLEAN max iterations (default 200)
+    #[arg(long, num_args = 0.., value_name = "KEY[:VALUE]", requires = "input")]
+    pub imaging: Option<Vec<String>>,
+
+    /// Perform a test of the Earth-rotation synthesis imaging module.
+    #[arg(long)]
+    pub imaging_test: bool,
+}
+
+impl Args {
+    pub fn primary_search_mode(&self) -> Option<&str> {
+        self.search
+            .iter()
+            .find(|mode| *mode == "peak" || *mode == "deep")
+            .map(|s| s.as_str())
+    }
 }

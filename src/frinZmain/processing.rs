@@ -28,10 +28,44 @@ use crate::plot::{
 };
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
+use crate::scan_correct;
 use crate::utils::safe_arg;
 use memmap2::Mmap;
 
 type C32 = Complex<f32>;
+
+fn rebin_complex_rows(
+    data: &[C32],
+    rows: usize,
+    original_cols: usize,
+    target_cols: usize,
+) -> Vec<C32> {
+    if rows == 0
+        || original_cols == 0
+        || target_cols == 0
+        || original_cols == target_cols
+        || target_cols > original_cols
+        || original_cols % target_cols != 0
+    {
+        return data.to_vec();
+    }
+
+    let group = original_cols / target_cols;
+    let mut rebinned = Vec::with_capacity(rows.checked_mul(target_cols).unwrap_or_default());
+
+    for row_idx in 0..rows {
+        let row_start = row_idx * original_cols;
+        for target_idx in 0..target_cols {
+            let mut sum = C32::new(0.0, 0.0);
+            for offset in 0..group {
+                sum += data[row_start + target_idx * group + offset];
+            }
+            rebinned.push(sum / group as f32);
+        }
+    }
+
+    rebinned
+}
 
 /// Holds the results of processing a single .cor file, needed for subsequent plotting.
 pub struct ProcessResult {
@@ -62,7 +96,12 @@ pub fn process_cor_file(
     fs::create_dir_all(&frinz_dir)?;
 
     let basename = input_path.file_stem().unwrap().to_str().unwrap();
-    let label: Vec<String> = basename.split('_').map(String::from).collect();
+    let mut label: Vec<String> = basename.split('_').map(String::from).collect();
+    if label.len() > 3 {
+        let tail = label[3..].join("_");
+        label.truncate(3);
+        label.push(tail);
+    }
 
     // --- Create Output Directories ---
     let mut plot_path: Option<PathBuf> = None;
@@ -114,15 +153,74 @@ pub fn process_cor_file(
 
     // --- Parse Header ---
     let header = parse_header(&mut cursor)?;
+    let original_fft_point = header.fft_point;
+
+    let mut effective_fft_point = original_fft_point;
+    if let Some(requested_fft_point) = args.fft_rebin {
+        if requested_fft_point <= 0 {
+            eprintln!("Error: --fft-rebin には正の値を指定してください。");
+            process::exit(1);
+        }
+        if requested_fft_point % 2 != 0 {
+            eprintln!("Error: --fft-rebin は偶数である必要があります。");
+            process::exit(1);
+        }
+        if requested_fft_point > original_fft_point {
+            eprintln!(
+                "Error: --fft-rebin ({}) はヘッダーの FFT 点数 ({}) を超えています。",
+                requested_fft_point, original_fft_point
+            );
+            process::exit(1);
+        }
+
+        let original_half = (original_fft_point / 2) as usize;
+        let requested_half = (requested_fft_point / 2) as usize;
+        if requested_half == 0 || original_half % requested_half != 0 {
+            eprintln!(
+                "Error: --fft-rebin ({}) は元のチャンネル数 ({}) を整数分割できません。",
+                requested_fft_point, original_fft_point
+            );
+            process::exit(1);
+        }
+
+        effective_fft_point = requested_fft_point;
+    }
+
     let bw = header.sampling_speed as f32 / 2.0 / 1_000_000.0;
-    let rbw = bw / header.fft_point as f32 * 2.0;
+    let rbw = bw / effective_fft_point as f32 * 2.0;
 
     // --- RFI Handling ---
     let rfi_ranges = parse_rfi_ranges(&args.rfi, rbw)?;
 
     // --- Bandpass Handling ---
-    let bandpass_data = if let Some(bp_path) = &args.bandpass {
+    let mut bandpass_data = if let Some(bp_path) = &args.bandpass {
         Some(read_bandpass_file(bp_path)?)
+    } else {
+        None
+    };
+    if effective_fft_point != original_fft_point {
+        let original_half = (original_fft_point / 2) as usize;
+        let target_half = (effective_fft_point / 2) as usize;
+        if let Some(bp) = bandpass_data.as_mut() {
+            if bp.len() == original_half {
+                let rebinned = rebin_complex_rows(bp, 1, original_half, target_half);
+                *bp = rebinned;
+            } else if bp.len() != target_half {
+                eprintln!(
+                    "#WARN: バンドパスデータのチャンネル数 ({}) が FFT リビン後のチャンネル数 ({}) と一致しません。補正をスキップします。",
+                    bp.len(),
+                    target_half
+                );
+                *bp = Vec::new();
+            }
+        }
+    }
+
+    let mut processing_header = header.clone();
+    processing_header.fft_point = effective_fft_point;
+
+    let scan_corrections = if let Some(path) = &args.scan_correct {
+        Some(scan_correct::parse_scan_correct_file(path)?)
     } else {
         None
     };
@@ -185,15 +283,15 @@ pub fn process_cor_file(
     let mut add_plot_res_rate: Vec<f32> = Vec::new();
 
     for l1 in 0..loop_count {
-        let current_length = if args.cumulate != 0 {
+        let requested_length = if args.cumulate != 0 {
             (l1 + 1) * length
         } else {
             length
         };
-        let (complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(
+        let (mut complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(
             &mut cursor,
             &header,
-            current_length,
+            requested_length,
             args.skip,
             l1,
             args.cumulate != 0,
@@ -202,6 +300,51 @@ pub fn process_cor_file(
             Ok(data) => data,
             Err(_) => break,
         };
+
+        let original_fft_half = (header.fft_point / 2) as usize;
+        if original_fft_half == 0 {
+            eprintln!("#ERROR: FFT point が不正です (0)。");
+            break;
+        }
+
+        if complex_vec.len() % original_fft_half != 0 {
+            eprintln!(
+                "#ERROR: 読み込んだデータ長 ({}) が FFT チャンネル数 ({}) の整数倍ではありません。",
+                complex_vec.len(),
+                original_fft_half
+            );
+            break;
+        }
+
+        let actual_length = (complex_vec.len() / original_fft_half) as i32;
+        if actual_length == 0 {
+            eprintln!(
+                "#INFO: skip/length の指定により読み取れるセクターが残っていないため、処理を終了します。"
+            );
+            break;
+        }
+
+        if effective_fft_point != header.fft_point {
+            let target_fft_half = (effective_fft_point / 2) as usize;
+            complex_vec = rebin_complex_rows(
+                &complex_vec,
+                actual_length as usize,
+                original_fft_half,
+                target_fft_half,
+            );
+        }
+
+        let fft_point_half_used = (effective_fft_point / 2) as usize;
+        if complex_vec.len() != actual_length as usize * fft_point_half_used {
+            eprintln!(
+                "#ERROR: FFT リビン処理後のデータ長 ({}) が期待値 ({}) と一致しません。",
+                complex_vec.len(),
+                actual_length as usize * fft_point_half_used
+            );
+            break;
+        }
+
+        let current_length = actual_length;
 
         let is_flagged = time_flag_ranges
             .iter()
@@ -215,14 +358,27 @@ pub fn process_cor_file(
             continue;
         }
 
-        let (analysis_results, freq_rate_array, delay_rate_2d_data_comp) = match args
-            .search
-            .as_deref()
+        let (delay_correct_to_use, rate_correct_to_use) =
+            if let Some(corrections) = &scan_corrections {
+                if let Some((delay, rate)) =
+                    scan_correct::find_correction_for_time(corrections, &current_obs_time)
+                {
+                    (delay, rate)
+                } else {
+                    (args.delay_correct, args.rate_correct)
+                }
+            } else {
+                (args.delay_correct, args.rate_correct)
+            };
+
+        let primary_search_mode = args.primary_search_mode();
+
+        let (analysis_results, freq_rate_array, delay_rate_2d_data_comp) = match primary_search_mode
         {
             Some("deep") => {
-                let deep_search_result = deep_search::run_deep_search(
+                let mut deep_search_result = deep_search::run_deep_search(
                     &complex_vec,
-                    &header,
+                    &processing_header,
                     current_length,
                     effective_integ_time,
                     &current_obs_time,
@@ -233,6 +389,12 @@ pub fn process_cor_file(
                     pp,
                     args.cpu,
                 )?;
+                deep_search_result.analysis_results.residual_delay -= args.delay_correct;
+                deep_search_result.analysis_results.residual_rate -= args.rate_correct;
+                deep_search_result.analysis_results.corrected_delay =
+                    args.delay_correct + deep_search_result.analysis_results.residual_delay;
+                deep_search_result.analysis_results.corrected_rate =
+                    args.rate_correct + deep_search_result.analysis_results.residual_rate;
                 (
                     deep_search_result.analysis_results,
                     deep_search_result.freq_rate_array,
@@ -242,57 +404,15 @@ pub fn process_cor_file(
             Some("peak") => {
                 let mut total_delay_correct = args.delay_correct;
                 let mut total_rate_correct = args.rate_correct;
-                let mut analysis_results_mut = None;
-                let mut freq_rate_array_mut = None;
-                let mut delay_rate_2d_data_comp_mut = None;
 
                 for _ in 0..args.iter {
-                    let (iter_results, iter_freq_rate_array, iter_delay_rate_2d_data_comp) =
-                        run_analysis_pipeline(
-                            &complex_vec,
-                            &header,
-                            args,
-                            Some("peak"),
-                            total_delay_correct,
-                            total_rate_correct,
-                            args.acel_correct,
-                            current_length,
-                            effective_integ_time,
-                            &current_obs_time,
-                            &obs_time,
-                            &rfi_ranges,
-                            &bandpass_data,
-                        )?;
-                    total_delay_correct += iter_results.delay_offset;
-                    total_rate_correct += iter_results.rate_offset;
-                    analysis_results_mut = Some(iter_results);
-                    freq_rate_array_mut = Some(iter_freq_rate_array);
-                    delay_rate_2d_data_comp_mut = Some(iter_delay_rate_2d_data_comp);
-                }
-
-                let mut final_analysis_results = analysis_results_mut.unwrap();
-                final_analysis_results.length_f32 = current_length as f32 * effective_integ_time;
-                final_analysis_results.residual_delay = total_delay_correct;
-                final_analysis_results.residual_rate = total_rate_correct;
-                final_analysis_results.corrected_delay = args.delay_correct;
-                final_analysis_results.corrected_rate = args.rate_correct;
-                final_analysis_results.corrected_acel = args.acel_correct;
-                (
-                    final_analysis_results,
-                    freq_rate_array_mut.unwrap(),
-                    delay_rate_2d_data_comp_mut.unwrap(),
-                )
-            }
-            _ => {
-                // No search or other modes not handled here
-                let (mut analysis_results, freq_rate_array, delay_rate_2d_data_comp) =
-                    run_analysis_pipeline(
+                    let (iter_results, _, _) = run_analysis_pipeline(
                         &complex_vec,
-                        &header,
+                        &processing_header,
                         args,
-                        None,
-                        args.delay_correct,
-                        args.rate_correct,
+                        Some("peak"),
+                        total_delay_correct,
+                        total_rate_correct,
                         args.acel_correct,
                         current_length,
                         effective_integ_time,
@@ -300,6 +420,60 @@ pub fn process_cor_file(
                         &obs_time,
                         &rfi_ranges,
                         &bandpass_data,
+                        effective_fft_point,
+                    )?;
+                    total_delay_correct += iter_results.delay_offset;
+                    total_rate_correct += iter_results.rate_offset;
+                }
+
+                let (mut final_analysis_results, final_freq_rate_array, final_delay_rate_array) =
+                    run_analysis_pipeline(
+                        &complex_vec,
+                        &processing_header,
+                        args,
+                        Some("peak"),
+                        total_delay_correct,
+                        total_rate_correct,
+                        args.acel_correct,
+                        current_length,
+                        effective_integ_time,
+                        &current_obs_time,
+                        &obs_time,
+                        &rfi_ranges,
+                        &bandpass_data,
+                        effective_fft_point,
+                    )?;
+
+                final_analysis_results.length_f32 = current_length as f32 * effective_integ_time;
+                final_analysis_results.corrected_delay = total_delay_correct;
+                final_analysis_results.corrected_rate = total_rate_correct;
+                final_analysis_results.corrected_acel = args.acel_correct;
+                final_analysis_results.residual_delay = total_delay_correct - args.delay_correct;
+                final_analysis_results.residual_rate = total_rate_correct - args.rate_correct;
+                (
+                    final_analysis_results,
+                    final_freq_rate_array,
+                    final_delay_rate_array,
+                )
+            }
+            _ => {
+                // No search or other modes not handled here
+                let (mut analysis_results, freq_rate_array, delay_rate_2d_data_comp) =
+                    run_analysis_pipeline(
+                        &complex_vec,
+                        &processing_header,
+                        args,
+                        None,
+                        delay_correct_to_use,
+                        rate_correct_to_use,
+                        args.acel_correct,
+                        current_length,
+                        effective_integ_time,
+                        &current_obs_time,
+                        &obs_time,
+                        &rfi_ranges,
+                        &bandpass_data,
+                        effective_fft_point,
                     )?;
                 analysis_results.length_f32 = (current_length as f32 * effective_integ_time).ceil();
                 (analysis_results, freq_rate_array, delay_rate_2d_data_comp)
@@ -308,7 +482,7 @@ pub fn process_cor_file(
 
         let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
         let base_filename = generate_output_names(
-            &header,
+            &processing_header,
             &current_obs_time,
             &label_str,
             !rfi_ranges.is_empty(),
@@ -323,7 +497,7 @@ pub fn process_cor_file(
                 write_complex_spectrum_binary(
                     &output_file_path,
                     &analysis_results.freq_rate_spectrum.to_vec(),
-                    header.fft_point,
+                    effective_fft_point,
                     1,
                 )?;
                 println!(
@@ -339,7 +513,7 @@ pub fn process_cor_file(
                 write_complex_spectrum_binary(
                     &output_file_path,
                     &analysis_results.freq_rate_spectrum.to_vec(),
-                    header.fft_point,
+                    effective_fft_point,
                     0,
                 )?;
                 println!("Bandpass binary file written to {:?}", output_file_path);
@@ -351,7 +525,7 @@ pub fn process_cor_file(
             fs::create_dir_all(&dynamic_spectrum_dir)?;
             let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
             let base_filename = generate_output_names(
-                &header,
+                &processing_header,
                 &current_obs_time,
                 &label_str,
                 !rfi_ranges.is_empty(),
@@ -359,7 +533,7 @@ pub fn process_cor_file(
                 args.bandpass.is_some(),
                 current_length,
             );
-            let fft_point_half = (header.fft_point / 2) as usize;
+            let fft_point_half = (effective_fft_point / 2) as usize;
             let time_samples = complex_vec.len() / fft_point_half;
             let spectrum_array =
                 Array::from_shape_vec((time_samples, fft_point_half), complex_vec.clone()).unwrap();
@@ -368,13 +542,13 @@ pub fn process_cor_file(
             plot_dynamic_spectrum_freq(
                 output_path_freq.to_str().unwrap(),
                 &spectrum_array,
-                &header,
+                &processing_header,
                 &current_obs_time,
                 current_length,
                 effective_integ_time,
             )?;
-            let mut lag_data = Array::zeros((time_samples, header.fft_point as usize));
-            let fft_point_usize = header.fft_point as usize;
+            let mut lag_data = Array::zeros((time_samples, effective_fft_point as usize));
+            let fft_point_usize = effective_fft_point as usize;
             for (i, row) in spectrum_array.rows().into_iter().enumerate() {
                 let shifted_out =
                     fft::perform_ifft_on_vec(row.as_slice().unwrap(), fft_point_usize);
@@ -387,7 +561,7 @@ pub fn process_cor_file(
             plot_dynamic_spectrum_lag(
                 output_path_lag.to_str().unwrap(),
                 &lag_data,
-                &header,
+                &processing_header,
                 &current_obs_time,
                 current_length,
                 effective_integ_time,
@@ -397,13 +571,10 @@ pub fn process_cor_file(
         if !args.frequency {
             let delay_output_line = format_delay_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
-                let header_str = "".to_string() 
-                    + "#*****************************************************************************************************************************************************************************************
-"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD    
-"
-                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]              
-"
+                let header_str = "".to_string()
+                    + "#*****************************************************************************************************************************************************************************************\n"
+                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD\n"
+                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]\n"
                     + "#*****************************************************************************************************************************************************************************************";
                 print!("{}\n", header_str);
                 delay_output_str += &format!("{}\n", header_str);
@@ -764,7 +935,7 @@ pub fn process_cor_file(
     }
 
     Ok(ProcessResult {
-        header,
+        header: processing_header,
         label,
         obs_time,
         length_arg: length,
@@ -780,7 +951,7 @@ pub fn process_cor_file(
     })
 }
 
-fn run_analysis_pipeline(
+pub(crate) fn run_analysis_pipeline(
     complex_vec: &[C32],
     header: &CorHeader,
     base_args: &Args,
@@ -794,16 +965,60 @@ fn run_analysis_pipeline(
     obs_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
     bandpass_data: &Option<Vec<C32>>,
+    effective_fft_point: i32,
 ) -> Result<(AnalysisResults, Array2<C32>, Array2<C32>), Box<dyn Error>> {
     let mut temp_args = base_args.clone();
     temp_args.delay_correct = delay_correct;
     temp_args.rate_correct = rate_correct;
     temp_args.acel_correct = acel_correct;
+    temp_args.search = search_mode
+        .map(|mode| vec![mode.to_string()])
+        .unwrap_or_default();
+
+    let mut effective_fft_point = effective_fft_point;
+    if effective_fft_point <= 0 {
+        if current_length <= 0 {
+            return Err("セクター長が 0 以下です".into());
+        }
+        let rows = current_length as usize;
+        if rows == 0 || complex_vec.len() % rows != 0 {
+            return Err(format!(
+                "複素データ長 ({}) がセクター数 ({}) の整数倍ではありません。",
+                complex_vec.len(),
+                rows
+            )
+            .into());
+        }
+        let fft_half = complex_vec.len() / rows;
+        effective_fft_point = (fft_half * 2) as i32;
+    }
+
+    let fft_point_half = (effective_fft_point / 2) as usize;
+    if fft_point_half == 0 {
+        return Err("effective FFT point が不正（0）です".into());
+    }
+    if complex_vec.len() % fft_point_half != 0 {
+        return Err(format!(
+            "複素データ長 ({}) が FFT チャンネル数 ({}) の整数倍ではありません。",
+            complex_vec.len(),
+            fft_point_half
+        )
+        .into());
+    }
+
+    if current_length > 0 && complex_vec.len() / fft_point_half != current_length as usize {
+        return Err(format!(
+            "与えられたセクター数 ({}) とデータから導かれる値 ({}) が一致しません。",
+            current_length,
+            complex_vec.len() / fft_point_half
+        )
+        .into());
+    }
 
     let corrected_complex_vec =
         if delay_correct != 0.0 || rate_correct != 0.0 || acel_correct != 0.0 {
             let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
-                .chunks(header.fft_point as usize / 2)
+                .chunks(fft_point_half)
                 .map(|chunk| {
                     chunk
                         .iter()
@@ -819,7 +1034,7 @@ fn run_analysis_pipeline(
                 acel_correct,
                 effective_integ_time,
                 header.sampling_speed as u32,
-                header.fft_point as u32,
+                effective_fft_point as u32,
                 start_time_offset_sec,
             );
             corrected_complex_vec_2d
@@ -834,7 +1049,7 @@ fn run_analysis_pipeline(
     let (mut freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
         current_length,
-        header.fft_point,
+        effective_fft_point,
         header.sampling_speed,
         rfi_ranges,
         base_args.rate_padding,
@@ -844,7 +1059,8 @@ fn run_analysis_pipeline(
         apply_bandpass_correction(&mut freq_rate_array, bp_data);
     }
 
-    let delay_rate_2d_data_comp = process_ifft(&freq_rate_array, header.fft_point, padding_length);
+    let delay_rate_2d_data_comp =
+        process_ifft(&freq_rate_array, effective_fft_point, padding_length);
 
     let analysis_results = analyze_results(
         &freq_rate_array,

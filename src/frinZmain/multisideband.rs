@@ -277,7 +277,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let c_band_temp_args = Args {
         delay_correct: 0.0,
         rate_correct: 0.0,
-        search: None,
+        search: Vec::new(),
         ..args.clone()
     };
 
@@ -315,7 +315,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let x_band_temp_args = Args {
         delay_correct: 0.0,
         rate_correct: 0.0,
-        search: None,
+        search: Vec::new(),
         ..args.clone()
     };
 
@@ -349,7 +349,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         .iter()
         .map(|c| safe_arg(&c).to_degrees())
         .collect();
-    unwrap_phase(&mut c_band_phases_deg);
+    unwrap_phase(&mut c_band_phases_deg, false);
     let avg_c_phase = {
         let non_zero_phases: Vec<f64> = c_band_phases_deg
             .iter()
@@ -368,7 +368,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         .iter()
         .map(|c| safe_arg(c).to_degrees())
         .collect();
-    unwrap_phase(&mut x_band_phases_deg);
+    unwrap_phase(&mut x_band_phases_deg, false);
     let avg_x_phase = {
         let non_zero_phases: Vec<f64> = x_band_phases_deg
             .iter()

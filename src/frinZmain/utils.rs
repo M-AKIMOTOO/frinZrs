@@ -116,7 +116,7 @@ pub fn mjd_cal(time: DateTime<Utc>) -> f64 {
     julian_day - 2400000.5
 }
 
-pub fn unwrap_phase(phases: &mut [f32]) {
+pub fn unwrap_phase(phases: &mut [f32], radians: bool) {
     if phases.len() < 2 {
         return;
     }
@@ -126,30 +126,18 @@ pub fn unwrap_phase(phases: &mut [f32]) {
     for i in 1..phases.len() {
         let original_current = phases[i];
         let diff = original_current - original_prev;
-        if diff > 180.0 {
-            offset -= 360.0;
-        } else if diff < -180.0 {
-            offset += 360.0;
-        }
-        phases[i] += offset;
-        original_prev = original_current;
-    }
-}
-
-pub fn unwrap_phase_radians(phases: &mut [f32]) {
-    if phases.len() < 2 {
-        return;
-    }
-    let mut offset = 0.0;
-    let mut original_prev = phases[0];
-
-    for i in 1..phases.len() {
-        let original_current = phases[i];
-        let diff = original_current - original_prev;
-        if diff > std::f32::consts::PI {
-            offset -= 2.0 * std::f32::consts::PI;
-        } else if diff < -std::f32::consts::PI {
-            offset += 2.0 * std::f32::consts::PI;
+        if radians {
+            if diff > std::f32::consts::PI {
+                offset -= 2.0 * std::f32::consts::PI;
+            } else if diff < -std::f32::consts::PI {
+                offset += 2.0 * std::f32::consts::PI;
+            }
+        } else {
+            if diff > 180.0 {
+                offset -= 360.0;
+            } else if diff < -180.0 {
+                offset += 360.0;
+            }
         }
         phases[i] += offset;
         original_prev = original_current;

@@ -198,6 +198,10 @@ struct Cli {
     /// Two or more input .cor files to concatenate
     #[arg(long, required = true, num_args = 2..)]
     cor: Vec<PathBuf>,
+
+    /// Interactively select files to skip from the provided list
+    #[arg(long)]
+    skip: bool,
 }
 
 /// ファイルが指定されたソース名を持つかチェックする
@@ -379,10 +383,15 @@ fn generate_output_filename(input_files: &[PathBuf]) -> Result<PathBuf, Box<dyn 
         "最初のファイル \"{:?}\" から3番目の要素（時刻）を取得できませんでした.",
         first_filename
     ))?;
-    let label = parts.get(LABEL_INDEX).ok_or(format!(
-        "最初のファイル \"{:?}\" から4番目の要素（ラベル）を取得できませんでした.",
-        first_filename
-    ))?;
+    let label = if parts.len() > LABEL_INDEX {
+        parts[LABEL_INDEX..].join("_")
+    } else {
+        return Err(format!(
+            "最初のファイル \"{:?}\" から4番目以降の要素（ラベル）を取得できませんでした.",
+            first_filename
+        )
+        .into());
+    };
 
     let output_filename_str = if input_files.len() > 1 {
         let last_filename = &input_files[input_files.len() - 1];
@@ -399,6 +408,95 @@ fn generate_output_filename(input_files: &[PathBuf]) -> Result<PathBuf, Box<dyn 
     };
 
     Ok(PathBuf::from(output_filename_str))
+}
+
+/// --skip オプション指定時の対話的なスキップ処理
+fn apply_manual_skips(input_files: &mut Vec<PathBuf>) -> Result<bool, Box<dyn Error>> {
+    if input_files.is_empty() {
+        println!("情報: --skip を指定しましたが, 入力ファイルがありません.");
+        return Ok(false);
+    }
+
+    println!(
+        "\n--skip オプション: スキップするファイルの番号を入力してください (Enter で全て処理)"
+    );
+    for (index, path) in input_files.iter().enumerate() {
+        println!("  [{}] {:?}", index + 1, path);
+    }
+
+    print!("スキップする番号 (空行でスキップなし): ");
+    io::stdout().flush()?;
+
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    let mut skip_indices: Vec<usize> = line
+        .split(|c: char| c.is_ascii_whitespace() || c == ',')
+        .filter_map(|token| {
+            if token.is_empty() {
+                return None;
+            }
+            match token.parse::<usize>() {
+                Ok(value) if value >= 1 && value <= input_files.len() => Some(value - 1),
+                Ok(value) => {
+                    println!(
+                        "警告: 入力値 {} は 1..={} の範囲外のため無視します.",
+                        value,
+                        input_files.len()
+                    );
+                    None
+                }
+                Err(_) => {
+                    println!(
+                        "警告: \"{}\" は数値として解釈できません. 無視します.",
+                        token
+                    );
+                    None
+                }
+            }
+        })
+        .collect();
+
+    if skip_indices.is_empty() {
+        println!("情報: スキップ対象は選択されませんでした.");
+    } else {
+        skip_indices.sort_unstable();
+        skip_indices.dedup();
+
+        let mut skipped_files = Vec::new();
+        for &idx in skip_indices.iter().rev() {
+            let removed = input_files.remove(idx);
+            skipped_files.push(removed);
+        }
+        skipped_files.reverse();
+
+        println!("\nスキップ対象ファイル:");
+        for path in &skipped_files {
+            println!("  {:?}", path);
+        }
+    }
+
+    if input_files.is_empty() {
+        println!("警告: 全てのファイルがスキップされました. 処理を中止します.");
+        return Ok(false);
+    }
+
+    println!("\n結合予定ファイル:");
+    for path in input_files.iter() {
+        println!("  {:?}", path);
+    }
+
+    print!("このリストで処理を続行しますか? [y/N]: ");
+    io::stdout().flush()?;
+
+    let mut confirm = String::new();
+    io::stdin().read_line(&mut confirm)?;
+    let confirm = confirm.trim().to_lowercase();
+    if confirm == "y" || confirm == "yes" {
+        Ok(true)
+    } else {
+        println!("情報: ユーザー入力により処理をキャンセルしました.");
+        Ok(false)
+    }
 }
 
 /// ファイルの内容を別のファイルにコピーする
@@ -428,6 +526,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // argv[1]からソート対象とする
     let mut input_files = cli.cor;
     input_files.sort();
+
+    if cli.skip {
+        if !apply_manual_skips(&mut input_files)? {
+            return Ok(());
+        }
+    }
 
     // フィルタリング処理
     println!(

@@ -8,6 +8,7 @@ use std::process::exit;
 use chrono::{DateTime, Utc};
 use clap::{CommandFactory, Parser};
 use num_complex::Complex;
+use std::f64::consts::PI;
 use std::path::Path;
 
 mod acel_search;
@@ -21,6 +22,7 @@ mod fitting;
 mod fringe_rate_map;
 mod header;
 
+mod earth_rotation_imaging;
 mod logo;
 mod maser;
 mod multisideband;
@@ -33,6 +35,7 @@ mod processing;
 mod raw_visibility;
 mod read;
 mod rfi;
+mod scan_correct;
 mod single_file;
 mod uptimeplot;
 mod utils;
@@ -40,6 +43,9 @@ mod uv_plot;
 
 use crate::acel_search::run_acel_search_analysis;
 use crate::args::Args;
+use crate::earth_rotation_imaging::{
+    parse_imaging_cli_options, perform_imaging, run_earth_rotation_imaging, Visibility,
+};
 use crate::fringe_rate_map::run_fringe_rate_map_analysis;
 use crate::maser::run_maser_analysis;
 use crate::multisideband::run_multisideband_analysis;
@@ -76,6 +82,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
+    if args.scan_correct.is_some() {
+        if !args.search.is_empty() {
+            eprintln!("Error: --scan-correct cannot be used with --search.");
+            exit(1);
+        }
+    }
+
     // シンプルな仕様: --cumulate が指定されたら rate_padding は常に 1 にする
     if args.cumulate != 0 {
         args.rate_padding = 1;
@@ -84,6 +97,68 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !args.rate_padding.is_power_of_two() {
         eprintln!("Error: --rate-padding must be a power of two.");
         exit(1);
+    }
+
+    if args.imaging_test {
+        println!("Running Earth-rotation synthesis imaging test...");
+
+        // --- Create Sample Visibility Data ---
+        // Simulate a point source at (l, m) = (5.0e-5, 0.0) radians
+        // V(u,v) = 1.0 * exp(-2*pi*i * (u*l + v*m))
+        // Since m=0, V(u,v) = cos(2*pi*u*l) - i*sin(2*pi*u*l)
+        let mut vis_data: Vec<Visibility> = Vec::new();
+        let l0 = 5.0e-5; // offset in l-direction
+        let num_points = 100;
+        let max_uv = 5000.0; // 5k wavelengths
+
+        for i in 0..num_points {
+            let angle = (i as f64 / num_points as f64) * 2.0 * PI; // Simulate Earth rotation
+            let u = max_uv * angle.cos();
+            let v = max_uv * angle.sin();
+
+            let phase = -2.0 * PI * u * l0;
+            let real = phase.cos();
+            let imag = phase.sin();
+
+            vis_data.push(Visibility {
+                u,
+                v,
+                w: 0.0,
+                real,
+                imag,
+                weight: 1.0,
+                time: i as f64,
+            });
+        }
+
+        // --- Set Imaging Parameters ---
+        let image_size = 256; // 256x256 pixels
+        let cell_size = 0.1; // 0.1 arcsec/pixel
+
+        // --- Perform Imaging ---
+        match perform_imaging(&vis_data, image_size, cell_size) {
+            Ok(dirty_image) => {
+                println!(
+                    "Imaging successful! Dirty image size: {}x{}",
+                    image_size, image_size
+                );
+                // For verification, let's print a small center patch of the image
+                println!("Center 5x5 patch of the dirty image (real part):");
+                let center = image_size / 2;
+                for r in (center - 2)..=(center + 2) {
+                    for c in (center - 2)..=(center + 2) {
+                        let index = r * image_size + c;
+                        print!("{:8.4} ", dirty_image[index]);
+                    }
+                    println!();
+                }
+            }
+            Err(e) => {
+                eprintln!("Error during imaging: {}", e);
+                exit(1);
+            }
+        }
+        return Ok(());
     }
 
     if args.cor2bin {
@@ -327,7 +402,28 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    if args.fringe_rate_map {
+    if let Some(imaging_tokens) = args.imaging.as_ref() {
+        if args.input.is_none() {
+            eprintln!("Error: --imaging requires an --input file.");
+            exit(1);
+        }
+        let imaging_cli = match parse_imaging_cli_options(imaging_tokens) {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                eprintln!("Error parsing --imaging option: {}", err);
+                exit(1);
+            }
+        };
+        if let Err(e) =
+            run_earth_rotation_imaging(&args, &imaging_cli, &time_flag_ranges, &pp_flag_ranges)
+        {
+            eprintln!("Error during Earth-rotation imaging: {}", e);
+            exit(1);
+        }
+        return Ok(());
+    }
+
+    if let Some(_) = args.fringe_rate_map {
         if let Some(input_path) = &args.input {
             if !check_memory_usage(&args, input_path)? {
                 exit(0);
@@ -349,34 +445,43 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // --- Argument Validation & Dispatch ---
-    if let Some(search_mode) = &args.search {
-        if search_mode == "acel" || search_mode == "rate" {
-            if let Some(input_path) = &args.input {
-                if !check_memory_usage(&args, input_path)? {
-                    exit(0);
-                }
+    let has_rate_search = args.search.iter().any(|mode| mode == "rate");
+    let has_acel_search = args.search.iter().any(|mode| mode == "acel");
+    let acel_only = !args.search.is_empty()
+        && args
+            .search
+            .iter()
+            .all(|mode| mode == "acel" || mode == "rate");
+
+    if acel_only {
+        if let Some(input_path) = &args.input {
+            if !check_memory_usage(&args, input_path)? {
+                exit(0);
             }
-            if args.input.is_none() {
-                eprintln!("Error: --search={} requires an --input file.", search_mode);
-                exit(1);
-            }
-            if args.length == 0 {
-                eprintln!(
-                    "Warning: --search={} is used, but --length is not specified. This is required for the analysis.",
-                    search_mode
-                );
-                exit(1);
-            }
-            if args.loop_ == 1 {
-                eprintln!("Warning: --search={} is used, but --loop is not specified or is 1. Multiple loops are usually needed for fitting.", search_mode);
-            }
-            let degrees = if search_mode == "rate" {
-                vec![1]
-            } else {
-                vec![2]
-            };
-            return run_acel_search_analysis(&args, &degrees, &time_flag_ranges, &pp_flag_ranges);
         }
+        if args.input.is_none() {
+            eprintln!("Error: --search with only 'acel'/'rate' requires an --input file.");
+            exit(1);
+        }
+        if args.length == 0 {
+            eprintln!(
+                "Warning: --search=acel/rate is used without --length. This is required for the analysis."
+            );
+            exit(1);
+        }
+        if args.loop_ == 1 {
+            eprintln!(
+                "Warning: --search=acel/rate is used, but --loop is not specified or is 1. Multiple loops are usually needed for fitting."
+            );
+        }
+        let mut degrees = Vec::new();
+        if has_rate_search {
+            degrees.push(1);
+        }
+        if has_acel_search {
+            degrees.push(2);
+        }
+        return run_acel_search_analysis(&args, &degrees, &time_flag_ranges, &pp_flag_ranges);
     }
 
     if args.input.is_some() && !args.phase_reference.is_empty() {
@@ -400,7 +505,30 @@ fn main() -> Result<(), Box<dyn Error>> {
         if !check_memory_usage(&args, input_path)? {
             exit(0);
         }
-        return run_single_file_analysis(&args, &time_flag_ranges, &pp_flag_ranges);
+        run_single_file_analysis(&args, &time_flag_ranges, &pp_flag_ranges)?;
+
+        if (has_acel_search || has_rate_search) && !acel_only {
+            if args.length == 0 {
+                eprintln!(
+                    "Warning: --search includes 'acel'/'rate' but --length is not specified. Skipping acceleration search."
+                );
+            } else {
+                if args.loop_ == 1 {
+                    eprintln!(
+                        "Warning: --search includes 'acel'/'rate' but --loop is 1. Results may be unreliable."
+                    );
+                }
+                let mut degrees = Vec::new();
+                if has_rate_search {
+                    degrees.push(1);
+                }
+                if has_acel_search {
+                    degrees.push(2);
+                }
+                run_acel_search_analysis(&args, &degrees, &time_flag_ranges, &pp_flag_ranges)?;
+            }
+        }
+        return Ok(());
     }
 
     // If we reach here, no primary mode was selected.

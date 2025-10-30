@@ -42,10 +42,32 @@ fn write_maser_log(path: &Path, lines: &[String]) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+fn fft_precision_digits(fft_point: i32) -> usize {
+    if fft_point <= 0 {
+        return 3;
+    }
+    let digits = ((fft_point as f64).log10().floor() as isize + 1).max(1) as usize;
+    digits.min(6)
+}
+
+fn format_with_precision(value: f64, digits: usize) -> String {
+    if digits == 0 {
+        format!("{:.0}", value)
+    } else {
+        format!("{:.*}", digits, value)
+    }
+}
+
+fn format_f32_precision(value: f64, digits: usize) -> String {
+    let digits = digits.min(6);
+    let value_f32 = value as f32;
+    format_with_precision(value_f32 as f64, digits)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MaserMode {
     Seg,
-    Integ,
+    Stacked,
     Both,
 }
 
@@ -55,17 +77,17 @@ impl MaserMode {
     }
 
     fn accumulate_integration(self) -> bool {
-        matches!(self, MaserMode::Integ | MaserMode::Both)
+        matches!(self, MaserMode::Stacked | MaserMode::Both)
     }
 
     fn print_segment_table(self) -> bool {
-        matches!(self, MaserMode::Seg | MaserMode::Integ | MaserMode::Both)
+        matches!(self, MaserMode::Seg | MaserMode::Stacked | MaserMode::Both)
     }
 
     fn as_str(self) -> &'static str {
         match self {
             MaserMode::Seg => "seg",
-            MaserMode::Integ => "integ",
+            MaserMode::Stacked => "stacked",
             MaserMode::Both => "both",
         }
     }
@@ -83,10 +105,10 @@ impl FromStr for MaserMode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
             "seg" => Ok(MaserMode::Seg),
-            "integ" | "integ-only" | "integration" => Ok(MaserMode::Integ),
+            "stacked" | "integ" | "integ-only" | "integration" => Ok(MaserMode::Stacked),
             "both" => Ok(MaserMode::Both),
             other => Err(format!(
-                "Unknown maser mode '{}'. Expected seg, integ, or both.",
+                "Unknown maser mode '{}'. Expected seg, stacked, or both.",
                 other
             )),
         }
@@ -422,11 +444,9 @@ impl IntegrationState {
             .map(|&v| v + mean_lsr)
             .collect();
         Some(IntegrationResult {
-            base_freq_axis_mhz: self.base_freq_axis_mhz.clone(),
             velocity_axis_kms,
             frequency_axis_mhz: self.base_freq_axis_mhz.clone(),
             averaged_spec: averaged,
-            weights: self.weights.clone(),
             segment_count: self.segments,
             freq_resolution_mhz: self.freq_resolution_mhz,
             channel_width_kms: self.channel_width_kms,
@@ -437,11 +457,9 @@ impl IntegrationState {
 }
 
 struct IntegrationResult {
-    base_freq_axis_mhz: Vec<f64>,
     velocity_axis_kms: Vec<f64>,
     frequency_axis_mhz: Vec<f64>,
     averaged_spec: Vec<f32>,
-    weights: Vec<f64>,
     segment_count: usize,
     freq_resolution_mhz: f64,
     channel_width_kms: f64,
@@ -608,6 +626,8 @@ fn plot_maser_spectrum(
     sigma_est: f32,
     freq_resolution_mhz: f64,
     channel_width_kms: f64,
+    freq_precision: usize,
+    vel_precision: usize,
     gaussian_fit: Option<&[(f64, f32)]>,
     gaussian_params: Option<&[(f64, f64, f64)]>,
 ) -> Result<(), Box<dyn Error>> {
@@ -673,8 +693,14 @@ fn plot_maser_spectrum(
     let style = TextStyle::from(("sans-serif", 20)).color(&BLACK);
     let legend_lines = vec![
         format!("Antennas: {}", antenna_label),
-        format!("Peak Freq: {:.6} MHz", peak_freq),
-        format!("Peak Velocity: {:.3} km/s", peak_velocity),
+        format!(
+            "Peak Freq: {} MHz",
+            format_with_precision(peak_freq, freq_precision)
+        ),
+        format!(
+            "Peak Velocity: {} km/s",
+            format_with_precision(peak_velocity, vel_precision)
+        ),
         format!("Peak Value: {:.5}", peak_val),
         format!("Peak - Median: {:.5}", peak_val - median),
         format!("SNR (MAD): {:.3}", snr_mad),
@@ -682,8 +708,14 @@ fn plot_maser_spectrum(
         format!("Median: {:.5}", median),
         format!("MAD: {:.5}", mad),
         format!("stdev = MAD/0.6745 = {:.5}", sigma_est),
-        format!("Δf: {:.6} MHz", freq_resolution_mhz),
-        format!("Δv: {:.3} km/s", channel_width_kms),
+        format!(
+            "Δf: {} MHz",
+            format_with_precision(freq_resolution_mhz, freq_precision)
+        ),
+        format!(
+            "Δv: {} km/s",
+            format_with_precision(channel_width_kms, vel_precision)
+        ),
     ];
     let mut y_pos = 40;
     for line in legend_lines {
@@ -700,11 +732,11 @@ fn plot_maser_spectrum(
         y_pos += 25;
         for (idx, (amp, center, fwhm)) in params.iter().enumerate() {
             let text = format!(
-                "G{}: amp={:.4}, v={:.3} km/s, FWHM={:.3} km/s",
+                "G{}: amp={:.4}, v={} km/s, FWHM={} km/s",
                 idx + 1,
                 amp,
-                center,
-                fwhm
+                format_with_precision(*center, vel_precision),
+                format_with_precision(*fwhm, vel_precision)
             );
             root.draw(&Text::new(text, (800, y_pos), style.clone()))?;
             y_pos += 25;
@@ -722,6 +754,7 @@ fn plot_on_off_spectra(
     x_label: &str,
     peak_velocity: f64,
     antenna_label: &str,
+    vel_precision: usize,
 ) -> Result<(), Box<dyn Error>> {
     let root = BitMapBackend::new(output_path, (1200, 700)).into_drawing_area();
     root.fill(&WHITE)?;
@@ -788,7 +821,10 @@ fn plot_on_off_spectra(
     let style = TextStyle::from(("sans-serif", 20)).color(&BLACK);
     let legend_lines = vec![
         format!("Antennas: {}", antenna_label),
-        format!("Peak Velocity: {:.2} km/s", peak_velocity),
+        format!(
+            "Peak Velocity: {} km/s",
+            format_with_precision(peak_velocity, vel_precision)
+        ),
     ];
     let mut y_pos = 40;
     for line in legend_lines {
@@ -956,24 +992,30 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
     maser_logln!(log_lines, "  ON Source: {:?}", on_source_path);
     maser_logln!(log_lines, "  OFF Source: {:?}", off_source_path);
-    maser_logln!(log_lines, "  Rest Frequency: {} MHz", rest_freq_mhz);
+    maser_logln!(log_lines, "  Rest Frequency: {:.3} MHz", rest_freq_mhz);
     maser_logln!(log_lines, "  Frequency Correction Factor: {:.6}", corrfreq);
     maser_logln!(log_lines, "  Maser mode: {}", maser_mode.as_str());
     if let Some(v) = override_vlsr {
-        maser_logln!(log_lines, "  Override LSR Velocity Correction: {:.6} km/s", v);
+        maser_logln!(
+            log_lines,
+            "  Override LSR Velocity Correction: {:.6} km/s",
+            v
+        );
     }
     if let Some((start, end)) = user_band_range {
         maser_logln!(
             log_lines,
             "  Frequency window offsets: {:.3} MHz to {:.3} MHz relative to observing frequency",
-            start, end
+            start,
+            end
         );
     }
     if let Some((start, end)) = user_subt_range {
         maser_logln!(
             log_lines,
             "  Absolute frequency window: {:.3} MHz to {:.3} MHz",
-            start, end
+            start,
+            end
         );
     }
     if !gaussian_initial_components.is_empty() {
@@ -1008,20 +1050,15 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         1
     };
 
-    let off_full_segment = get_spectrum_segment(
-        &off_source_path,
-        args,
-        corrfreq,
-        0,
-        0,
-        &mut log_lines,
-    )?
-    .ok_or_else(|| {
-        format!(
-            "Off-source file {:?} contains no usable data for maser analysis.",
-            off_source_path
-        )
-    })?;
+    let off_full_segment =
+        get_spectrum_segment(&off_source_path, args, corrfreq, 0, 0, &mut log_lines)?.ok_or_else(
+            || {
+                format!(
+                    "Off-source file {:?} contains no usable data for maser analysis.",
+                    off_source_path
+                )
+            },
+        )?;
 
     loop {
         if chunk_length > 0 && loop_index >= loop_limit {
@@ -1065,6 +1102,9 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
     let header_on = &segments[0].0.header;
     let header_off = &segments[0].1.header;
+
+    let freq_precision = fft_precision_digits(header_on.fft_point);
+    let vel_precision = freq_precision;
 
     if header_on.fft_point != header_off.fft_point
         || header_on.observing_frequency.to_bits() != header_off.observing_frequency.to_bits()
@@ -1125,13 +1165,13 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let channel_width_kms = C_KM_S * freq_resolution_mhz / rest_freq_mhz;
     maser_logln!(
         log_lines,
-        "  Frequency Resolution: {:.6} MHz",
-        freq_resolution_mhz
+        "  Frequency Resolution: {} MHz",
+        format_with_precision(freq_resolution_mhz, freq_precision)
     );
     maser_logln!(
         log_lines,
-        "  Channel Width: {:.6} km/s",
-        channel_width_kms
+        "  Channel Width: {} km/s",
+        format_with_precision(channel_width_kms, vel_precision)
     );
     let station1_label = header_on.station1_name.trim().to_string();
     let station2_label = header_on.station2_name.trim().to_string();
@@ -1162,12 +1202,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         "(ON-OFF)"
     };
     if let Some(note) = normalization_note {
-        maser_logln!(
-            log_lines,
-            "  Normalization mode: {} [{}]",
-            norm_label,
-            note
-        );
+        maser_logln!(log_lines, "  Normalization mode: {} [{}]", norm_label, note);
     } else {
         maser_logln!(log_lines, "  Normalization mode: {}", norm_label);
     }
@@ -1253,6 +1288,8 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             on_stem,
             integration_state.as_mut(),
             write_segment_outputs,
+            freq_precision,
+            vel_precision,
             &mut log_lines,
         )?;
         summaries.push(summary);
@@ -1265,15 +1302,17 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             "    idx start_time_utc         seg_s lsr_km/s peak_freq_MHz peak_vlsr_km/s peak_val median   mad      peak_diff  snr_mad snr_std stdev"
         );
         for summary in &summaries {
+            let peak_freq_str = format_with_precision(summary.peak_freq_mhz, freq_precision);
+            let peak_vel_str = format_with_precision(summary.peak_velocity_kms, vel_precision);
             maser_logln!(
                 log_lines,
-                "    {:>3} {} {:>6.1} {:>9.3} {:>12.6} {:>13.3} {:>9.6} {:>8.6} {:>9.6} {:>11.6} {:>8.3} {:>8.3} {:>8.6}",
+                "    {:>3} {} {:>6.1} {:>9.3} {:>12} {:>13} {:>9.6} {:>8.6} {:>9.6} {:>11.6} {:>8.3} {:>8.3} {:>8.6}",
                 summary.index,
                 summary.start_time.format("%Y-%m-%d %H:%M:%S"),
                 summary.segment_seconds,
                 summary.lsr_average,
-                summary.peak_freq_mhz,
-                summary.peak_velocity_kms,
+                peak_freq_str,
+                peak_vel_str,
                 summary.peak_value,
                 summary.median,
                 summary.mad,
@@ -1326,14 +1365,16 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                 log_lines,
                 "    segs integ_s mean_lsr_km/s peak_freq_MHz peak_vlsr_km/s peak_val median   mad      peak_diff  snr_mad snr_std stdev"
             );
+            let stacked_peak_freq = format_with_precision(peak_freq_mhz, freq_precision);
+            let stacked_peak_vel = format_with_precision(peak_velocity_kms, vel_precision);
             maser_logln!(
                 log_lines,
-                "    {:>3} {:>8.1} {:>13.3} {:>12.6} {:>13.3} {:>9.6} {:>8.6} {:>9.6} {:>11.6} {:>8.3} {:>8.3} {:>8.6}",
+                "    {:>3} {:>8.1} {:>13.3} {:>12} {:>13} {:>9.6} {:>8.6} {:>9.6} {:>11.6} {:>8.3} {:>8.3} {:>8.6}",
                 integration.segment_count,
                 integration.total_segment_seconds,
                 integration.mean_lsr_corr,
-                peak_freq_mhz,
-                peak_velocity_kms,
+                stacked_peak_freq,
+                stacked_peak_vel,
                 peak_val,
                 median,
                 mad,
@@ -1347,60 +1388,29 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             let integ_tsv =
                 output_dir.join(format!("{}{}_maser_data.tsv", on_stem, stacked_suffix));
             let mut integ_file = File::create(&integ_tsv)?;
-            writeln!(integ_file, "# Stacked spectrum data")?;
             writeln!(
                 integ_file,
-                "# Segments: {}  TotalSeconds: {:.3}",
-                integration.segment_count, integration.total_segment_seconds
-            )?;
-            writeln!(
-                integ_file,
-                "# Mean LSR correction (km/s): {:.6}",
-                integration.mean_lsr_corr
-            )?;
-            writeln!(
-                integ_file,
-                "# Reference frequency (MHz): {:.6}",
-                integration
-                    .frequency_axis_mhz
-                    .first()
-                    .copied()
-                    .unwrap_or(0.0)
-            )?;
-            writeln!(
-                integ_file,
-                "# Observed base frequency (MHz): {:.6}",
-                integration
-                    .base_freq_axis_mhz
-                    .first()
-                    .copied()
-                    .unwrap_or(0.0)
-            )?;
-            writeln!(
-                integ_file,
-                "Frequency_Offset_MHz\tVelocity_km/s\tNormalized_Intensity\tWeight"
+                "# Frequency_Offset_MHz\tVelocity_km/s\tNormalized_Intensity"
             )?;
             let freq_reference = integration
                 .frequency_axis_mhz
                 .first()
                 .copied()
                 .unwrap_or(0.0);
-            for ((&freq, &vel), (&power, &weight)) in integration
+            for ((&freq, &vel), &power) in integration
                 .frequency_axis_mhz
                 .iter()
                 .zip(velocity_axis.iter())
-                .zip(
-                    integration
-                        .averaged_spec
-                        .iter()
-                        .zip(integration.weights.iter()),
-                )
+                .zip(integration.averaged_spec.iter())
             {
                 let freq_offset = freq - freq_reference;
+                let freq_offset_str = format_f32_precision(freq_offset, freq_precision);
+                let vel_str = format_f32_precision(vel, vel_precision);
+                let power_str = format!("{:.6}", power);
                 writeln!(
                     integ_file,
-                    "{:.9}\t{:.6}\t{:.9}\t{:.1}",
-                    freq_offset, vel, power, weight
+                    "{}\t{}\t{}",
+                    freq_offset_str, vel_str, power_str
                 )?;
             }
 
@@ -1436,6 +1446,8 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                 sigma_est,
                 integration.freq_resolution_mhz,
                 integration.channel_width_kms,
+                freq_precision,
+                vel_precision,
                 None,
                 None,
             )?;
@@ -1459,6 +1471,8 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                 sigma_est,
                 integration.freq_resolution_mhz,
                 integration.channel_width_kms,
+                freq_precision,
+                vel_precision,
                 None,
                 None,
             )?;
@@ -1491,6 +1505,8 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                     sigma_est,
                     integration.freq_resolution_mhz,
                     integration.channel_width_kms,
+                    freq_precision,
+                    vel_precision,
                     None,
                     None,
                 )?;
@@ -1530,6 +1546,8 @@ fn analyze_segment(
     on_stem: &str,
     integration_state: Option<&mut IntegrationState>,
     write_outputs: bool,
+    freq_precision: usize,
+    vel_precision: usize,
     log_lines: &mut Vec<String>,
 ) -> Result<SegmentSummary, Box<dyn Error>> {
     let mut lsr_vel_corr = compute_lsr_average(
@@ -1703,21 +1721,20 @@ fn analyze_segment(
     if write_outputs {
         let tsv_filename = output_dir.join(format!("{}{}_maser_data.tsv", on_stem, suffix));
         let mut file = File::create(&tsv_filename)?;
-        writeln!(file, "# Base Frequency (MHz): {}", base_freq_mhz)?;
-        writeln!(file, "# Segment LSR (km/s): {:.6}", lsr_vel_corr)?;
         writeln!(
             file,
-            "Frequency_Offset_MHz\tVelocity_km/s\tonsourc\toffsource"
+            "# Frequency_Offset_MHz\tVelocity_km/s\tonsourc\toffsource"
         )?;
         for (idx, &freq_mhz) in analysis_freq_mhz.iter().enumerate() {
             let freq_offset_mhz = freq_mhz - base_freq_mhz;
+            let freq_offset_str = format_f32_precision(freq_offset_mhz, freq_precision);
+            let vel_str = format_f32_precision(analysis_velocity_kms[idx], vel_precision);
+            let on_str = format!("{:.6}", analysis_spec_on[idx]);
+            let off_str = format!("{:.6}", analysis_spec_off[idx]);
             writeln!(
                 file,
                 "{}\t{}\t{}\t{}",
-                freq_offset_mhz,
-                analysis_velocity_kms[idx],
-                analysis_spec_on[idx],
-                analysis_spec_off[idx]
+                freq_offset_str, vel_str, on_str, off_str
             )?;
         }
 
@@ -1748,11 +1765,11 @@ fn analyze_segment(
             for (idx, (amp, center, fwhm)) in comps.iter().enumerate() {
                 writeln!(
                     fit_file,
-                    "G{}: {:.6}\t{:.6}\t{:.6}",
+                    "G{}: {:.6}\t{}\t{}",
                     idx + 1,
                     amp,
-                    center,
-                    fwhm
+                    format_with_precision(*center, vel_precision),
+                    format_with_precision(*fwhm, vel_precision)
                 )?;
             }
         }
@@ -1776,6 +1793,7 @@ fn analyze_segment(
             "Frequency [MHz]",
             peak_velocity_kms,
             antenna_label,
+            vel_precision,
         )?;
 
         let normalized_plot_data_freq: Vec<(f64, f32)> = analysis_freq_mhz
@@ -1802,6 +1820,8 @@ fn analyze_segment(
             sigma_est,
             freq_resolution_mhz,
             channel_width_kms,
+            freq_precision,
+            vel_precision,
             None,
             None,
         )?;
@@ -1830,6 +1850,8 @@ fn analyze_segment(
             sigma_est,
             freq_resolution_mhz,
             channel_width_kms,
+            freq_precision,
+            vel_precision,
             gaussian_fit_data_vel.as_ref().map(|v| v.as_slice()),
             gaussian_fit_components
                 .as_ref()
@@ -1874,6 +1896,8 @@ fn analyze_segment(
                 sigma_est,
                 freq_resolution_mhz,
                 channel_width_kms,
+                freq_precision,
+                vel_precision,
                 gaussian_fit_zoom.as_ref().map(|v| v.as_slice()),
                 gaussian_fit_components
                     .as_ref()

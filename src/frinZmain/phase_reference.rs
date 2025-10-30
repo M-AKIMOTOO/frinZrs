@@ -84,8 +84,8 @@ pub fn run_phase_reference_analysis(
         process_cor_file(&target_path, &target_args, time_flag_ranges, pp_flag_ranges)?;
 
     // --- Phase Unwrapping ---
-    utils::unwrap_phase(&mut cal_results.add_plot_phase);
-    utils::unwrap_phase(&mut target_results.add_plot_phase);
+    utils::unwrap_phase(&mut cal_results.add_plot_phase, false);
+    utils::unwrap_phase(&mut target_results.add_plot_phase, false);
 
     // Store original calibrator phases before fitting
     let original_cal_phases = cal_results.add_plot_phase.clone();

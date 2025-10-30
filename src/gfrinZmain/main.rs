@@ -1201,7 +1201,7 @@ fn main() -> anyhow::Result<()> {
                 &t0,
                 padding_length,
                 &args,
-                args.search.as_deref(),
+                args.primary_search_mode(),
             );
 
             let tau_s = analysis.residual_delay as f64 / e.header.sampling_speed as f64;
@@ -1646,7 +1646,7 @@ fn main() -> anyhow::Result<()> {
                 &t0,
                 padding_length,
                 &args,
-                args.search.as_deref(),
+                args.primary_search_mode(),
             );
 
             let mut tau_s = analysis.residual_delay as f64 / e.header.sampling_speed as f64;

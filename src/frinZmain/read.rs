@@ -28,6 +28,13 @@ pub fn read_visibility_data(
     let (actual_length_start, length_end) =
         calculate_sector_range(header, length, skip, loop_index, is_cumulate);
 
+    if actual_length_start >= length_end {
+        return Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            "skip/length の指定が利用可能なセクター数を超えています",
+        ));
+    }
+
     let num_sectors_to_read = (length_end - actual_length_start) as usize;
     let fft_point_half = (header.fft_point / 2) as usize;
     let mut complex_vec = Vec::with_capacity(num_sectors_to_read * fft_point_half);
@@ -112,6 +119,13 @@ pub fn read_sector_header(
     let (actual_length_start, length_end) =
         calculate_sector_range(header, length, skip, loop_index, is_cumulate);
 
+    if actual_length_start >= length_end {
+        return Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            "skip/length の指定が利用可能なセクター数を超えています",
+        ));
+    }
+
     let num_sectors_to_read = (length_end - actual_length_start) as usize;
     let mut sector_headers = Vec::with_capacity(num_sectors_to_read);
 
@@ -137,14 +151,34 @@ fn calculate_sector_range(
     loop_index: i32,
     is_cumulate: bool,
 ) -> (i32, i32) {
-    let (start, end) = if is_cumulate {
-        (0, length)
+    let total_sectors = header.number_of_sector;
+
+    let mut start = if is_cumulate {
+        0
     } else {
-        let start = skip + length * loop_index;
-        let end = start + length;
-        (start, end)
+        skip.saturating_add(length.saturating_mul(loop_index))
+            .clamp(i32::MIN, total_sectors)
     };
 
-    let end = end.min(header.number_of_sector);
+    if start < 0 {
+        start = 0;
+    } else if start > total_sectors {
+        start = total_sectors;
+    }
+
+    let mut end = if is_cumulate {
+        length
+    } else {
+        start.saturating_add(length)
+    };
+
+    if end > total_sectors {
+        end = total_sectors;
+    }
+
+    if end < start {
+        end = start;
+    }
+
     (start, end)
 }

@@ -516,6 +516,8 @@ pub fn frequency_plane(
     Ok(())
 }
 
+use crate::utils;
+
 pub fn add_plot(
     output_path: &str,
     length: &[f32],
@@ -529,13 +531,22 @@ pub fn add_plot(
     len_val: i32,
     obs_start_time: &DateTime<Utc>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut phase_unwrapped = phase.to_vec();
+    utils::unwrap_phase(&mut phase_unwrapped, false);
+    let phase_unwrapped_slice: &[f32] = phase_unwrapped.as_slice();
+
     let plots = vec![
         (amp, "Amplitude [%]", "amp"),
         (snr, "SNR", "snr"),
         (phase, "Phase [deg]", "phase"),
+        (
+            phase_unwrapped_slice,
+            "Phase (unwrapped) [deg]",
+            "phase_unwrapped",
+        ),
         (noise, "Noise Level [%]", "noise"),
-        (res_delay, "Residual Delay [sample]", "res_delay"),
-        (res_rate, "Residual Rate [Hz]", "res_rate"),
+        (res_delay, "Residual Delay [sample]", "resdelay"),
+        (res_rate, "Residual Rate [Hz]", "resrate"),
     ];
 
     for (data, y_label, filename_suffix) in plots {
@@ -589,9 +600,9 @@ pub fn add_plot(
                     format!("{:.0}", v)
                 } else if filename_suffix == "snr" {
                     format!("{:.0}", v)
-                } else if filename_suffix == "res_delay" {
+                } else if filename_suffix == "resdelay" {
                     format!("{:.3}", v)
-                } else if filename_suffix == "res_rate" {
+                } else if filename_suffix == "resrate" {
                     format!("{:.2e}", v)
                 } else {
                     format!("{:.1e}", v)
@@ -891,75 +902,114 @@ pub fn plot_allan_deviation(
     Ok(())
 }
 
-pub fn plot_acel_search_result(
-    input_file_path: &str,
-    output_file_path: &str,
+pub fn plot_acel_search_result<P: AsRef<Path>>(
+    output_path: P,
+    times: &[f64],
+    observed: &[f64],
+    fitted: Option<&[f64]>,
+    residuals: Option<&[f64]>,
+    title: &str,
+    y_label: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
-
-    let file = File::open(input_file_path)?;
-    let reader = BufReader::new(file);
-
-    let mut data = Vec::new();
-    for line in reader.lines() {
-        let line = line?;
-        if line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() == 2 {
-            let time: f64 = parts[0].parse()?;
-            let phase: f64 = parts[1].parse()?;
-            data.push((time, phase));
-        }
-    }
-
-    if data.is_empty() {
-        println!("Warning: No data to plot in {}.", input_file_path);
+    if times.is_empty() || observed.is_empty() {
+        println!("Warning: No data to plot for {}.", title);
         return Ok(());
     }
+    let mut min_time = f64::INFINITY;
+    let mut max_time = f64::NEG_INFINITY;
+    let mut min_val = f64::INFINITY;
+    let mut max_val = f64::NEG_INFINITY;
 
-    // Determine min/max for axes
-    let (min_time, max_time) = data.iter().fold(
-        (f64::INFINITY, f64::NEG_INFINITY),
-        |(min_t, max_t), (t, _)| (min_t.min(*t), max_t.max(*t)),
-    );
-    let (min_phase, max_phase) = data.iter().fold(
-        (f64::INFINITY, f64::NEG_INFINITY),
-        |(min_p, max_p), (_, p)| (min_p.min(*p), max_p.max(*p)),
-    );
+    for (&t, &y) in times.iter().zip(observed.iter()) {
+        min_time = min_time.min(t);
+        max_time = max_time.max(t);
+        min_val = min_val.min(y as f64);
+        max_val = max_val.max(y as f64);
+    }
 
-    let root = BitMapBackend::new(output_file_path, (900, 600)).into_drawing_area();
+    if let Some(fit) = fitted {
+        for &y in fit {
+            min_val = min_val.min(y as f64);
+            max_val = max_val.max(y as f64);
+        }
+    }
+
+    if let Some(res) = residuals {
+        for &y in res {
+            min_val = min_val.min(y as f64);
+            max_val = max_val.max(y as f64);
+        }
+    }
+
+    if (max_time - min_time).abs() < f64::EPSILON {
+        max_time = min_time + 1.0;
+    }
+    if (max_val - min_val).abs() < f64::EPSILON {
+        max_val += 1.0;
+        min_val -= 1.0;
+    }
+
+    let root = BitMapBackend::new(output_path.as_ref(), (900, 600)).into_drawing_area();
     root.fill(&WHITE)?;
 
     let mut chart = ChartBuilder::on(&root)
-        .caption(
-            "Acel Search Result: Time vs Phase",
-            ("sans-serif", 25).into_font(),
-        )
+        .caption(title, ("sans-serif", 25).into_font())
         .margin(10)
         .x_label_area_size(60)
         .y_label_area_size(100)
-        .build_cartesian_2d(min_time..max_time, min_phase..max_phase)?;
+        .build_cartesian_2d(min_time..max_time, min_val..max_val)?;
 
     chart
         .configure_mesh()
         .x_desc("Time [s]")
-        .y_desc("Unwarnpped Phase [rad]")
+        .y_desc(y_label)
         .x_label_formatter(&|v| format!("{:.0}", v))
-        .y_label_formatter(&|v| format!("{:.2}", v))
+        .y_label_formatter(if y_label.contains("Rate") {
+            &|v| format!("{:.2e}", v)
+        } else {
+            &|v| format!("{:.2}", v)
+        })
         .x_labels(10)
         .y_labels(10)
         .label_style(("sans-serif", 20).into_font())
         .draw()?;
 
-    chart.draw_series(PointSeries::of_element(
-        data.iter().map(|(t, p)| (*t, *p)),
-        3,
-        &BLUE,
-        &|c, s, st| Circle::new(c, s, st.filled()),
-    ))?;
+    chart
+        .draw_series(PointSeries::of_element(
+            times.iter().zip(observed.iter()).map(|(&t, &y)| (t, y)),
+            3,
+            &BLUE,
+            &|c, s, st| Circle::new(c, s, st.filled()),
+        ))?
+        .label("Observed")
+        .legend(|(x, y)| Circle::new((x, y), 4, BLUE.filled()));
+
+    if let Some(fit) = fitted {
+        chart
+            .draw_series(LineSeries::new(
+                times.iter().zip(fit.iter()).map(|(&t, &y)| (t, y)),
+                &RED,
+            ))?
+            .label("Fitted")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+    }
+
+    if let Some(res) = residuals {
+        chart
+            .draw_series(LineSeries::new(
+                times.iter().zip(res.iter()).map(|(&t, &y)| (t, y)),
+                &GREEN,
+            ))?
+            .label("Residual")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN));
+    }
+
+    chart
+        .configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .label_font(("sans-serif", 18).into_font())
+        .draw()?;
 
     root.present()?;
     Ok(())
@@ -1359,48 +1409,66 @@ fn draw_heatmap_with_colorbar(
             }),
     )?;
 
-    // Draw color bar
-    let color_bar_width = 25;
-    let color_bar_x_offset = 0;
-    let color_bar_y_offset = top_margin as i32;
-    let color_bar_height =
-        area_height as i32 - (top_margin + bottom_margin + x_label_area_size) as i32;
+    // Draw color bar aligned with plotting area height
+    if num_color_bar_labels == 0 {
+        return Ok(());
+    }
+    let color_bar_left_pad: u32 = 12;
+    let color_bar_width: u32 = 30;
+    let axis_bottom_pad = bottom_margin + x_label_area_size;
 
-    for i in 0..color_bar_height {
-        let color_value = i as f64 / (color_bar_height - 1) as f64;
-        let color = ViridisRGB.get_color(color_value);
-        color_bar_area.draw(&Rectangle::new(
-            [
-                (color_bar_x_offset, color_bar_y_offset + i),
-                (
-                    color_bar_x_offset + color_bar_width,
-                    color_bar_y_offset + i + 1,
-                ),
-            ],
+    let (_, remainder_area) = color_bar_area.split_horizontally(color_bar_left_pad);
+    let (bar_strip_raw, label_strip_raw) = if remainder_area.dim_in_pixel().0 > color_bar_width {
+        remainder_area.split_horizontally(color_bar_width)
+    } else {
+        let width = remainder_area.dim_in_pixel().0;
+        remainder_area.split_horizontally(width)
+    };
+    let bar_strip = bar_strip_raw.margin(top_margin as u32, axis_bottom_pad as u32, 0, 0);
+    let label_strip = label_strip_raw.margin(top_margin as u32, axis_bottom_pad as u32, 6, 0);
+
+    let (bar_strip_width, bar_strip_height) = bar_strip.dim_in_pixel();
+    if bar_strip_height == 0 {
+        return Ok(());
+    }
+    let height_norm = (bar_strip_height.saturating_sub(1)).max(1) as f64;
+
+    for i in 0..bar_strip_height as i32 {
+        let frac = 1.0 - (i as f64 / height_norm);
+        let color = ViridisRGB.get_color(frac);
+        bar_strip.draw(&Rectangle::new(
+            [(0, i), (bar_strip_width as i32, i + 1)],
             color.filled(),
         ))?;
     }
 
-    // Add labels to the color bar
-    color_bar_area.draw_text(
+    let step = std::cmp::max(1, bar_strip_height / 80);
+    let mut label_count = std::cmp::max(5usize, step as usize);
+    if label_count == 1 {
+        label_count = 2;
+    }
+    for i in 0..label_count {
+        let frac = if label_count <= 1 {
+            0.0
+        } else {
+            i as f64 / (label_count - 1) as f64
+        };
+        let value = min_val + (max_val - min_val) * (1.0 - frac as f32);
+        let y_pos = ((1.0 - frac) * height_norm).round() as i32;
+        label_strip.draw_text(
+            &color_bar_label_formatter(value),
+            &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK),
+            (4, y_pos - 9),
+        )?;
+    }
+
+    label_strip.draw_text(
         color_bar_title,
         &TextStyle::from(("sans-serif", 18).into_font())
             .color(&BLACK)
             .transform(FontTransform::Rotate270),
-        (color_bar_area_width as i32 - 25, area_height as i32 / 2),
+        ((bar_strip_width as i32) + 24, (bar_strip_height / 2) as i32),
     )?;
-
-    for i in 0..num_color_bar_labels {
-        let val_fraction = i as f32 / (num_color_bar_labels - 1) as f32;
-        let value = min_val + (max_val - min_val) * val_fraction;
-        let y_pos =
-            color_bar_y_offset + color_bar_height - (val_fraction * color_bar_height as f32) as i32;
-        color_bar_area.draw_text(
-            &color_bar_label_formatter(value),
-            &TextStyle::from(("sans-serif", 18).into_font()).color(&BLACK),
-            (color_bar_x_offset + color_bar_width + 5, y_pos - 7),
-        )?;
-    }
     Ok(())
 }
 

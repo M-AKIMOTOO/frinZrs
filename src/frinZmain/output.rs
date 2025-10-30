@@ -116,13 +116,14 @@ pub fn generate_output_names(
     } else {
         "n"
     };
+    let label_segment = label.get(3).copied().unwrap_or("");
 
     let base = format!(
         "{}_{}_{}_{}_{}_len{}s{}{}",
         header.station1_name,
         header.station2_name,
         yyyydddhhmmss2,
-        label[3],
+        label_segment,
         observing_band,
         length,
         rfi_suffix,
@@ -137,9 +138,10 @@ pub fn format_delay_output(results: &AnalysisResults, label: &[&str], args_lengt
     } else {
         results.length_f32.ceil()
     };
+    let label_segment = label.get(3).copied().unwrap_or("");
     format!(" {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.8}   {:>+4.8}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}", // {:>+10.6} {:>+10.6}",
         results.yyyydddhhmmss1,
-        label[3],
+        label_segment,
         results.source_name,
         display_length,
         results.delay_max_amp * 100.0,
@@ -166,9 +168,10 @@ pub fn format_freq_output(results: &AnalysisResults, label: &[&str], args_length
     } else {
         results.length_f32.ceil()
     };
+    let label_segment = label.get(3).copied().unwrap_or("");
     format!(" {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}", // {:>+10.6} {:>+10.6}",
         results.yyyydddhhmmss1,
-        label[3],
+        label_segment,
         results.source_name,
         display_length,
         results.freq_max_amp * 100.0,
@@ -226,28 +229,21 @@ pub fn write_add_plot_data_to_file(
     res_delay: &[f32],
     res_rate: &[f32],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let output_file_path = output_dir.join(format!("{}_add_plot_data.txt", base_filename));
+    let output_file_path = output_dir.join(format!("{}_add_plot_data.tsv", base_filename));
     let file = File::create(&output_file_path)?;
     let mut writer = BufWriter::new(file);
 
     // Write header
     writeln!(
         writer,
-        "#{:<18} {:<18} {:<18} {:<18} {:<18} {:<18} {:<18}",
-        "Elapsed Time [s]",
-        "Amplitude [%]",
-        "SNR",
-        "Phase [deg]",
-        "Noise Level [%]",
-        "Res Delay [samp]",
-        "Res Rate [Hz]"
+        "#Elapsed Time [s]\tAmplitude [%]\tSNR\tPhase [deg]\tNoise Level [%]\tRes Delay [samp]\tRes Rate [Hz]"
     )?;
 
     // Write data
     for i in 0..elapsed_times.len() {
         writeln!(
             writer,
-            "{:<18.3} {:<18.6} {:<18.2} {:<18.3} {:<18.6} {:<18.6} {:<18.6e}",
+            "{:.3}\t{:.6}\t{:.2}\t{:.3}\t{:.6}\t{:.6}\t{:.6e}",
             elapsed_times[i], amp[i], snr[i], phase[i], noise[i], res_delay[i], res_rate[i]
         )?;
     }

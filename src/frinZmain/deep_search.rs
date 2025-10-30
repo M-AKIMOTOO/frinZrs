@@ -63,6 +63,27 @@ pub fn run_deep_search(
 
     let start_time_offset_sec = (*current_obs_time - obs_time).num_seconds() as f32;
 
+    if current_length <= 0 {
+        return Err("有効なセクター長が 0 以下です".into());
+    }
+    let rows = current_length as usize;
+    if rows == 0 || complex_vec.is_empty() {
+        return Err("有効なデータが存在しません".into());
+    }
+    if complex_vec.len() % rows != 0 {
+        return Err(format!(
+            "複素データ長 ({}) がセクター数 ({}) の整数倍ではありません",
+            complex_vec.len(),
+            rows
+        )
+        .into());
+    }
+    let fft_point_half = complex_vec.len() / rows;
+    if fft_point_half == 0 {
+        return Err("FFT チャンネル数が 0 です".into());
+    }
+    let effective_fft_point = (fft_point_half * 2) as i32;
+
     // Step 1: 粗い遅延・レート推定
     let (coarse_delay, coarse_rate) = get_coarse_estimates(
         complex_vec,
@@ -73,6 +94,7 @@ pub fn run_deep_search(
         rfi_ranges,
         bandpass_data,
         args,
+        effective_fft_point,
     )?;
 
     println!(
@@ -139,6 +161,7 @@ pub fn run_deep_search(
             rate_step,
             effective_cpu_count,
             start_time_offset_sec,
+            effective_fft_point,
         )?;
 
         // 結果を更新
@@ -170,6 +193,7 @@ pub fn run_deep_search(
             current_delay,
             current_rate,
             start_time_offset_sec,
+            effective_fft_point,
         )?;
 
     Ok(DeepSearchResult {
@@ -189,6 +213,7 @@ fn get_coarse_estimates(
     rfi_ranges: &[(usize, usize)],
     bandpass_data: &Option<Vec<C32>>,
     args: &Args,
+    effective_fft_point: i32,
 ) -> Result<(f32, f32), Box<dyn Error>> {
     // delay-windowとrate-windowが指定されている場合は、その範囲で探索
     if !args.delay_window.is_empty() && !args.rate_window.is_empty() {
@@ -197,7 +222,7 @@ fn get_coarse_estimates(
         let (mut freq_rate_array, padding_length) = process_fft(
             complex_vec,
             current_length,
-            header.fft_point,
+            effective_fft_point,
             header.sampling_speed,
             rfi_ranges,
             args.rate_padding,
@@ -208,7 +233,7 @@ fn get_coarse_estimates(
         }
 
         let delay_rate_2d_data_comp =
-            process_ifft(&freq_rate_array, header.fft_point, padding_length);
+            process_ifft(&freq_rate_array, effective_fft_point, padding_length);
 
         let analysis_results = analyze_results(
             &freq_rate_array,
@@ -219,7 +244,7 @@ fn get_coarse_estimates(
             current_obs_time,
             padding_length,
             args,
-            args.search.as_deref(),
+            args.primary_search_mode(),
         );
 
         let coarse_delay = analysis_results.delay_offset;
@@ -231,12 +256,12 @@ fn get_coarse_estimates(
         println!("[DEEP SEARCH] No windows specified, running coarse search (no fitting) for initial estimates");
 
         let mut search_args = args.clone();
-        search_args.search = Some("deep".to_string()); // Enable global max search, disable fitting
+        search_args.search = vec!["deep".to_string()]; // Enable global max search, disable fitting
 
         let (mut freq_rate_array, padding_length) = process_fft(
             complex_vec,
             current_length,
-            header.fft_point,
+            effective_fft_point,
             header.sampling_speed,
             rfi_ranges,
             args.rate_padding,
@@ -247,7 +272,7 @@ fn get_coarse_estimates(
         }
 
         let delay_rate_2d_data_comp =
-            process_ifft(&freq_rate_array, header.fft_point, padding_length);
+            process_ifft(&freq_rate_array, effective_fft_point, padding_length);
 
         let analysis_results = analyze_results(
             &freq_rate_array,
@@ -258,7 +283,7 @@ fn get_coarse_estimates(
             current_obs_time,
             padding_length,
             &search_args,
-            search_args.search.as_deref(),
+            search_args.primary_search_mode(),
         );
 
         // 粗い探索の結果（フィッティングなし）を取得
@@ -288,6 +313,7 @@ fn parallel_grid_search(
     rate_step: f32,
     effective_cpu_count: usize,
     start_time_offset_sec: f32,
+    effective_fft_point: i32,
 ) -> Result<(f32, f32, f32), Box<dyn Error>> {
     // 探索グリッドを生成
     let delay_points = generate_search_points(center_delay, delay_range, delay_step);
@@ -330,6 +356,7 @@ fn parallel_grid_search(
                 delay,
                 rate,
                 start_time_offset_sec,
+                effective_fft_point,
             ) {
                 let mut best = best_result.lock().unwrap();
                 if snr > best.2 {
@@ -356,6 +383,7 @@ fn evaluate_delay_rate_snr(
     delay: f32,
     rate: f32,
     start_time_offset_sec: f32,
+    effective_fft_point: i32,
 ) -> Result<f32, Box<dyn Error>> {
     // 位相補正を適用
     let corrected_complex_vec = apply_corrections(
@@ -366,13 +394,14 @@ fn evaluate_delay_rate_snr(
         effective_integ_time,
         header,
         start_time_offset_sec,
+        effective_fft_point,
     )?;
 
     // FFT処理
     let (mut freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
         current_length,
-        header.fft_point,
+        effective_fft_point,
         header.sampling_speed,
         rfi_ranges,
         args.rate_padding,
@@ -384,7 +413,8 @@ fn evaluate_delay_rate_snr(
     }
 
     // IFFT処理
-    let delay_rate_2d_data_comp = process_ifft(&freq_rate_array, header.fft_point, padding_length);
+    let delay_rate_2d_data_comp =
+        process_ifft(&freq_rate_array, effective_fft_point, padding_length);
 
     // 解析実行
     let temp_args = create_corrected_args(args, delay, rate);
@@ -416,6 +446,7 @@ fn perform_final_analysis(
     final_delay: f32,
     final_rate: f32,
     start_time_offset_sec: f32,
+    effective_fft_point: i32,
 ) -> Result<(AnalysisResults, Array2<C32>, Array2<C32>), Box<dyn Error>> {
     // 最適解で最終的な処理を実行
     let corrected_complex_vec = apply_corrections(
@@ -426,12 +457,13 @@ fn perform_final_analysis(
         effective_integ_time,
         header,
         start_time_offset_sec,
+        effective_fft_point,
     )?;
 
     let (mut final_freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
         current_length,
-        header.fft_point,
+        effective_fft_point,
         header.sampling_speed,
         rfi_ranges,
         args.rate_padding,
@@ -442,7 +474,7 @@ fn perform_final_analysis(
     }
 
     let final_delay_rate_2d_data_comp =
-        process_ifft(&final_freq_rate_array, header.fft_point, padding_length);
+        process_ifft(&final_freq_rate_array, effective_fft_point, padding_length);
 
     let final_args = create_corrected_args(args, final_delay, final_rate);
     let mut analysis_results = analyze_results(
@@ -516,13 +548,19 @@ fn apply_corrections(
     effective_integ_time: f32,
     header: &CorHeader,
     start_time_offset_sec: f32,
+    effective_fft_point: i32,
 ) -> Result<Vec<C32>, Box<dyn Error>> {
     if rate == 0.0 && delay == 0.0 {
         return Ok(complex_vec.to_vec());
     }
 
+    let fft_point_half = (effective_fft_point / 2) as usize;
+    if fft_point_half == 0 {
+        return Err("FFT チャンネル数が 0 です".into());
+    }
+
     let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
-        .chunks(header.fft_point as usize / 2)
+        .chunks(fft_point_half)
         .map(|chunk| {
             chunk
                 .iter()
@@ -538,7 +576,7 @@ fn apply_corrections(
         acel,
         effective_integ_time,
         header.sampling_speed as u32,
-        header.fft_point as u32,
+        effective_fft_point as u32,
         start_time_offset_sec,
     );
 
@@ -556,6 +594,6 @@ fn create_corrected_args(args: &Args, delay: f32, rate: f32) -> Args {
     let mut corrected_args = args.clone();
     corrected_args.delay_correct = delay;
     corrected_args.rate_correct = rate;
-    corrected_args.search = None; // Prevent infinite loops
+    corrected_args.search.clear(); // Prevent infinite loops
     corrected_args
 }
