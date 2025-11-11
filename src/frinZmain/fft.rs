@@ -24,8 +24,6 @@ pub fn process_fft(
     rate_padding: u32,
     max_padding_length: usize,
 ) -> (Array2<C32>, usize) {
-    let bandwidth = sampling_speed as f32 / 2.0 / 1_000_000.0; // [MHz]
-
     let length_usize = length as usize;
     let fft_point_half = (fft_point / 2) as usize;
     let base_length = length_usize.max(1);
@@ -42,6 +40,20 @@ pub fn process_fft(
         padding_length = padding_limit;
     }
     let padding_length_half = padding_length / 2;
+    let length_f32 = base_length as f32;
+    let fft_scale = if length_f32 > 0.0 {
+        fft_point as f32 / length_f32
+    } else {
+        1.0
+    };
+    let bandwidth_hz = sampling_speed as f32 / 2.0;
+    let bandwidth_mhz = bandwidth_hz / 1_000_000.0; // [MHz]
+    let power_scale = if bandwidth_mhz > 0.0 {
+        512.0 / bandwidth_mhz
+    } else {
+        1.0
+    };
+    let scale_factor = fft_scale * power_scale;
 
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(padding_length);
@@ -73,7 +85,7 @@ pub fn process_fft(
 
         let scaled_shifted_out: Vec<C32> = shifted_out
             .iter_mut()
-            .map(|val| *val * (fft_point as f32 / length as f32) * (512.0 / bandwidth))
+            .map(|val| *val * scale_factor)
             .collect();
 
         freq_rate_array

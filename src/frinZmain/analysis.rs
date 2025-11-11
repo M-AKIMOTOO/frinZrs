@@ -9,6 +9,14 @@ use crate::utils::{mjd_cal, noise_level, radec2azalt, rate_cal, safe_arg};
 
 type C32 = Complex<f32>;
 
+fn sanitize_noise(value: f32) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        f32::EPSILON
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AnalysisResults {
     // Common
@@ -89,7 +97,9 @@ pub fn analyze_results(
 
     // --- Delay Analysis ---
     let delay_rate_2d_data_array = delay_rate_array.clone().mapv(|x| x.norm());
-    let delay_noise = noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap());
+    let delay_noise_raw =
+        noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap());
+    let delay_noise = sanitize_noise(delay_noise_raw);
 
     let (peak_rate_idx, peak_delay_idx) = if !args.delay_window.is_empty()
         && !args.rate_window.is_empty()
@@ -250,7 +260,7 @@ pub fn analyze_results(
         }
     }
 
-    let freq_noise = if !noise_complex_values.is_empty() {
+    let freq_noise_raw = if !noise_complex_values.is_empty() {
         let noise_sum: C32 = noise_complex_values.iter().sum();
         let noise_mean: C32 = noise_sum / (noise_complex_values.len() as f32);
         let noise_abs_dev_sum: f32 = noise_complex_values
@@ -264,6 +274,7 @@ pub fn analyze_results(
         noise_level(freq_rate_array.view(), freq_rate_array.mean().unwrap())
     };
 
+    let freq_noise = sanitize_noise(freq_noise_raw);
     let freq_snr = freq_max_amp / freq_noise;
     let freq_rate = freq_rate_2d_data_array.row(peak_freq_row_idx).to_owned();
     let freq_rate_spectrum = freq_rate_array.column(peak_rate_col_idx).to_owned();
