@@ -5,6 +5,16 @@ use std::f64::consts::PI;
 
 type C32 = Complex<f32>;
 
+pub fn compute_padding_limit(total_sectors: i32) -> usize {
+    if total_sectors <= 0 {
+        return 0;
+    }
+    let total = total_sectors as usize;
+    total
+        .checked_next_power_of_two()
+        .unwrap_or(usize::MAX)
+}
+
 pub fn process_fft(
     complex_vec: &[C32],
     length: i32,
@@ -12,15 +22,24 @@ pub fn process_fft(
     sampling_speed: i32,
     rfi_ranges: &[(usize, usize)],
     rate_padding: u32,
+    max_padding_length: usize,
 ) -> (Array2<C32>, usize) {
     let bandwidth = sampling_speed as f32 / 2.0 / 1_000_000.0; // [MHz]
 
     let length_usize = length as usize;
     let fft_point_half = (fft_point / 2) as usize;
-    //let padding_length = (length as u32).next_power_of_two() as usize * rate_padding as usize; // FFTのビン（周波数の区切り）と実際の信号周波数のズレによって生じる「スカロッピング損失」という現象
-    let mut padding_length = length as usize * rate_padding as usize;
+    let base_length = length_usize.max(1);
+    let mut padding_length = base_length.saturating_mul(rate_padding.max(1) as usize);
     if length == 1 {
-        padding_length *= 2.0 as usize
+        padding_length = padding_length.saturating_mul(2);
+    }
+    let padding_limit = max_padding_length.max(base_length);
+    if padding_limit > 0 && padding_length > padding_limit {
+        eprintln!(
+            "#WARN: Requested rate padding length {} is larger than the safe limit {}. Clamping to {}.",
+            padding_length, padding_limit, padding_limit
+        );
+        padding_length = padding_limit;
     }
     let padding_length_half = padding_length / 2;
 

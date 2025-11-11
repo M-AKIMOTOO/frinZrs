@@ -9,7 +9,7 @@ use ndarray::{Array, Array2, ArrayView1, Axis};
 use num_complex::Complex;
 
 use crate::args::Args;
-use crate::fft::{apply_phase_correction, process_fft, process_ifft};
+use crate::fft::{self, apply_phase_correction, process_fft, process_ifft};
 use crate::header::{parse_header, CorHeader};
 use crate::plot::{plot_cross_section, plot_sky_map, plot_uv_coverage};
 use crate::read::read_visibility_data;
@@ -426,6 +426,7 @@ pub fn run_fringe_rate_map_analysis(
                 .collect();
         }
 
+        let padding_limit = fft::compute_padding_limit(header.number_of_sector);
         let (freq_rate_array, padding_length) = process_fft(
             &complex_vec,
             length_in_sectors,
@@ -433,6 +434,7 @@ pub fn run_fringe_rate_map_analysis(
             header.sampling_speed,
             &[],
             args.rate_padding,
+            padding_limit,
         );
         let delay_rate_array = process_ifft(&freq_rate_array, header.fft_point, padding_length);
 
@@ -747,6 +749,7 @@ fn run_frmap_maser(
                 .collect();
         }
 
+        let padding_limit = fft::compute_padding_limit(header.number_of_sector);
         let (freq_rate_array, padding_length) = process_fft(
             &complex_vec,
             length_in_sectors,
@@ -754,6 +757,7 @@ fn run_frmap_maser(
             header.sampling_speed,
             &[],
             args.rate_padding,
+            padding_limit,
         );
 
         let rate_range_vec = rate_cal(padding_length as f32, seg_effective_integ_time);

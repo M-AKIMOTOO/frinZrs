@@ -44,6 +44,8 @@ pub fn read_visibility_data(
         .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Failed to create initial timestamp"))?;
     let mut effective_integ_time = 0.0;
 
+    let mut non_finite_samples = 0usize;
+
     for i in 0..num_sectors_to_read {
         let sector_start_pos =
             FILE_HEADER_SIZE + (actual_length_start as u64 + i as u64) * sector_size as u64;
@@ -74,12 +76,27 @@ pub fn read_visibility_data(
         for _ in 0..fft_point_half {
             let real = cursor.read_f32::<byteorder::LittleEndian>()?;
             let imag = cursor.read_f32::<byteorder::LittleEndian>()?;
+            let mut sample = C32::new(real, imag);
+            if !sample.re.is_finite() || !sample.im.is_finite() {
+                non_finite_samples += 1;
+                sample = C32::new(0.0, 0.0);
+            }
+
             if is_pp_flagged {
                 complex_vec.push(C32::new(0.0, 0.0));
             } else {
-                complex_vec.push(C32::new(real, imag));
+                complex_vec.push(sample);
             }
         }
+    }
+
+    if non_finite_samples > 0 {
+        eprintln!(
+            "#WARN: Replaced {} non-finite visibility samples with 0+0j (sectors {}-{}).",
+            non_finite_samples,
+            actual_length_start,
+            actual_length_start + num_sectors_to_read as i32 - 1
+        );
     }
 
     let mut a = 1.0f32;

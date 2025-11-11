@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::args::Args;
-use crate::fft::process_fft;
+use crate::fft::{self, process_fft};
 use crate::header::{parse_header, CorHeader};
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
@@ -585,6 +585,7 @@ fn get_spectrum_segment(
         return Ok(None);
     }
 
+    let padding_limit = fft::compute_padding_limit(header.number_of_sector);
     let (freq_rate_array, padding_length) = process_fft(
         &complex_vec,
         sector_count as i32,
@@ -592,6 +593,7 @@ fn get_spectrum_segment(
         sampling_speed_for_fft,
         &rfi_ranges,
         args.rate_padding,
+        padding_limit,
     );
 
     // Get spectrum at zero rate (center of rate dimension)

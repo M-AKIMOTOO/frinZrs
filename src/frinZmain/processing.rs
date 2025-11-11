@@ -1046,6 +1046,7 @@ pub(crate) fn run_analysis_pipeline(
             complex_vec.to_vec()
         };
 
+    let padding_limit = fft::compute_padding_limit(header.number_of_sector);
     let (mut freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
         current_length,
@@ -1053,6 +1054,7 @@ pub(crate) fn run_analysis_pipeline(
         header.sampling_speed,
         rfi_ranges,
         base_args.rate_padding,
+        padding_limit,
     );
 
     if let Some(bp_data) = &bandpass_data {
