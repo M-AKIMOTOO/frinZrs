@@ -95,8 +95,9 @@ pub fn perform_ifft_on_vec(input: &[C32], ifft_size: usize) -> Vec<C32> {
 
     let mut shifted_out = vec![C32::new(0.0, 0.0); ifft_size];
     let (first_half, second_half) = ifft_exe.split_at(ifft_size / 2);
-    shifted_out[..ifft_size / 2].copy_from_slice(second_half);
-    shifted_out[ifft_size / 2..].copy_from_slice(first_half);
+    // Support odd-length IFFT sizes by copying with the actual slice lengths.
+    shifted_out[..second_half.len()].copy_from_slice(second_half);
+    shifted_out[second_half.len()..].copy_from_slice(first_half);
 
     for val in &mut shifted_out {
         *val /= ifft_size as f32;
