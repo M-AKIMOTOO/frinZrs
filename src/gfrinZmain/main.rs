@@ -16,7 +16,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use frinZ::analysis::analyze_results;
 use frinZ::args::Args as FrinZArgs;
 use frinZ::bandpass::{apply_bandpass_correction, read_bandpass_file};
-use frinZ::fft::{process_fft, process_ifft};
+use frinZ::fft::{self, process_fft, process_ifft};
 use frinZ::read::read_visibility_data;
 use frinZ::rfi::parse_rfi_ranges;
 use memmap2::Mmap;
@@ -1152,6 +1152,7 @@ fn main() -> anyhow::Result<()> {
                 win_time = Some(t0);
             }
             let rfi_ranges: Vec<(usize, usize)> = vec![];
+            let padding_limit = fft::compute_padding_limit(e.header.number_of_sector);
             let (freq_rate_array, padding_length) = process_fft(
                 &complex_vec,
                 length_sectors,
@@ -1159,6 +1160,7 @@ fn main() -> anyhow::Result<()> {
                 e.header.sampling_speed,
                 &rfi_ranges,
                 cli.rate_padding,
+                padding_limit,
             );
             // バンドパス（基線別優先→全体）
             let mut freq_rate_array = freq_rate_array;
@@ -1601,6 +1603,7 @@ fn main() -> anyhow::Result<()> {
             let bw_mhz = e.header.sampling_speed as f32 / 2.0 / 1_000_000.0;
             let rbw_mhz = (bw_mhz / e.header.fft_point as f32) * 2.0;
             let rfi_ranges = parse_rfi_ranges(&cli.rfi, rbw_mhz).unwrap_or_else(|_| vec![]);
+            let padding_limit = fft::compute_padding_limit(e.header.number_of_sector);
             let (freq_rate_array, padding_length) = process_fft(
                 &complex_vec,
                 length_sectors,
@@ -1608,6 +1611,7 @@ fn main() -> anyhow::Result<()> {
                 e.header.sampling_speed,
                 &rfi_ranges,
                 cli.rate_padding,
+                padding_limit,
             );
             // バンドパス補正（基線別優先→全体）。サイズが一致する場合のみ適用
             let mut freq_rate_array = freq_rate_array;
