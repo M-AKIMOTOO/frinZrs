@@ -242,7 +242,7 @@ pub fn analyze_results(
     let freq_max_amp = freq_rate_2d_data_array[[peak_freq_row_idx, peak_rate_col_idx]];
     let freq_phase =
         safe_arg(&freq_rate_array[[peak_freq_row_idx, peak_rate_col_idx]]).to_degrees();
-    let freq_freq = freq_range[peak_freq_row_idx];
+    let mut freq_freq = freq_range[peak_freq_row_idx];
 
     // Calculate noise from regions away from the peak rate
     let peak_rate_hz = rate_range[peak_rate_col_idx];
@@ -270,6 +270,29 @@ pub fn analyze_results(
         eprintln!("Warning: Could not find noise region for frequency SNR calculation. Falling back to old method.");
         noise_level(freq_rate_array.view(), freq_rate_array.mean().unwrap())
     };
+
+    if search_mode == Some("peak") {
+        let mut x_coords: Vec<f64> = Vec::new();
+        let mut y_values: Vec<f64> = Vec::new();
+        let window_size = 2;
+        let half_window = (window_size / 2) as isize;
+        for i in -half_window..=half_window {
+            let idx = peak_freq_row_idx as isize + i;
+            if idx >= 0 && idx < freq_range.len() as isize {
+                x_coords.push(freq_range[idx as usize] as f64);
+                y_values.push(
+                    freq_rate_2d_data_array[[idx as usize, peak_rate_col_idx]] as f64,
+                );
+            }
+        }
+        if x_coords.len() >= 3 {
+            if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&x_coords, &y_values) {
+                freq_freq = fit_result.peak_x as f32;
+            } else {
+                eprintln!("Warning: Quadratic fitting for frequency failed. Using original peak.");
+            }
+        }
+    }
 
     let freq_noise = sanitize_noise(freq_noise_raw);
     let freq_snr = freq_max_amp / freq_noise;
