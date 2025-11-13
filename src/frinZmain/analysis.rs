@@ -88,11 +88,8 @@ pub fn analyze_results(
         fft_point_usize,
     );
 
-    let freq_range = Array::linspace(
-        0.0f32,
-        (header.sampling_speed as f32 / 2.0) / 1e6,
-        fft_point_half,
-    );
+    let freq_step_mhz = (header.sampling_speed as f32 / header.fft_point as f32) / 1_000_000.0;
+    let freq_range = Array1::from_iter((0..fft_point_half).map(|i| i as f32 * freq_step_mhz));
     let rate_range = rate_cal(padding_length as f32, effective_integ_time);
 
     // --- Delay Analysis ---
