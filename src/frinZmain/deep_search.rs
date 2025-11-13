@@ -215,7 +215,6 @@ fn get_coarse_estimates(
     args: &Args,
     effective_fft_point: i32,
 ) -> Result<(f32, f32), Box<dyn Error>> {
-    let padding_limit = fft::compute_padding_limit(header.number_of_sector);
     // delay-windowとrate-windowが指定されている場合は、その範囲で探索
     if !args.delay_window.is_empty() && !args.rate_window.is_empty() {
         println!("[DEEP SEARCH] Using specified delay and rate windows for coarse estimation");
@@ -227,7 +226,6 @@ fn get_coarse_estimates(
             header.sampling_speed,
             rfi_ranges,
             args.rate_padding,
-            padding_limit,
         );
 
         if let Some(bp_data) = bandpass_data {
@@ -267,7 +265,6 @@ fn get_coarse_estimates(
             header.sampling_speed,
             rfi_ranges,
             args.rate_padding,
-            padding_limit,
         );
 
         if let Some(bp_data) = bandpass_data {
@@ -388,7 +385,6 @@ fn evaluate_delay_rate_snr(
     start_time_offset_sec: f32,
     effective_fft_point: i32,
 ) -> Result<f32, Box<dyn Error>> {
-    let padding_limit = fft::compute_padding_limit(header.number_of_sector);
     // 位相補正を適用
     let corrected_complex_vec = apply_corrections(
         complex_vec,
@@ -409,7 +405,6 @@ fn evaluate_delay_rate_snr(
         header.sampling_speed,
         rfi_ranges,
         args.rate_padding,
-        padding_limit,
     );
 
     // バンドパス補正
@@ -453,7 +448,6 @@ fn perform_final_analysis(
     start_time_offset_sec: f32,
     effective_fft_point: i32,
 ) -> Result<(AnalysisResults, Array2<C32>, Array2<C32>), Box<dyn Error>> {
-    let padding_limit = fft::compute_padding_limit(header.number_of_sector);
     // 最適解で最終的な処理を実行
     let corrected_complex_vec = apply_corrections(
         complex_vec,
@@ -473,7 +467,6 @@ fn perform_final_analysis(
         header.sampling_speed,
         rfi_ranges,
         args.rate_padding,
-        padding_limit,
     );
 
     if let Some(bp_data) = bandpass_data {

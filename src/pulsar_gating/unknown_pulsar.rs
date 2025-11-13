@@ -160,7 +160,6 @@ fn compute_rate_spectrum(
         combined.extend_from_slice(&sector.spectra);
     }
 
-    let padding_limit = fft::compute_padding_limit(sectors.len() as i32);
     let (freq_rate_array, padding_length) = process_fft(
         &combined,
         time_len as i32,
@@ -168,7 +167,6 @@ fn compute_rate_spectrum(
         sampling_speed,
         &[],
         rate_padding,
-        padding_limit,
     );
 
     let mut rate_accum = vec![Complex::new(0.0f32, 0.0f32); padding_length];

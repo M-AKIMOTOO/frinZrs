@@ -426,7 +426,6 @@ pub fn run_fringe_rate_map_analysis(
                 .collect();
         }
 
-        let padding_limit = fft::compute_padding_limit(header.number_of_sector);
         let (freq_rate_array, padding_length) = process_fft(
             &complex_vec,
             length_in_sectors,
@@ -434,7 +433,6 @@ pub fn run_fringe_rate_map_analysis(
             header.sampling_speed,
             &[],
             args.rate_padding,
-            padding_limit,
         );
         let delay_rate_array = process_ifft(&freq_rate_array, header.fft_point, padding_length);
 
@@ -749,7 +747,6 @@ fn run_frmap_maser(
                 .collect();
         }
 
-        let padding_limit = fft::compute_padding_limit(header.number_of_sector);
         let (freq_rate_array, padding_length) = process_fft(
             &complex_vec,
             length_in_sectors,
@@ -757,7 +754,6 @@ fn run_frmap_maser(
             header.sampling_speed,
             &[],
             args.rate_padding,
-            padding_limit,
         );
 
         let rate_range_vec = rate_cal(padding_length as f32, seg_effective_integ_time);

@@ -256,7 +256,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     )?;
 
     // --- Perform initial analysis for C-band ---
-    let padding_limit_c = fft::compute_padding_limit(c_band_header.number_of_sector);
     let (mut c_band_freq_rate_array, c_band_padding_length) = process_fft(
         c_band_complex_vec.as_slice(),
         c_band_header.number_of_sector,
@@ -264,7 +263,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         c_band_header.sampling_speed,
         &parse_rfi_ranges(&c_band_filtered_rfi_args, c_band_rbw)?,
         args.rate_padding,
-        padding_limit_c,
     );
     if let Some(bp_data) = &c_band_bp_data {
         apply_bandpass_correction(&mut c_band_freq_rate_array, bp_data);
@@ -296,7 +294,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     );
 
     // --- Perform initial analysis for X-band ---
-    let padding_limit_x = fft::compute_padding_limit(x_band_header.number_of_sector);
     let (mut x_band_freq_rate_array, x_band_padding_length) = process_fft(
         x_band_complex_vec.as_slice(),
         x_band_header.number_of_sector,
@@ -304,7 +301,6 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         x_band_header.sampling_speed,
         &parse_rfi_ranges(&x_band_filtered_rfi_args_converted, x_band_rbw)?,
         args.rate_padding,
-        padding_limit_x,
     );
     if let Some(bp_data) = &x_band_bp_data {
         apply_bandpass_correction(&mut x_band_freq_rate_array, bp_data);

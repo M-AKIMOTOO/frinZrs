@@ -98,6 +98,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("Error: --rate-padding must be a power of two.");
         exit(1);
     }
+    if !matches!(args.rate_padding, 1 | 2 | 4 | 8 | 16) {
+        eprintln!("Error: --rate-padding must be one of 1, 2, 4, 8, or 16.");
+        exit(1);
+    }
 
     if args.imaging_test {
         println!("Running Earth-rotation synthesis imaging test...");

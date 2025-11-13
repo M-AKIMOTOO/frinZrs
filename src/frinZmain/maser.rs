@@ -585,7 +585,6 @@ fn get_spectrum_segment(
         return Ok(None);
     }
 
-    let padding_limit = fft::compute_padding_limit(header.number_of_sector);
     let (freq_rate_array, padding_length) = process_fft(
         &complex_vec,
         sector_count as i32,
@@ -593,7 +592,6 @@ fn get_spectrum_segment(
         sampling_speed_for_fft,
         &rfi_ranges,
         args.rate_padding,
-        padding_limit,
     );
 
     // Get spectrum at zero rate (center of rate dimension)

@@ -91,9 +91,9 @@ pub struct Args {
     #[arg(long, aliases = ["rate-w", "rate-wi", "rate-win", "rate-wind", "rate-windo"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
     pub rate_window: Vec<f32>,
 
-    /// レート分解能のパディング係数（2の冪）。デフォルトは 4。
+    /// レート分解能のパディング係数（1,2,4,8,16 のみ指定可）。デフォルトは 1。
     /// なお、`--cumulate` が指定された場合は内部的に常に 1 に上書きされます。
-    #[arg(long, aliases = ["rate-p", "rate-pa", "rate-pad", "rate-padd", "rate-paddi", "rate-paddin"], default_value_t = 4)]
+    #[arg(long, aliases = ["rate-p", "rate-pa", "rate-pad", "rate-padd", "rate-paddi", "rate-paddin"], default_value_t = 1)]
     pub rate_padding: u32,
 
     /// Cumulate length in seconds.
