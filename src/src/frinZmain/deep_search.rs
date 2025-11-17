@@ -37,6 +37,19 @@ impl Default for DeepSearchParams {
     }
 }
 
+fn median(values: &mut [f32]) -> Option<f32> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mid = values.len() / 2;
+    if values.len() % 2 == 0 {
+        Some((values[mid - 1] + values[mid]) * 0.5)
+    } else {
+        Some(values[mid])
+    }
+}
+
 /// Deep search探索結果
 #[derive(Debug, Clone)]
 pub struct DeepSearchResult {
@@ -107,6 +120,8 @@ pub fn run_deep_search(
     let search_params = DeepSearchParams::default();
     let mut current_delay = coarse_delay;
     let mut current_rate = coarse_rate;
+    let mut delay_history = vec![coarse_delay];
+    let mut rate_history = vec![coarse_rate];
 
     for iteration in 0..search_params.max_iterations {
         println!("[DEEP SEARCH] Iteration {} starting", iteration + 1);
@@ -168,6 +183,8 @@ pub fn run_deep_search(
         // 結果を更新
         current_delay = best_delay;
         current_rate = best_rate;
+        delay_history.push(best_delay);
+        rate_history.push(best_rate);
 
         println!(
             "[DEEP SEARCH]   Best result: delay={:.6} samples, rate={:.6} Hz, SNR={:.3}",
@@ -175,10 +192,15 @@ pub fn run_deep_search(
         );
     }
 
+    let mut delay_history_clone = delay_history.clone();
+    let mut rate_history_clone = rate_history.clone();
+    let final_delay = median(&mut delay_history_clone).unwrap_or(current_delay);
+    let final_rate = median(&mut rate_history_clone).unwrap_or(current_rate);
+
     // Step 3: 最終的な解析を実行
     println!(
         "[DEEP SEARCH] Final result - Delay: {:.6} samples, Rate: {:.6} Hz",
-        current_delay, current_rate
+        final_delay, final_rate
     );
 
     let (final_analysis_results, final_freq_rate_array, final_delay_rate_2d_data) =
@@ -191,8 +213,8 @@ pub fn run_deep_search(
             rfi_ranges,
             bandpass_data,
             args,
-            current_delay,
-            current_rate,
+            final_delay,
+            final_rate,
             start_time_offset_sec,
             effective_fft_point,
         )?;
