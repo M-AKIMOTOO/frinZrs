@@ -115,7 +115,7 @@ pub struct Args {
 
     /// Specifies the search mode. [possible values: peak, deep, rate, acel]
     /// - peak: Precise search for the fringe peak using iterative fitting. (equivalent to the old --search flag).
-    /// - deep: A deep, hierarchical search for fringes. Computationally expensive. (equivalent to the old --search-deep flag).
+    /// - deep: A deep, hierarchical search for fringes. 6 層のグリッド探索で得た候補の中央値を residual delay/rate として採用し、ノイズピークより安定した推定を返します（旧 --search-deep）。
     /// - rate: A search for the fringe rate by performing a linear fit. (equivalent to the old --rate-search flag).
     /// - acel: A search for fringe acceleration by performing a quadratic fit.
     ///

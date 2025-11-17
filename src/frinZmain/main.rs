@@ -94,6 +94,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         args.rate_padding = 1;
     }
 
+    if args.primary_search_mode() == Some("deep") && args.cumulate == 0 {
+        if args.rate_padding != 8 {
+            println!(
+                "#INFO: --search deep が指定されたため rate-padding を 8 に設定します (旧値 {}).",
+                args.rate_padding
+            );
+        }
+        args.rate_padding = 8;
+    }
+
     if !args.rate_padding.is_power_of_two() {
         eprintln!("Error: --rate-padding must be a power of two.");
         exit(1);

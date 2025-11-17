@@ -283,6 +283,7 @@ pub fn process_cor_file(
     let mut add_plot_res_rate: Vec<f32> = Vec::new();
 
     let mut prev_deep_solution: Option<(f32, f32)> = None;
+    let mut first_output_basename: Option<String> = None;
 
     for l1 in 0..loop_count {
         let requested_length = if args.cumulate != 0 {
@@ -500,6 +501,9 @@ pub fn process_cor_file(
             args.bandpass.is_some(),
             current_length,
         );
+        if first_output_basename.is_none() {
+            first_output_basename = Some(base_filename.clone());
+        }
 
         if args.spectrum {
             if let Some(path) = &spectrum_output_path {
@@ -610,8 +614,8 @@ pub fn process_cor_file(
 
             if l1 == loop_count - 1 && args.output {
                 if let Some(path) = &output_path {
-                    let output_file_path =
-                        path.join(format!("{}.txt", format!("{}_time", base_filename)));
+                    let output_basename = first_output_basename.as_ref().unwrap_or(&base_filename);
+                    let output_file_path = path.join(format!("{}_time.txt", output_basename));
                     fs::write(output_file_path, &delay_output_str)?;
                 }
             }
@@ -631,8 +635,8 @@ pub fn process_cor_file(
 
             if l1 == loop_count - 1 && args.output {
                 if let Some(path) = &output_path {
-                    let output_file_path =
-                        path.join(format!("{}.txt", format!("{}_freq", base_filename)));
+                    let output_basename = first_output_basename.as_ref().unwrap_or(&base_filename);
+                    let output_file_path = path.join(format!("{}_freq.txt", output_basename));
                     fs::write(output_file_path, &freq_output_str)?;
                 }
             }
