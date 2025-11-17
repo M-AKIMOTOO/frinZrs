@@ -94,8 +94,7 @@ pub fn analyze_results(
 
     // --- Delay Analysis ---
     let delay_rate_2d_data_array = delay_rate_array.clone().mapv(|x| x.norm());
-    let delay_noise_raw =
-        noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap());
+    let delay_noise_raw = noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap());
     let delay_noise = sanitize_noise(delay_noise_raw);
 
     let (peak_rate_idx, peak_delay_idx) = if !args.delay_window.is_empty()
@@ -280,9 +279,7 @@ pub fn analyze_results(
             let idx = peak_freq_row_idx as isize + i;
             if idx >= 0 && idx < freq_range.len() as isize {
                 x_coords.push(freq_range[idx as usize] as f64);
-                y_values.push(
-                    freq_rate_2d_data_array[[idx as usize, peak_rate_col_idx]] as f64,
-                );
+                y_values.push(freq_rate_2d_data_array[[idx as usize, peak_rate_col_idx]] as f64);
             }
         }
         if x_coords.len() >= 3 {

@@ -1001,6 +1001,7 @@ fn collect_visibilities_from_cor(
     let mut skipped_low_snr = 0usize;
     let wavelength = SPEED_OF_LIGHT / header.observing_frequency;
     let search_mode = args.primary_search_mode();
+    let mut prev_deep_solution: Option<(f32, f32)> = None;
 
     for l1 in 0..loop_count {
         let mut current_length = if args.cumulate != 0 {
@@ -1084,6 +1085,7 @@ fn collect_visibilities_from_cor(
             &rfi_ranges,
             &bandpass_data,
             search_mode,
+            &mut prev_deep_solution,
         )?;
 
         if let Some(min_snr) = imaging_opts.vis_snr_min {
@@ -1176,6 +1178,7 @@ fn determine_segment_correction(
     rfi_ranges: &[(usize, usize)],
     bandpass_data: &Option<Vec<C32>>,
     search_mode: Option<&str>,
+    prev_deep_solution: &mut Option<(f32, f32)>,
 ) -> Result<SegmentCorrection, Box<dyn Error>> {
     if current_length <= 0 {
         return Err("セグメント長が無効です (0 以下)".into());
@@ -1200,8 +1203,12 @@ fn determine_segment_correction(
                 args,
                 header.number_of_sector,
                 args.cpu,
-                None,
+                *prev_deep_solution,
             )?;
+            *prev_deep_solution = Some((
+                deep.analysis_results.residual_delay,
+                deep.analysis_results.residual_rate,
+            ));
             Ok(SegmentCorrection {
                 delay: deep.analysis_results.residual_delay,
                 rate: deep.analysis_results.residual_rate,

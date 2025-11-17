@@ -282,6 +282,8 @@ pub fn process_cor_file(
     let mut add_plot_res_delay: Vec<f32> = Vec::new();
     let mut add_plot_res_rate: Vec<f32> = Vec::new();
 
+    let mut prev_deep_solution: Option<(f32, f32)> = None;
+
     for l1 in 0..loop_count {
         let requested_length = if args.cumulate != 0 {
             (l1 + 1) * length
@@ -388,14 +390,7 @@ pub fn process_cor_file(
                     args,
                     pp,
                     args.cpu,
-                    if l1 == 0 {
-                        None
-                    } else {
-                        Some((
-                            add_plot_res_delay.last().copied().unwrap_or(args.delay_correct),
-                            add_plot_res_rate.last().copied().unwrap_or(args.rate_correct),
-                        ))
-                    },
+                    prev_deep_solution,
                 )?;
                 deep_search_result.analysis_results.residual_delay -= args.delay_correct;
                 deep_search_result.analysis_results.residual_rate -= args.rate_correct;
@@ -403,11 +398,18 @@ pub fn process_cor_file(
                     args.delay_correct + deep_search_result.analysis_results.residual_delay;
                 deep_search_result.analysis_results.corrected_rate =
                     args.rate_correct + deep_search_result.analysis_results.residual_rate;
-                (
+                let result_tuple = (
                     deep_search_result.analysis_results,
                     deep_search_result.freq_rate_array,
                     deep_search_result.delay_rate_2d_data,
-                )
+                );
+
+                prev_deep_solution = Some((
+                    result_tuple.0.residual_delay + args.delay_correct,
+                    result_tuple.0.residual_rate + args.rate_correct,
+                ));
+
+                result_tuple
             }
             Some("peak") => {
                 let mut total_delay_correct = args.delay_correct;
