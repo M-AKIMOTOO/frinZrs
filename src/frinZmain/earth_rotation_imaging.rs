@@ -63,6 +63,28 @@ fn rebin_complex_rows(
     rebinned
 }
 
+fn pad_time_rows_to_power_of_two(
+    data: &mut Vec<C32>,
+    current_rows: usize,
+    row_width: usize,
+) -> usize {
+    if current_rows == 0 || row_width == 0 {
+        return current_rows;
+    }
+    let target_rows = if current_rows <= 1 {
+        1
+    } else {
+        current_rows.next_power_of_two()
+    };
+
+    if target_rows > current_rows {
+        let additional_samples = (target_rows - current_rows) * row_width;
+        data.extend(std::iter::repeat(C32::new(0.0, 0.0)).take(additional_samples));
+    }
+
+    target_rows
+}
+
 // Represents a single visibility measurement.
 #[derive(Debug, Clone)]
 pub struct Visibility {
@@ -1070,6 +1092,10 @@ fn collect_visibilities_from_cor(
             continue;
         }
 
+        let fft_point_half_used = (effective_fft_point / 2) as usize;
+        actual_length =
+            pad_time_rows_to_power_of_two(&mut complex_vec, actual_length, fft_point_half_used);
+
         if current_length != actual_length as i32 {
             current_length = actual_length as i32;
         }
@@ -1096,7 +1122,6 @@ fn collect_visibilities_from_cor(
         }
 
         let start_time_offset_sec = 0.0;
-        let fft_point_half_used = (effective_fft_point / 2) as usize;
 
         let corrected = apply_phase_correction(
             &reshape_to_complex64_matrix(&complex_vec, fft_point_half_used),

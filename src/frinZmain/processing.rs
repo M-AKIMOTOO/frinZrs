@@ -67,6 +67,24 @@ fn rebin_complex_rows(
     rebinned
 }
 
+fn pad_time_rows_to_power_of_two(data: &mut Vec<C32>, current_rows: i32, row_width: usize) -> i32 {
+    if current_rows <= 0 || row_width == 0 {
+        return current_rows;
+    }
+    let target_rows = if current_rows <= 1 {
+        1
+    } else {
+        (current_rows as u32).next_power_of_two() as i32
+    };
+
+    if target_rows > current_rows {
+        let additional_samples = (target_rows - current_rows) as usize * row_width;
+        data.extend(std::iter::repeat(C32::new(0.0, 0.0)).take(additional_samples));
+    }
+
+    target_rows
+}
+
 /// Holds the results of processing a single .cor file, needed for subsequent plotting.
 pub struct ProcessResult {
     pub header: CorHeader,
@@ -347,7 +365,8 @@ pub fn process_cor_file(
             break;
         }
 
-        let current_length = actual_length;
+        let current_length =
+            pad_time_rows_to_power_of_two(&mut complex_vec, actual_length, fft_point_half_used);
 
         let is_flagged = time_flag_ranges
             .iter()

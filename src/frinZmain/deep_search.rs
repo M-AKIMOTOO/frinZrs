@@ -204,8 +204,8 @@ pub fn run_deep_search(
 
     let mut delay_history_clone = delay_history.clone();
     let mut rate_history_clone = rate_history.clone();
-    let mut final_delay = median(&mut delay_history_clone).unwrap_or(current_delay);
-    let mut final_rate = median(&mut rate_history_clone).unwrap_or(current_rate);
+    let final_delay = median(&mut delay_history_clone).unwrap_or(current_delay);
+    let final_rate = median(&mut rate_history_clone).unwrap_or(current_rate);
 
     // Step 3: 最終的な解析を実行
     println!(

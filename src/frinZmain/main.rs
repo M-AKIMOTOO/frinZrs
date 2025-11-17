@@ -6,7 +6,7 @@ use std::io::{self, Cursor, Read, Write};
 use std::process::exit;
 
 use chrono::{DateTime, Utc};
-use clap::{CommandFactory, Parser};
+use clap::{parser::ValueSource, CommandFactory, FromArgMatches, Parser};
 use num_complex::Complex;
 use std::f64::consts::PI;
 use std::path::Path;
@@ -71,15 +71,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut args = match Args::try_parse() {
-        Ok(args) => args,
+    let mut command = Args::command();
+    let mut matches = match command.try_get_matches_from(env_args.clone()) {
+        Ok(m) => m,
         Err(e) => {
-            if std::env::args().len() <= 1 {
+            if env_args.len() <= 1 {
                 exit(0);
             } else {
                 e.exit();
             }
         }
+    };
+    let rate_padding_explicit =
+        matches.value_source("rate-padding") == Some(ValueSource::CommandLine);
+
+    let mut args = match Args::from_arg_matches_mut(&mut matches) {
+        Ok(args) => args,
+        Err(e) => e.exit(),
     };
 
     if args.scan_correct.is_some() {
@@ -92,16 +100,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // シンプルな仕様: --cumulate が指定されたら rate_padding は常に 1 にする
     if args.cumulate != 0 {
         args.rate_padding = 1;
-    }
-
-    if args.primary_search_mode() == Some("deep") && args.cumulate == 0 {
-        if args.rate_padding != 8 {
+    } else if args.primary_search_mode() == Some("deep") && !rate_padding_explicit {
+        if args.rate_padding != 4 {
             println!(
-                "#INFO: --search deep が指定されたため rate-padding を 8 に設定します (旧値 {}).",
+                "#INFO: --search deep が指定されたため rate-padding を 4 に設定します (旧値 {}).",
                 args.rate_padding
             );
         }
-        args.rate_padding = 8;
+        args.rate_padding = 4;
     }
 
     if !args.rate_padding.is_power_of_two() {
