@@ -13,8 +13,6 @@ use crate::header::CorHeader;
 
 type C32 = Complex<f32>;
 
-const CONTINUITY_SNR_MARGIN: f32 = 0.02;
-
 /// Deep searchで使用する探索パラメータ
 #[derive(Debug, Clone)]
 pub struct DeepSearchParams {
@@ -208,70 +206,6 @@ pub fn run_deep_search(
     let mut rate_history_clone = rate_history.clone();
     let mut final_delay = median(&mut delay_history_clone).unwrap_or(current_delay);
     let mut final_rate = median(&mut rate_history_clone).unwrap_or(current_rate);
-
-    if let Some((prev_delay, prev_rate)) = previous_solution {
-        let delay_jump = (final_delay - prev_delay).abs();
-        let rate_jump = (final_rate - prev_rate).abs();
-        let delay_jump_threshold = search_params.delay_fine_step * 1.5;
-        let rate_jump_threshold =
-            (search_params.rate_fine_step_factor / (10.0 * pp as f32)).abs() * 5.0;
-
-        if delay_jump > delay_jump_threshold || rate_jump > rate_jump_threshold {
-            let candidate_snr = evaluate_delay_rate_snr(
-                complex_vec,
-                header,
-                current_length,
-                effective_integ_time,
-                current_obs_time,
-                rfi_ranges,
-                bandpass_data,
-                args,
-                final_delay,
-                final_rate,
-                start_time_offset_sec,
-                effective_fft_point,
-            )?;
-
-            let previous_snr = evaluate_delay_rate_snr(
-                complex_vec,
-                header,
-                current_length,
-                effective_integ_time,
-                current_obs_time,
-                rfi_ranges,
-                bandpass_data,
-                args,
-                prev_delay,
-                prev_rate,
-                start_time_offset_sec,
-                effective_fft_point,
-            )?;
-
-            let snr_gain = if previous_snr > 0.0 {
-                (candidate_snr - previous_snr) / previous_snr
-            } else {
-                f32::INFINITY
-            };
-
-            if snr_gain < CONTINUITY_SNR_MARGIN {
-                println!(
-                    "[DEEP SEARCH]   Continuity guard keeping previous solution (Δdelay={:.6}, Δrate={:.6}, ΔSNR={:.2}%)",
-                    delay_jump,
-                    rate_jump,
-                    snr_gain * 100.0
-                );
-                final_delay = prev_delay;
-                final_rate = prev_rate;
-            } else {
-                println!(
-                    "[DEEP SEARCH]   Continuity guard accepted new solution (Δdelay={:.6}, Δrate={:.6}, ΔSNR={:.2}%)",
-                    delay_jump,
-                    rate_jump,
-                    snr_gain * 100.0
-                );
-            }
-        }
-    }
 
     // Step 3: 最終的な解析を実行
     println!(
