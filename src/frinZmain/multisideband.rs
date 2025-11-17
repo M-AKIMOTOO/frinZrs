@@ -539,7 +539,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         let c_sector_header =
             read_sector_header(&mut c_band_cursor_sector, &c_band_header, 1, 0, i, false)?;
 
-        let (mut c_complex_vec_sector, c_current_obs_time, _) = read_visibility_data(
+        let (mut c_complex_vec_sector, _c_current_obs_time, _) = read_visibility_data(
             &mut c_band_cursor_sector,
             &c_band_header,
             1,
@@ -560,7 +560,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             }
         }
 
-        let c_start_time_offset_sec = (c_current_obs_time - c_band_obs_time).num_seconds() as f32;
+        let c_start_time_offset_sec = 0.0;
         let c_complex_vec_sector_f64: Vec<Complex<f64>> = c_complex_vec_sector
             .iter()
             .map(|&c| num_complex::Complex::new(c.re as f64, c.im as f64))
@@ -594,7 +594,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         let _x_sector_header =
             read_sector_header(&mut x_band_cursor_sector, &x_band_header, 1, 0, i, false)?;
 
-        let (mut x_complex_vec_sector, x_current_obs_time, _) = read_visibility_data(
+        let (mut x_complex_vec_sector, _x_current_obs_time, _) = read_visibility_data(
             &mut x_band_cursor_sector,
             &x_band_header,
             1,
@@ -614,7 +614,7 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             }
         }
 
-        let x_start_time_offset_sec = (x_current_obs_time - x_band_obs_time).num_seconds() as f32;
+        let x_start_time_offset_sec = 0.0;
         let x_complex_vec_sector_f64: Vec<Complex<f64>> = x_complex_vec_sector
             .iter()
             .map(|&c| num_complex::Complex::new(c.re as f64, c.im as f64))

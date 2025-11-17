@@ -324,13 +324,13 @@ pub fn run_fringe_rate_map_analysis(
     let mut total_beam_map = ndarray::Array2::<f32>::zeros((image_size, image_size));
     let mut uv_data: Vec<(f32, f32)> = Vec::new();
 
-    let obs_start_time = obs_start_time.expect("Failed to get observation start time");
+    let _obs_start_time = obs_start_time.expect("Failed to get observation start time");
     let effective_integ_time =
         effective_integ_time.expect("Failed to get effective integration time");
 
     // --- Loop Setup ---
     cursor.set_position(0);
-    let (_, obs_start_time, effective_integ_time) =
+    let (_, _obs_start_time, effective_integ_time) =
         read_visibility_data(&mut cursor, &header, 1, 0, 0, false, pp_flag_ranges)?;
     cursor.set_position(256);
 
@@ -406,7 +406,7 @@ pub fn run_fringe_rate_map_analysis(
                 }
             }
 
-            let start_time_offset_sec = (current_obs_time - obs_start_time).num_seconds() as f32;
+            let start_time_offset_sec = 0.0;
 
             let corrected_data_f64 = apply_phase_correction(
                 &input_data_f64,
@@ -636,7 +636,7 @@ fn run_frmap_maser(
     let rad_to_arcsec: f64 = 180.0 / PI * 3600.0;
     let arcsec_to_rad = PI / (180.0 * 3600.0);
     cursor.set_position(0);
-    let (_, obs_start_time, effective_integ_time) =
+    let (_, _obs_start_time, effective_integ_time) =
         read_visibility_data(&mut cursor, &header, 1, 0, 0, false, pp_flag_ranges)?;
     cursor.set_position(256);
 
@@ -727,7 +727,7 @@ fn run_frmap_maser(
                 }
             }
 
-            let start_time_offset_sec = (segment_start_time - obs_start_time).num_seconds() as f32;
+            let start_time_offset_sec = 0.0;
 
             let corrected_data_f64 = apply_phase_correction(
                 &input_data_f64,

@@ -388,6 +388,14 @@ pub fn process_cor_file(
                     args,
                     pp,
                     args.cpu,
+                    if l1 == 0 {
+                        None
+                    } else {
+                        Some((
+                            add_plot_res_delay.last().copied().unwrap_or(args.delay_correct),
+                            add_plot_res_rate.last().copied().unwrap_or(args.rate_correct),
+                        ))
+                    },
                 )?;
                 deep_search_result.analysis_results.residual_delay -= args.delay_correct;
                 deep_search_result.analysis_results.residual_rate -= args.rate_correct;
@@ -962,7 +970,7 @@ pub(crate) fn run_analysis_pipeline(
     current_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
-    obs_time: &DateTime<Utc>,
+    _obs_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
     bandpass_data: &Option<Vec<C32>>,
     effective_fft_point: i32,
@@ -1026,7 +1034,6 @@ pub(crate) fn run_analysis_pipeline(
                         .collect()
                 })
                 .collect();
-            let start_time_offset_sec = (*current_obs_time - *obs_time).num_seconds() as f32;
             let corrected_complex_vec_2d = fft::apply_phase_correction(
                 &input_data_2d,
                 rate_correct,
@@ -1035,7 +1042,7 @@ pub(crate) fn run_analysis_pipeline(
                 effective_integ_time,
                 header.sampling_speed as u32,
                 effective_fft_point as u32,
-                start_time_offset_sec,
+                0.0,
             );
             corrected_complex_vec_2d
                 .into_iter()

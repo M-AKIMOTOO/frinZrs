@@ -1093,7 +1093,7 @@ fn collect_visibilities_from_cor(
             }
         }
 
-        let start_time_offset_sec = (current_obs_time - obs_time).num_seconds() as f32;
+        let start_time_offset_sec = 0.0;
         let fft_point_half_used = (effective_fft_point / 2) as usize;
 
         let corrected = apply_phase_correction(
@@ -1200,6 +1200,7 @@ fn determine_segment_correction(
                 args,
                 header.number_of_sector,
                 args.cpu,
+                None,
             )?;
             Ok(SegmentCorrection {
                 delay: deep.analysis_results.residual_delay,

@@ -37,6 +37,19 @@ impl Default for DeepSearchParams {
     }
 }
 
+fn median(values: &mut [f32]) -> Option<f32> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mid = values.len() / 2;
+    if values.len() % 2 == 0 {
+        Some((values[mid - 1] + values[mid]) * 0.5)
+    } else {
+        Some(values[mid])
+    }
+}
+
 /// Deep search探索結果
 #[derive(Debug, Clone)]
 pub struct DeepSearchResult {
@@ -52,16 +65,18 @@ pub fn run_deep_search(
     current_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
-    obs_time: &DateTime<Utc>,
+    _obs_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
     bandpass_data: &Option<Vec<C32>>,
     args: &Args,
     pp: i32,
     cpu_count_arg: u32, // New argument
+    previous_solution: Option<(f32, f32)>,
 ) -> Result<DeepSearchResult, Box<dyn Error>> {
     println!("[DEEP SEARCH] Starting deep hierarchical search algorithm");
 
-    let start_time_offset_sec = (*current_obs_time - obs_time).num_seconds() as f32;
+    // フリンジ補正は各セグメントの相対時間で行う
+    let start_time_offset_sec = 0.0;
 
     if current_length <= 0 {
         return Err("有効なセクター長が 0 以下です".into());
@@ -85,17 +100,25 @@ pub fn run_deep_search(
     let effective_fft_point = (fft_point_half * 2) as i32;
 
     // Step 1: 粗い遅延・レート推定
-    let (coarse_delay, coarse_rate) = get_coarse_estimates(
-        complex_vec,
-        header,
-        current_length,
-        effective_integ_time,
-        current_obs_time,
-        rfi_ranges,
-        bandpass_data,
-        args,
-        effective_fft_point,
-    )?;
+    let (coarse_delay, coarse_rate) = if let Some((prev_delay, prev_rate)) = previous_solution {
+        println!(
+            "[DEEP SEARCH] Using previous solution as initial estimate: delay={:.6}, rate={:.6}",
+            prev_delay, prev_rate
+        );
+        (prev_delay, prev_rate)
+    } else {
+        get_coarse_estimates(
+            complex_vec,
+            header,
+            current_length,
+            effective_integ_time,
+            current_obs_time,
+            rfi_ranges,
+            bandpass_data,
+            args,
+            effective_fft_point,
+        )?
+    };
 
     println!(
         "[DEEP SEARCH] Coarse estimates - Delay: {:.6} samples, Rate: {:.6} Hz",
@@ -106,6 +129,8 @@ pub fn run_deep_search(
     let search_params = DeepSearchParams::default();
     let mut current_delay = coarse_delay;
     let mut current_rate = coarse_rate;
+    let mut delay_history = vec![coarse_delay];
+    let mut rate_history = vec![coarse_rate];
 
     for iteration in 0..search_params.max_iterations {
         println!("[DEEP SEARCH] Iteration {} starting", iteration + 1);
@@ -167,6 +192,8 @@ pub fn run_deep_search(
         // 結果を更新
         current_delay = best_delay;
         current_rate = best_rate;
+        delay_history.push(best_delay);
+        rate_history.push(best_rate);
 
         println!(
             "[DEEP SEARCH]   Best result: delay={:.6} samples, rate={:.6} Hz, SNR={:.3}",
@@ -174,10 +201,15 @@ pub fn run_deep_search(
         );
     }
 
+    let mut delay_history_clone = delay_history.clone();
+    let mut rate_history_clone = rate_history.clone();
+    let final_delay = median(&mut delay_history_clone).unwrap_or(current_delay);
+    let final_rate = median(&mut rate_history_clone).unwrap_or(current_rate);
+
     // Step 3: 最終的な解析を実行
     println!(
         "[DEEP SEARCH] Final result - Delay: {:.6} samples, Rate: {:.6} Hz",
-        current_delay, current_rate
+        final_delay, final_rate
     );
 
     let (final_analysis_results, final_freq_rate_array, final_delay_rate_2d_data) =
@@ -190,8 +222,8 @@ pub fn run_deep_search(
             rfi_ranges,
             bandpass_data,
             args,
-            current_delay,
-            current_rate,
+            final_delay,
+            final_rate,
             start_time_offset_sec,
             effective_fft_point,
         )?;
