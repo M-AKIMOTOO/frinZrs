@@ -620,7 +620,7 @@ pub fn process_cor_file(
                 let header_str = format!(
                     concat!(
                         "#*****************************************************************************************************************************************************************************************\n",
-                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            {:<20}            {:<20}             MJD\n",
+                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            {:<20}            {:<16}         MJD\n",
                         "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]\n",
                         "#*****************************************************************************************************************************************************************************************"
                     ),
@@ -664,7 +664,7 @@ pub fn process_cor_file(
                 let header_str = format!(
                     concat!(
                         "#*******************************************************************************************************************************************************************************************\n",
-                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            {:<20}             {:<20}             MJD     \n",
+                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            {:<20}             {:<16}        MJD     \n",
                         "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                \n",
                         "#*******************************************************************************************************************************************************************************************"
                     ),
