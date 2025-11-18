@@ -611,11 +611,18 @@ pub fn process_cor_file(
         if !args.frequency {
             let delay_output_line = format_delay_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
-                let header_str = "".to_string()
-                    + "#*****************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            YAMAGU32-azel            YAMAGU34-azel             MJD\n"
-                    + "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]\n"
-                    + "#*****************************************************************************************************************************************************************************************";
+                let station1_label = format!("{}-azel", header.station1_name.trim());
+                let station2_label = format!("{}-azel", header.station2_name.trim());
+                let header_str = format!(
+                    concat!(
+                        "#*****************************************************************************************************************************************************************************************\n",
+                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            {:<20}            {:<20}             MJD\n",
+                        "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]\n",
+                        "#*****************************************************************************************************************************************************************************************"
+                    ),
+                    station1_label,
+                    station2_label
+                );
                 print!("{}\n", header_str);
                 delay_output_str += &format!("{}\n", header_str);
             }
@@ -648,11 +655,18 @@ pub fn process_cor_file(
         } else {
             let freq_output_line = format_freq_output(&analysis_results, &label_str, args.length);
             if l1 == 0 {
-                let header_str = "".to_string()
-                    + "#*******************************************************************************************************************************************************************************************\n"
-                    + "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            YAMAGU32-azel             YAMAGU34-azel             MJD     \n"
-                    + "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                \n"
-                    + "#*******************************************************************************************************************************************************************************************";
+                let station1_label = format!("{}-azel", header.station1_name.trim());
+                let station2_label = format!("{}-azel", header.station2_name.trim());
+                let header_str = format!(
+                    concat!(
+                        "#*******************************************************************************************************************************************************************************************\n",
+                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            {:<20}             {:<20}             MJD     \n",
+                        "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                \n",
+                        "#*******************************************************************************************************************************************************************************************"
+                    ),
+                    station1_label,
+                    station2_label
+                );
                 print!("{}\n", header_str);
                 freq_output_str += &format!("{}\n", header_str);
             }
