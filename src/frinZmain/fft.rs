@@ -7,21 +7,29 @@ type C32 = Complex<f32>;
 
 pub fn process_fft(
     complex_vec: &[C32],
-    length: i32,
+    physical_length: i32,
     fft_point: i32,
     sampling_speed: i32,
     rfi_ranges: &[(usize, usize)],
     rate_padding: u32,
 ) -> (Array2<C32>, usize) {
-    let length_usize = length as usize;
     let fft_point_half = (fft_point / 2) as usize;
-    let base_length = length_usize.max(1);
+    let rows = if fft_point_half == 0 {
+        0
+    } else {
+        complex_vec.len() / fft_point_half
+    };
+    let base_length = rows.max(1);
     let mut padding_length = base_length.saturating_mul(rate_padding.max(1) as usize);
-    if length == 1 {
+    if base_length == 1 {
         padding_length = padding_length.saturating_mul(2);
     }
     let padding_length_half = padding_length / 2;
-    let length_f32 = base_length as f32;
+    let length_f32 = if physical_length > 0 {
+        physical_length as f32
+    } else {
+        1.0
+    };
     let fft_scale = if length_f32 > 0.0 {
         fft_point as f32 / length_f32
     } else {
@@ -40,7 +48,7 @@ pub fn process_fft(
     let fft = planner.plan_fft_forward(padding_length);
 
     let complex_array =
-        Array::from_shape_vec((length_usize, fft_point_half), complex_vec.to_vec()).unwrap();
+        Array::from_shape_vec((rows, fft_point_half), complex_vec.to_vec()).unwrap();
     let mut freq_rate_array = Array2::<C32>::zeros((fft_point_half, padding_length));
 
     for i in 1..fft_point_half {

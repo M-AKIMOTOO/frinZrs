@@ -1072,6 +1072,7 @@ fn collect_visibilities_from_cor(
         }
 
         let mut actual_length = complex_vec.len() / original_fft_half;
+        let physical_length = actual_length as i32;
         if effective_fft_point != original_fft_point {
             let target_half = (effective_fft_point / 2) as usize;
             complex_vec =
@@ -1105,6 +1106,7 @@ fn collect_visibilities_from_cor(
             &header,
             args,
             current_length,
+            physical_length,
             segment_integ_time,
             &current_obs_time,
             &obs_time,
@@ -1197,6 +1199,7 @@ fn determine_segment_correction(
     header: &CorHeader,
     args: &Args,
     current_length: i32,
+    physical_length: i32,
     segment_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
     obs_time: &DateTime<Utc>,
@@ -1220,6 +1223,7 @@ fn determine_segment_correction(
                 complex_vec,
                 header,
                 current_length,
+                physical_length,
                 segment_integ_time,
                 current_obs_time,
                 obs_time,
@@ -1259,6 +1263,7 @@ fn determine_segment_correction(
                     total_rate,
                     args.acel_correct,
                     current_length,
+                    physical_length,
                     segment_integ_time,
                     current_obs_time,
                     obs_time,
@@ -1279,6 +1284,7 @@ fn determine_segment_correction(
                 total_rate,
                 args.acel_correct,
                 current_length,
+                physical_length,
                 segment_integ_time,
                 current_obs_time,
                 obs_time,
@@ -1307,6 +1313,7 @@ fn determine_segment_correction(
                 args.rate_correct,
                 args.acel_correct,
                 current_length,
+                physical_length,
                 segment_integ_time,
                 current_obs_time,
                 obs_time,

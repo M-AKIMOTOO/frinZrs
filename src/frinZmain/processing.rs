@@ -404,6 +404,7 @@ pub fn process_cor_file(
                         &complex_vec,
                         &processing_header,
                         current_length,
+                        physical_length,
                         effective_integ_time,
                         &current_obs_time,
                         &obs_time,
@@ -447,6 +448,7 @@ pub fn process_cor_file(
                             total_rate_correct,
                             args.acel_correct,
                             current_length,
+                            physical_length,
                             effective_integ_time,
                             &current_obs_time,
                             &obs_time,
@@ -468,6 +470,7 @@ pub fn process_cor_file(
                             total_rate_correct,
                             args.acel_correct,
                             current_length,
+                            physical_length,
                             effective_integ_time,
                             &current_obs_time,
                             &obs_time,
@@ -477,7 +480,7 @@ pub fn process_cor_file(
                         )?;
 
                     final_analysis_results.length_f32 =
-                        current_length as f32 * effective_integ_time;
+                        physical_length as f32 * effective_integ_time;
                     final_analysis_results.corrected_delay = total_delay_correct;
                     final_analysis_results.corrected_rate = total_rate_correct;
                     final_analysis_results.corrected_acel = args.acel_correct;
@@ -502,6 +505,7 @@ pub fn process_cor_file(
                             rate_correct_to_use,
                             args.acel_correct,
                             current_length,
+                            physical_length,
                             effective_integ_time,
                             &current_obs_time,
                             &obs_time,
@@ -510,7 +514,7 @@ pub fn process_cor_file(
                             effective_fft_point,
                         )?;
                     analysis_results.length_f32 =
-                        (current_length as f32 * effective_integ_time).ceil();
+                        (physical_length as f32 * effective_integ_time).ceil();
                     (analysis_results, freq_rate_array, delay_rate_2d_data_comp)
                 }
             };
@@ -1014,6 +1018,7 @@ pub(crate) fn run_analysis_pipeline(
     rate_correct: f32,
     acel_correct: f32,
     current_length: i32,
+    physical_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
     _obs_time: &DateTime<Utc>,
@@ -1101,7 +1106,7 @@ pub(crate) fn run_analysis_pipeline(
 
     let (mut freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
-        current_length,
+        physical_length,
         effective_fft_point,
         header.sampling_speed,
         rfi_ranges,

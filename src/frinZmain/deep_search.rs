@@ -63,6 +63,7 @@ pub fn run_deep_search(
     complex_vec: &[C32],
     header: &CorHeader,
     current_length: i32,
+    physical_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
     _obs_time: &DateTime<Utc>,
@@ -112,6 +113,7 @@ pub fn run_deep_search(
             complex_vec,
             header,
             current_length,
+            physical_length,
             effective_integ_time,
             current_obs_time,
             rfi_ranges,
@@ -174,6 +176,7 @@ pub fn run_deep_search(
             complex_vec,
             header,
             current_length,
+            physical_length,
             effective_integ_time,
             current_obs_time,
             rfi_ranges,
@@ -218,6 +221,7 @@ pub fn run_deep_search(
             complex_vec,
             header,
             current_length,
+            physical_length,
             effective_integ_time,
             current_obs_time,
             rfi_ranges,
@@ -241,6 +245,7 @@ fn get_coarse_estimates(
     complex_vec: &[C32],
     header: &CorHeader,
     current_length: i32,
+    physical_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
@@ -254,7 +259,7 @@ fn get_coarse_estimates(
 
         let (mut freq_rate_array, padding_length) = process_fft(
             complex_vec,
-            current_length,
+            physical_length,
             effective_fft_point,
             header.sampling_speed,
             rfi_ranges,
@@ -293,7 +298,7 @@ fn get_coarse_estimates(
 
         let (mut freq_rate_array, padding_length) = process_fft(
             complex_vec,
-            current_length,
+            physical_length,
             effective_fft_point,
             header.sampling_speed,
             rfi_ranges,
@@ -333,6 +338,7 @@ fn parallel_grid_search(
     complex_vec: &[C32],
     header: &CorHeader,
     current_length: i32,
+    physical_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
@@ -381,6 +387,7 @@ fn parallel_grid_search(
                 complex_vec,
                 header,
                 current_length,
+                physical_length,
                 effective_integ_time,
                 current_obs_time,
                 rfi_ranges,
@@ -408,6 +415,7 @@ fn evaluate_delay_rate_snr(
     complex_vec: &[C32],
     header: &CorHeader,
     current_length: i32,
+    physical_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
@@ -433,7 +441,7 @@ fn evaluate_delay_rate_snr(
     // FFT処理
     let (mut freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
-        current_length,
+        physical_length,
         effective_fft_point,
         header.sampling_speed,
         rfi_ranges,
@@ -471,6 +479,7 @@ fn perform_final_analysis(
     complex_vec: &[C32],
     header: &CorHeader,
     current_length: i32,
+    physical_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
@@ -495,7 +504,7 @@ fn perform_final_analysis(
 
     let (mut final_freq_rate_array, padding_length) = process_fft(
         &corrected_complex_vec,
-        current_length,
+        physical_length,
         effective_fft_point,
         header.sampling_speed,
         rfi_ranges,
@@ -525,7 +534,7 @@ fn perform_final_analysis(
     // Deep searchの結果を反映
     analysis_results.residual_delay = final_delay;
     analysis_results.residual_rate = final_rate;
-    analysis_results.length_f32 = current_length as f32 * effective_integ_time;
+    analysis_results.length_f32 = physical_length as f32 * effective_integ_time;
 
     Ok((
         analysis_results,

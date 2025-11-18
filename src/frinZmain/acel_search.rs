@@ -128,6 +128,7 @@ fn get_phases_from_collected_data(
             current_total_rate_correct,
             current_total_acel_correct,
             current_length,
+            current_length,
             effective_integ_time,
             &data_point.obs_time,
             &obs_time_start,
