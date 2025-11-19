@@ -19,7 +19,7 @@ pub fn run_single_file_analysis(
     pp_flag_ranges: &[(u32, u32)],
 ) -> Result<(), Box<dyn Error>> {
     let input_path = args.input.as_ref().unwrap();
-    let result = process_cor_file(input_path, args, time_flag_ranges, pp_flag_ranges)?;
+    let result = process_cor_file(input_path, args, time_flag_ranges, pp_flag_ranges, false)?;
 
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let frinz_dir = parent_dir.join("frinZ");

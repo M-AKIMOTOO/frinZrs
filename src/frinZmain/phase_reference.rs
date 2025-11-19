@@ -68,7 +68,13 @@ pub fn run_phase_reference_analysis(
         },
         loop_count
     );
-    let mut cal_results = process_cor_file(&cal_path, &cal_args, time_flag_ranges, pp_flag_ranges)?;
+    let mut cal_results = process_cor_file(
+        &cal_path,
+        &cal_args,
+        time_flag_ranges,
+        pp_flag_ranges,
+        false,
+    )?;
 
     println!(
         "Target:     {:?} (length: {}s, loop: {}",
@@ -80,8 +86,13 @@ pub fn run_phase_reference_analysis(
         },
         loop_count
     );
-    let mut target_results =
-        process_cor_file(&target_path, &target_args, time_flag_ranges, pp_flag_ranges)?;
+    let mut target_results = process_cor_file(
+        &target_path,
+        &target_args,
+        time_flag_ranges,
+        pp_flag_ranges,
+        false,
+    )?;
 
     // --- Phase Unwrapping ---
     utils::unwrap_phase(&mut cal_results.add_plot_phase, false);

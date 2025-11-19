@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::args::Args;
-use crate::fft::{self, process_fft};
+use crate::fft::process_fft;
 use crate::header::{parse_header, CorHeader};
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;

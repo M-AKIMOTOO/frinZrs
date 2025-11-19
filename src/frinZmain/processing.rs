@@ -100,6 +100,7 @@ pub struct ProcessResult {
     pub add_plot_noise: Vec<f32>,
     pub add_plot_res_delay: Vec<f32>,
     pub add_plot_res_rate: Vec<f32>,
+    pub add_plot_complex: Vec<Complex<f32>>,
 }
 
 pub fn process_cor_file(
@@ -107,6 +108,7 @@ pub fn process_cor_file(
     args: &Args,
     time_flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
     pp_flag_ranges: &[(u32, u32)],
+    suppress_output: bool,
 ) -> Result<ProcessResult, Box<dyn Error>> {
     // --- File and Path Setup ---
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
@@ -255,7 +257,7 @@ pub fn process_cor_file(
 
     // --- Loop and Processing Setup ---
     cursor.set_position(0);
-    let (_, obs_time, effective_integ_time) =
+    let (_, file_start_time, effective_integ_time) =
         read_visibility_data(&mut cursor, &header, 1, 0, 0, false, pp_flag_ranges)?;
     cursor.set_position(256);
 
@@ -299,6 +301,7 @@ pub fn process_cor_file(
     let mut add_plot_times: Vec<DateTime<Utc>> = Vec::new();
     let mut add_plot_res_delay: Vec<f32> = Vec::new();
     let mut add_plot_res_rate: Vec<f32> = Vec::new();
+    let mut add_plot_complex: Vec<Complex<f32>> = Vec::new();
 
     let mut prev_deep_solution: Option<(f32, f32)> = None;
     let mut first_output_basename: Option<String> = None;
@@ -407,7 +410,7 @@ pub fn process_cor_file(
                         physical_length,
                         effective_integ_time,
                         &current_obs_time,
-                        &obs_time,
+                        &file_start_time,
                         &rfi_ranges,
                         &bandpass_data,
                         args,
@@ -451,7 +454,7 @@ pub fn process_cor_file(
                             physical_length,
                             effective_integ_time,
                             &current_obs_time,
-                            &obs_time,
+                            &file_start_time,
                             &rfi_ranges,
                             &bandpass_data,
                             effective_fft_point,
@@ -473,7 +476,7 @@ pub fn process_cor_file(
                             physical_length,
                             effective_integ_time,
                             &current_obs_time,
-                            &obs_time,
+                            &file_start_time,
                             &rfi_ranges,
                             &bandpass_data,
                             effective_fft_point,
@@ -508,7 +511,7 @@ pub fn process_cor_file(
                             physical_length,
                             effective_integ_time,
                             &current_obs_time,
-                            &obs_time,
+                            &file_start_time,
                             &rfi_ranges,
                             &bandpass_data,
                             effective_fft_point,
@@ -627,10 +630,14 @@ pub fn process_cor_file(
                     station1_label,
                     station2_label
                 );
-                print!("{}\n", header_str);
+                if !suppress_output {
+                    print!("{}\n", header_str);
+                }
                 delay_output_str += &format!("{}\n", header_str);
             }
-            print!("{}\n", delay_output_line);
+            if !suppress_output {
+                print!("{}\n", delay_output_line);
+            }
             delay_output_str += &format!("{}\n", delay_output_line);
 
             if args.cumulate != 0 {
@@ -640,6 +647,9 @@ pub fn process_cor_file(
 
             add_plot_phase.push(analysis_results.delay_phase);
             add_plot_times.push(current_obs_time);
+            let phase_rad = analysis_results.delay_phase.to_radians();
+            let complex_sample = Complex::from_polar(analysis_results.delay_max_amp, phase_rad);
+            add_plot_complex.push(complex_sample);
 
             if args.add_plot {
                 add_plot_amp.push(analysis_results.delay_max_amp * 100.0);
@@ -671,10 +681,14 @@ pub fn process_cor_file(
                     station1_label,
                     station2_label
                 );
-                print!("{}\n", header_str);
+                if !suppress_output {
+                    print!("{}\n", header_str);
+                }
                 freq_output_str += &format!("{}\n", header_str);
             }
-            print!("{}\n", freq_output_line);
+            if !suppress_output {
+                print!("{}\n", freq_output_line);
+            }
             freq_output_str += &format!("{}\n", freq_output_line);
 
             if l1 == loop_count - 1 && args.output {
@@ -995,7 +1009,7 @@ pub fn process_cor_file(
     Ok(ProcessResult {
         header: processing_header,
         label,
-        obs_time,
+        obs_time: file_start_time,
         length_arg: length,
         cumulate_len,
         cumulate_snr,
@@ -1006,6 +1020,7 @@ pub fn process_cor_file(
         add_plot_noise,
         add_plot_res_delay,
         add_plot_res_rate,
+        add_plot_complex,
     })
 }
 
@@ -1021,7 +1036,7 @@ pub(crate) fn run_analysis_pipeline(
     physical_length: i32,
     effective_integ_time: f32,
     current_obs_time: &DateTime<Utc>,
-    _obs_time: &DateTime<Utc>,
+    file_start_time: &DateTime<Utc>,
     rfi_ranges: &[(usize, usize)],
     bandpass_data: &Option<Vec<C32>>,
     effective_fft_point: i32,
@@ -1074,6 +1089,14 @@ pub(crate) fn run_analysis_pipeline(
         .into());
     }
 
+    let start_time_offset_sec = if search_mode.is_some() {
+        0.0
+    } else {
+        current_obs_time
+            .signed_duration_since(*file_start_time)
+            .num_seconds() as f32
+    };
+
     let corrected_complex_vec =
         if delay_correct != 0.0 || rate_correct != 0.0 || acel_correct != 0.0 {
             let input_data_2d: Vec<Vec<Complex<f64>>> = complex_vec
@@ -1093,7 +1116,7 @@ pub(crate) fn run_analysis_pipeline(
                 effective_integ_time,
                 header.sampling_speed as u32,
                 effective_fft_point as u32,
-                0.0,
+                start_time_offset_sec,
             );
             corrected_complex_vec_2d
                 .into_iter()

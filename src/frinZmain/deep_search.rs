@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use crate::analysis::{analyze_results, AnalysisResults};
 use crate::args::Args;
 use crate::bandpass::apply_bandpass_correction;
-use crate::fft::{self, apply_phase_correction, process_fft, process_ifft};
+use crate::fft::{apply_phase_correction, process_fft, process_ifft};
 use crate::header::CorHeader;
 
 type C32 = Complex<f32>;
@@ -76,7 +76,7 @@ pub fn run_deep_search(
 ) -> Result<DeepSearchResult, Box<dyn Error>> {
     println!("[DEEP SEARCH] Starting deep hierarchical search algorithm");
 
-    // フリンジ補正は各セグメントの相対時間で行う
+    // フリンジ補正はファイル開始時刻からの経過時間で行う
     let start_time_offset_sec = 0.0;
 
     if current_length <= 0 {

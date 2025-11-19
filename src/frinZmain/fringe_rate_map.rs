@@ -9,7 +9,7 @@ use ndarray::{Array, Array2, ArrayView1, Axis};
 use num_complex::Complex;
 
 use crate::args::Args;
-use crate::fft::{self, apply_phase_correction, process_fft, process_ifft};
+use crate::fft::{apply_phase_correction, process_fft, process_ifft};
 use crate::header::{parse_header, CorHeader};
 use crate::plot::{plot_cross_section, plot_sky_map, plot_uv_coverage};
 use crate::read::read_visibility_data;

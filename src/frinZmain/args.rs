@@ -29,6 +29,10 @@ pub struct Args {
     #[arg(long, num_args = 2..=6, value_names = ["CALIBRATOR", "TARGET", "FIT_DEGREE", "CAL_LENGTH", "TGT_LENGTH", "LOOP"], aliases = ["ph", "pha", "phas", "phase","phase-r", "phase-re","phase-ref","phase-refe","phase-refer","phase-refere","phase-referen","phase-referenc"])]
     pub phase_reference: Vec<String>,
 
+    /// Compute closure phase from three baselines. Provide: FILE1 FILE2 FILE3 [refant:NAME].
+    #[arg(long = "closure-phase", aliases = ["cp"], num_args = 0.., value_name = "FILE|KEY:VALUE")]
+    pub closure_phase: Option<Vec<String>>,
+
     /// The integration time in seconds. Defaults to the entire file.
     #[arg(long, aliases = ["le", "len", "leng", "lengt"], default_value_t = 0)]
     pub length: i32,

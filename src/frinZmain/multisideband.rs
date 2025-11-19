@@ -8,7 +8,7 @@ use num_complex::Complex;
 use crate::analysis::analyze_results;
 use crate::args::Args;
 use crate::bandpass::{apply_bandpass_correction, read_bandpass_file};
-use crate::fft::{self, apply_phase_correction, process_fft, process_ifft};
+use crate::fft::{apply_phase_correction, process_fft, process_ifft};
 use crate::header::{parse_header, CorHeader};
 use crate::plot_msb::frequency_plane;
 use crate::read::{read_sector_header, read_visibility_data};

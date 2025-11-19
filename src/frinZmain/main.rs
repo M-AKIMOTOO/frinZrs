@@ -9,12 +9,13 @@ use chrono::{DateTime, Utc};
 use clap::{parser::ValueSource, CommandFactory, FromArgMatches, Parser};
 use num_complex::Complex;
 use std::f64::consts::PI;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod acel_search;
 mod analysis;
 mod args;
 mod bandpass;
+mod closure_phase;
 mod deep_search;
 //mod error;
 mod fft;
@@ -43,6 +44,7 @@ mod uv_plot;
 
 use crate::acel_search::run_acel_search_analysis;
 use crate::args::Args;
+use crate::closure_phase::run_closure_phase_analysis;
 use crate::earth_rotation_imaging::{
     parse_imaging_cli_options, perform_imaging, run_earth_rotation_imaging, Visibility,
 };
@@ -422,6 +424,42 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    if let Some(cp_tokens) = &args.closure_phase {
+        if cp_tokens.len() < 3 {
+            eprintln!("Error: --closure-phase requires at least three .cor files.");
+            exit(1);
+        }
+        let mut paths = Vec::new();
+        let mut refant_name = String::from("YAMAGU32");
+        for token in cp_tokens {
+            if token.starts_with("refant:") {
+                refant_name = token["refant:".len()..].trim().to_string();
+            } else if paths.len() < 3 {
+                paths.push(PathBuf::from(token));
+            } else {
+                eprintln!("Error: Unknown --closure-phase option '{}'.", token);
+                exit(1);
+            }
+        }
+        if paths.len() != 3 {
+            eprintln!("Error: --closure-phase requires exactly three .cor files.");
+            exit(1);
+        }
+        for path in &paths {
+            if !check_memory_usage(&args, path)? {
+                exit(0);
+            }
+        }
+        run_closure_phase_analysis(
+            &args,
+            &paths,
+            &time_flag_ranges,
+            &pp_flag_ranges,
+            &refant_name,
+        )?;
+        return Ok(());
+    }
+
     if let Some(imaging_tokens) = args.imaging.as_ref() {
         if args.input.is_none() {
             eprintln!("Error: --imaging requires an --input file.");
@@ -504,8 +542,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         return run_acel_search_analysis(&args, &degrees, &time_flag_ranges, &pp_flag_ranges);
     }
 
-    if args.input.is_some() && !args.phase_reference.is_empty() {
-        eprintln!("Error: --input and --phase-reference cannot be used at the same time.");
+    if args.input.is_some() && (!args.phase_reference.is_empty() || args.closure_phase.is_some()) {
+        eprintln!("Error: --input cannot be combined with --phase-reference or --closure-phase.");
+        exit(1);
+    }
+
+    if !args.phase_reference.is_empty() && args.closure_phase.is_some() {
+        eprintln!("Error: --phase-reference and --closure-phase cannot be used at the same time.");
         exit(1);
     }
 
