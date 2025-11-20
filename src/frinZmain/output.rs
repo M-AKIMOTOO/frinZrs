@@ -169,7 +169,7 @@ pub fn format_freq_output(results: &AnalysisResults, label: &[&str], args_length
         results.length_f32.ceil()
     };
     let label_segment = label.get(3).copied().unwrap_or("");
-    format!(" {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+10.3} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}", // {:>+10.6} {:>+10.6}",
+    format!(" {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+12.7} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}", // {:>+10.6} {:>+10.6}",
         results.yyyydddhhmmss1,
         label_segment,
         results.source_name,

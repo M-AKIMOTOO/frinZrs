@@ -525,6 +525,11 @@ pub fn process_cor_file(
         analysis_results.length_f32 = physical_length as f32 * effective_integ_time;
 
         let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
+        let filename_length = if args.length == 0 {
+            physical_length
+        } else {
+            args.length
+        };
         let base_filename = generate_output_names(
             &processing_header,
             &current_obs_time,
@@ -532,7 +537,7 @@ pub fn process_cor_file(
             !rfi_ranges.is_empty(),
             args.frequency,
             args.bandpass.is_some(),
-            current_length,
+            filename_length,
         );
         if first_output_basename.is_none() {
             first_output_basename = Some(base_filename.clone());
@@ -578,7 +583,7 @@ pub fn process_cor_file(
                 !rfi_ranges.is_empty(),
                 args.frequency,
                 args.bandpass.is_some(),
-                current_length,
+                filename_length,
             );
             let fft_point_half = (effective_fft_point / 2) as usize;
             let time_samples = complex_vec.len() / fft_point_half;

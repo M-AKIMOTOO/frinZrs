@@ -243,6 +243,8 @@ pub fn delay_plane(
 
     colorbar
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .disable_x_mesh()
         .disable_y_mesh()
         .disable_x_axis()
@@ -488,6 +490,8 @@ pub fn frequency_plane(
 
     colorbar
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .disable_x_mesh()
         .disable_y_mesh()
         .disable_x_axis()
@@ -589,6 +593,8 @@ pub fn add_plot(
 
         chart
             .configure_mesh()
+            .x_max_light_lines(0)
+            .y_max_light_lines(0)
             .x_desc(&format!(
                 "The elapsed time since {} UT",
                 obs_start_time.format("%Y/%j %H:%M:%S")
@@ -686,6 +692,8 @@ pub fn cumulate_plot(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("Integration Time [s]")
         .y_desc("S/N ")
         .x_label_formatter(&|v| format!("{:.0}", v))
@@ -765,6 +773,8 @@ pub fn phase_reference_plot(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("Time [UTC]")
         .y_desc("Phase [deg]")
         .x_label_formatter(&|ts| {
@@ -883,6 +893,8 @@ pub fn plot_allan_deviation(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("Averaging Time (τ) [s]")
         .y_desc("Allan Deviation (σ_y(τ))")
         .x_labels(10)
@@ -961,6 +973,8 @@ pub fn plot_acel_search_result<P: AsRef<Path>>(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("Time [s]")
         .y_desc(y_label)
         .x_label_formatter(&|v| format!("{:.0}", v))
@@ -1051,6 +1065,8 @@ pub fn plot_sky_map<P: AsRef<Path>>(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("ΔRA (arcsec)")
         .y_desc("ΔDec (arcsec)")
         .x_label_formatter(&|x| format!("{:.0}", x))
@@ -1116,6 +1132,8 @@ pub fn plot_sky_map<P: AsRef<Path>>(
 
     colorbar_chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .disable_x_mesh()
         .disable_x_axis()
         .y_label_formatter(&|y| format!("{:.1e}", y))
@@ -1186,6 +1204,8 @@ pub fn plot_dynamic_spectrum_freq(
 
     amp_chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .y_desc("Time [PP]")
         //.x_desc("Frequency [channels]")
         .label_style(("sans-serif", 25).into_font())
@@ -1218,6 +1238,8 @@ pub fn plot_dynamic_spectrum_freq(
 
     phase_chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .y_desc("Time [PP]")
         .x_desc("Frequency [channels]")
         .label_style(("sans-serif", 25).into_font())
@@ -1272,6 +1294,8 @@ pub fn plot_dynamic_spectrum_lag(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .y_desc("Time [PP]")
         .x_desc("Lag [samples]")
         .label_style(("sans-serif", 25).into_font())
@@ -1392,6 +1416,8 @@ fn draw_heatmap_with_colorbar(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc(x_desc)
         .y_desc(y_desc)
         .x_label_style(("sans-serif", 18).into_font())
@@ -1589,6 +1615,8 @@ pub fn plot_complex_scatter<P: AsRef<Path>>(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("Real")
         .y_desc("Imag")
         .label_style(("sans-serif", 30))
@@ -1658,6 +1686,8 @@ pub fn plot_amp_phase_scatter<P: AsRef<Path>>(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .disable_mesh()
         .x_desc("Amplitude")
         .y_desc("Phase (deg)")
@@ -1757,6 +1787,8 @@ fn plot_histogram_panel(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc(label)
         .y_desc("Counts")
         .disable_mesh()
@@ -1814,6 +1846,8 @@ fn plot_phase_histogram_panel(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("Phase (deg)")
         .y_desc("Counts")
         .disable_mesh()
@@ -1896,6 +1930,8 @@ pub fn plot_cross_section(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("Offset (arcsec)")
         .y_desc("Normalized Intensity")
         .x_label_formatter(&|v| format!("{:.0}", v))
@@ -1974,6 +2010,8 @@ pub fn plot_uv_coverage<P: AsRef<Path>>(
 
     chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("U (meters)")
         .y_desc("V (meters)")
         .x_label_formatter(&|x| format!("{:.0}", x))
@@ -2045,6 +2083,8 @@ pub fn plot_uv_tracks<P: AsRef<Path>>(
 
     uv_chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc(&format!("U ({})", uv_unit))
         .y_desc(&format!("V ({})", uv_unit))
         .x_label_formatter(&|x| format!("{:.0}", x))
@@ -2198,6 +2238,8 @@ pub fn plot_uv_tracks<P: AsRef<Path>>(
 
     baseline_chart
         .configure_mesh()
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .x_desc("UT (hour)")
         .y_desc(baseline_label.clone())
         .x_label_formatter(&|x| format!("{:.0}", x))
