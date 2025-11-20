@@ -15,6 +15,7 @@ pub mod output;
 pub mod phase_reference;
 pub mod plot;
 pub mod plot_msb;
+pub mod png_compress;
 pub mod processing;
 pub mod raw_visibility;
 pub mod read;

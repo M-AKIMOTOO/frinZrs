@@ -31,6 +31,7 @@ mod output;
 mod phase_reference;
 mod plot;
 mod plot_msb;
+mod png_compress;
 mod pre_check;
 mod processing;
 mod raw_visibility;

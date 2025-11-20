@@ -586,9 +586,13 @@ pub fn process_cor_file(
                 filename_length,
             );
             let fft_point_half = (effective_fft_point / 2) as usize;
-            let time_samples = complex_vec.len() / fft_point_half;
+            let available_rows = complex_vec.len() / fft_point_half;
+            let requested_rows = physical_length.max(0) as usize;
+            let usable_rows = requested_rows.min(available_rows);
+            let usable_len = usable_rows * fft_point_half;
+            let truncated_vec = complex_vec[..usable_len].to_vec();
             let spectrum_array =
-                Array::from_shape_vec((time_samples, fft_point_half), complex_vec.clone()).unwrap();
+                Array::from_shape_vec((usable_rows, fft_point_half), truncated_vec).unwrap();
             let output_path_freq = dynamic_spectrum_dir
                 .join(format!("{}_dynamic_spectrum_frequency.png", base_filename));
             plot_dynamic_spectrum_freq(
@@ -599,7 +603,7 @@ pub fn process_cor_file(
                 current_length,
                 effective_integ_time,
             )?;
-            let mut lag_data = Array::zeros((time_samples, effective_fft_point as usize));
+            let mut lag_data = Array::zeros((usable_rows, effective_fft_point as usize));
             let fft_point_usize = effective_fft_point as usize;
             for (i, row) in spectrum_array.rows().into_iter().enumerate() {
                 let shifted_out =

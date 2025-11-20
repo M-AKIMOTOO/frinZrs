@@ -60,13 +60,9 @@ pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
     let heatmap_filename = format!("{}_heatmap_amp_phase.png", base_filename);
     let scatter_filename = format!("{}_scatter_real_imag.png", base_filename);
     let amp_phase_filename = format!("{}_scatter_amp_phase.png", base_filename);
-    let hist_filename = format!("{}_hist_complex.png", base_filename);
-    let hist_report_filename = format!("{}_hist_complex.txt", base_filename);
     let heatmap_filepath = output_dir.join(&heatmap_filename);
     let scatter_filepath = output_dir.join(&scatter_filename);
     let amp_phase_filepath = output_dir.join(&amp_phase_filename);
-    let hist_filepath = output_dir.join(&hist_filename);
-    let hist_report_filepath = output_dir.join(&hist_report_filename);
 
     // Use a default sigma of 0.0 for blurring, as in the original frinZrawvis.
     plot::plot_spectrum_heatmaps(&heatmap_filepath, &all_spectra, 0.0)?;
@@ -87,14 +83,14 @@ pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
 
     plot::plot_complex_scatter(&scatter_filepath, &real_values, &imag_values)?;
     plot::plot_amp_phase_scatter(&amp_phase_filepath, &amp_values, &phase_values)?;
-    plot::plot_complex_histograms(
-        &hist_filepath,
-        &hist_report_filepath,
-        &real_values,
-        &imag_values,
-        &amp_values,
-        &phase_values,
-    )?;
+    //plot::plot_complex_histograms(
+    //    &hist_filepath,
+    //    &hist_report_filepath,
+    //    &real_values,
+    //    &imag_values,
+    //    &amp_values,
+    //    &phase_values,
+    //)?;
 
     //println!("#Raw visibility heatmaps saved to {} and {}", amp_filepath.display(), phase_filepath.display());
 
