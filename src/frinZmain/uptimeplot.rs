@@ -7,6 +7,7 @@ use plotters::coord::Shift;
 use plotters::prelude::*;
 use std::error::Error;
 use std::fs::{self, File};
+use crate::png_compress::{compress_png_with_mode, CompressQuality};
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -258,6 +259,7 @@ fn draw_uptime_plot(
     )?;
 
     root.present()?;
+    compress_png_with_mode(path, CompressQuality::Low);
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 use ndarray::{Array1, Axis};
 use plotters::prelude::*;
+use crate::png_compress::{compress_png_with_mode, CompressQuality};
 use std::error::Error;
 use std::fs::{self, File};
 use std::io::{Cursor, Read, Write};
@@ -659,6 +660,8 @@ fn plot_maser_spectrum(
         .x_desc(x_label)
         .y_desc(y_label)
         .label_style(("sans-serif", 20))
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .light_line_style(&TRANSPARENT)
         .draw()?;
 
@@ -744,6 +747,7 @@ fn plot_maser_spectrum(
     }
 
     root.present()?;
+    compress_png_with_mode(output_path, CompressQuality::Low);
     Ok(())
 }
 
@@ -798,6 +802,8 @@ fn plot_on_off_spectra(
         .x_desc(x_label)
         .y_desc("Intensity")
         .label_style(("sans-serif", 20))
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .light_line_style(&TRANSPARENT)
         .draw()?;
 
@@ -833,6 +839,7 @@ fn plot_on_off_spectra(
     }
 
     root.present()?;
+    compress_png_with_mode(output_path, CompressQuality::Low);
     Ok(())
 }
 

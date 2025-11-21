@@ -6,6 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static WARNED: AtomicBool = AtomicBool::new(false);
 
+#[derive(Clone, Copy)]
+pub enum CompressQuality {
+    High,
+    Low,
+}
+
 fn warn_once(msg: &str) {
     if !WARNED.swap(true, Ordering::Relaxed) {
         eprintln!("#WARN: {}", msg);
@@ -14,6 +20,10 @@ fn warn_once(msg: &str) {
 
 /// Try to compress a PNG in-place via the imagequant crate.
 pub fn compress_png<P: AsRef<Path>>(path: P) {
+    compress_png_with_mode(path, CompressQuality::High);
+}
+
+pub fn compress_png_with_mode<P: AsRef<Path>>(path: P, mode: CompressQuality) {
     let path_buf: PathBuf = path.as_ref().to_path_buf();
     if !path_buf.exists() {
         return;
@@ -42,12 +52,19 @@ pub fn compress_png<P: AsRef<Path>>(path: P) {
 
     let mut base_attr = iq_new();
     let _ = base_attr.set_speed(1);
-    let _ = base_attr.set_quality(0, 100);
+    match mode {
+        CompressQuality::High => {
+            let _ = base_attr.set_quality(10, 100);
+        }
+        CompressQuality::Low => {
+            let _ = base_attr.set_quality(10, 10);
+        }
+    }
     let _ = base_attr.set_max_colors(256);
     let _ = base_attr.set_min_posterization(0);
 
     let color_targets = [
-        //256u32, 224, 192, 160, 144, 
+        256u32, 224, 192, 160, 144, 
         128, 112, 96, 80, 72, 
         64, 56, 48, 40, 32, 28, 24, 20, 16, 12, 10, 8,
     ];

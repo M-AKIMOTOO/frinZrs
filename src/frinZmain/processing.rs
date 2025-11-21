@@ -650,7 +650,9 @@ pub fn process_cor_file(
             delay_output_str += &format!("{}\n", delay_output_line);
 
             if args.cumulate != 0 {
-                cumulate_len.push(current_length as f32);
+                // Use actual (unpadded) integration time for cumulation plot
+                let integ_time = physical_length as f32 * effective_integ_time;
+                cumulate_len.push(integ_time);
                 cumulate_snr.push(analysis_results.delay_snr);
             }
 

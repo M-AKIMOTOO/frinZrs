@@ -5,6 +5,7 @@ use plotters::prelude::*;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, ErrorKind};
 
+use crate::png_compress::{compress_png_with_mode, CompressQuality};
 use crate::utils::safe_arg;
 
 type C32 = Complex<f32>;
@@ -162,5 +163,6 @@ pub fn plot_bandpass_spectrum(
         .map_err(to_io_error)?;
 
     root.present().map_err(to_io_error)?;
+    compress_png_with_mode(&output_file_path, CompressQuality::Low);
     Ok(())
 }

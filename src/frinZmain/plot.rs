@@ -1,4 +1,4 @@
-use crate::png_compress::compress_png;
+use crate::png_compress::{compress_png, compress_png_with_mode, CompressQuality};
 use crate::utils::safe_arg;
 use chrono::{DateTime, TimeZone, Utc};
 use ndarray::Array2; // Added for dynamic spectrum
@@ -183,7 +183,7 @@ pub fn delay_plane(
         .y_label_formatter(&|v| format!("{:.2}", v))
         .draw()?;
 
-    let resolution = 600; // Increased resolution for a smoother heatmap
+    let resolution = 100; // Increased resolution for a smoother heatmap
     let (delay_min, delay_max_hm) = (heatmap_delay_min, heatmap_delay_max);
     let (rate_min_hm, rate_max_hm) = (heatmap_rate_min, heatmap_rate_max);
     let mut heatmap_data = Vec::new();
@@ -269,7 +269,7 @@ pub fn delay_plane(
     }
     
     root.present()?;
-    compress_png(output_path);
+    compress_png_with_mode(output_path, CompressQuality::High);
     Ok(())
 }
 
@@ -433,7 +433,7 @@ pub fn frequency_plane(
         .label_style(("sans-serif ", 30))
         .draw()?;
 
-    let resolution = 400;
+    let resolution = 500;
     let mut heatmap_values = Vec::new();
     let mut heatmap_data_max_val = f64::NEG_INFINITY;
     for i in 0..resolution {
@@ -516,7 +516,7 @@ pub fn frequency_plane(
     }
 
     root.present()?;
-    compress_png(output_path);
+    compress_png_with_mode(output_path, CompressQuality::High);
     Ok(())
 }
 
@@ -627,7 +627,7 @@ pub fn add_plot(
         ))?;
 
         root.present()?;
-        compress_png(&file_path);
+        compress_png_with_mode(&file_path, CompressQuality::Low);
     }
 
     Ok(())
@@ -715,8 +715,72 @@ pub fn cumulate_plot(
         )
         .unwrap();
 
+    // Power-law fitting on log-log scale: y = a * x^b
+    if cumulate_len.len() >= 2 {
+        let ln_x: Vec<f64> = cumulate_len
+            .iter()
+            .filter(|&&v| v > 0.0)
+            .map(|&v| (v as f64).ln())
+            .collect();
+        let ln_y: Vec<f64> = cumulate_snr
+            .iter()
+            .zip(cumulate_len.iter())
+            .filter_map(|(&y, &x)| if x > 0.0 && y > 0.0 { Some((y as f64).ln()) } else { None })
+            .collect();
+        if ln_x.len() == ln_y.len() && ln_x.len() >= 2 {
+            let n = ln_x.len() as f64;
+            let mean_x = ln_x.iter().sum::<f64>() / n;
+            let mean_y = ln_y.iter().sum::<f64>() / n;
+            let cov_xy = ln_x
+                .iter()
+                .zip(ln_y.iter())
+                .map(|(x, y)| (x - mean_x) * (y - mean_y))
+                .sum::<f64>();
+            let var_x = ln_x
+                .iter()
+                .map(|x| (x - mean_x) * (x - mean_x))
+                .sum::<f64>();
+            if var_x > 0.0 {
+                let b_fit = cov_xy / var_x;
+                let a_fit = (mean_y - b_fit * mean_x).exp();
+                let x_min = *cumulate_len.first().unwrap() as f64;
+                let x_max = *cumulate_len.last().unwrap() as f64;
+                let fit_series = LineSeries::new(
+                    (0..200).map(|i| {
+                        let t = i as f64 / 199.0;
+                        let x = x_min * (x_max / x_min).powf(t);
+                        let y = a_fit * x.powf(b_fit);
+                        (x as f32, y as f32)
+                    }),
+                    &RED,
+                );
+                chart.draw_series(fit_series)?.label(format!("fit: y = {:.2e} x^{:.3}", a_fit, b_fit));
+
+                // Reference line with b = 0.5, forced to pass the first point
+                let a_ref = (cumulate_snr[0] as f64) / (cumulate_len[0] as f64).powf(0.5);
+                let ref_series = LineSeries::new(
+                    (0..200).map(|i| {
+                        let t = i as f64 / 199.0;
+                        let x = x_min * (x_max / x_min).powf(t);
+                        let y = a_ref * x.powf(0.5);
+                        (x as f32, y as f32)
+                    }),
+                    &BLUE,
+                );
+                chart.draw_series(ref_series)?.label(format!("b=0.5: y = {:.2e} x^{:.1}", a_ref, 0.5));
+
+                chart
+                    .configure_series_labels()
+                    .background_style(&WHITE.mix(0.8))
+                    .border_style(&BLACK)
+                    .label_font(("sans-serif", 18).into_font())
+                    .draw()?;
+            }
+        }
+    }
+
     root.present()?;
-    compress_png(cumulate_path);
+    compress_png_with_mode(&cumulate_filepath, CompressQuality::Low);
     Ok(())
 }
 
@@ -848,7 +912,7 @@ pub fn phase_reference_plot(
         .draw()?;
 
     root.present()?;
-    compress_png(output_path);
+    compress_png_with_mode(output_path, CompressQuality::Low);
     Ok(())
 }
 
@@ -906,7 +970,7 @@ pub fn plot_allan_deviation(
     ))?;
 
     root.present()?;
-    compress_png(output_path);
+    compress_png_with_mode(output_path, CompressQuality::Low);
     Ok(())
 }
 
@@ -979,6 +1043,8 @@ pub fn plot_acel_search_result<P: AsRef<Path>>(
         })
         .x_labels(10)
         .y_labels(10)
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
         .label_style(("sans-serif", 20).into_font())
         .draw()?;
 
@@ -1020,6 +1086,7 @@ pub fn plot_acel_search_result<P: AsRef<Path>>(
         .draw()?;
 
     root.present()?;
+    compress_png_with_mode(output_path.as_ref(), CompressQuality::Low);
     Ok(())
 }
 
@@ -1150,6 +1217,7 @@ pub fn plot_sky_map<P: AsRef<Path>>(
     }))?;
 
     root.present()?;
+    compress_png_with_mode(output_path.as_ref(), CompressQuality::Low);
     Ok(())
 }
 
