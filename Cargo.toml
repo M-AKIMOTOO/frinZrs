@@ -8,7 +8,7 @@ description = "fringe search for Yamaguchi Interferometer and Japanese VLBI Netw
 repository = "https://github.com/M-AKIMOTOO/frinZrs"
 documentation = "https://docs.rs/frinZ"
 readme = "README.md"    
-include = ["src/frinZmain/"]
+include = ["src/frinZmain/", "src/pulsar_gating/"]
 
 [lib]
 path = "src/frinZmain/lib.rs"
@@ -33,11 +33,14 @@ path = "src/corshow/main.rs"
 name = "bandscythe"
 path = "src/bandscythe/main.rs"
 
+[[bin]]
+name = "pulsar_gating"
+path = "src/pulsar_gating/main.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-
 chrono        = "0.4.22"
 num-complex   = "0.4.2"
 rustfft       = "6.1.0"
@@ -50,6 +53,8 @@ astro         = "2.0.0"
 nav-types     = "0.5"
 image = { version = "0.25.6", features = ["png"] }
 imageproc     = "0.25.0"
+imagequant = "4.4.1"
+png = "0.17"
 terminal_size = "0.4"
 rayon = "1.10"
 sys-info      = "0.9"
@@ -66,4 +71,3 @@ lto = true
 codegen-units = 1
 panic = "abort"
 overflow-checks = false
-
