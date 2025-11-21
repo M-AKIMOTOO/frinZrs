@@ -34,8 +34,6 @@ cd frinZrs
 
 # Install to ~/.cargo/bin
 cargo install --bin frinZ --path .
-# OR
-cargo install --bin frinZrs --path .
 ```
 
 ### Development Build
@@ -43,11 +41,7 @@ cargo install --bin frinZrs --path .
 ```bash
 # Run directly
 cargo run --bin frinZ --release -- [OPTIONS]
-# OR
-cargo run --bin frinZ-rs --release -- [OPTIONS]
 ```
-
-**Note:** Both `frinZ` and `frinZ-rs` are identical programs. On Windows, antivirus software may flag the compiled binary.
 
 ## Usage
 
