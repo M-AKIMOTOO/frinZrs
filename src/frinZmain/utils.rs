@@ -5,9 +5,9 @@ use nav_types::{ECEF, WGS84};
 use ndarray::prelude::*;
 use num_complex::Complex;
 
-//use crate::header::CorHeader;
+use crate::header::CorHeader;
 
-//const C: f64 = 299792458.0; // Speed of light in m/s
+const C: f64 = 299792458.0; // Speed of light in m/s
 
 type C32 = Complex<f32>;
 
@@ -280,7 +280,6 @@ pub fn uvw_cal(
     (u, v, w, du_dt, dv_dt)
 }
 
-/*
 /// Converts rate (Hz) and delay (samples) to sky coordinates (l, m).
 ///
 /// # Arguments
@@ -302,7 +301,7 @@ pub fn rate_delay_to_lm(
     dv_dt: f64,
 ) -> (f64, f64) {
     let lambda = C / header.observing_frequency;
-    let delay_s = delay_samples / (header.sampling_speed as f64 * 1e6);
+    let delay_s = delay_samples / (header.sampling_speed as f64);
 
     // We need to solve the linear system:
     // | u      v      | | l | = | delay_s * C      |
@@ -325,4 +324,3 @@ pub fn rate_delay_to_lm(
 
     (l, m)
 }
-*/

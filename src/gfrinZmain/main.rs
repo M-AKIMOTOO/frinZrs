@@ -1,5 +1,5 @@
 use clap::Parser;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -16,7 +16,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use frinZ::analysis::analyze_results;
 use frinZ::args::Args as FrinZArgs;
 use frinZ::bandpass::{apply_bandpass_correction, read_bandpass_file};
-use frinZ::fft::{self, process_fft, process_ifft};
+use frinZ::fft::{process_fft, process_ifft};
 use frinZ::read::read_visibility_data;
 use frinZ::rfi::parse_rfi_ranges;
 use memmap2::Mmap;
@@ -107,6 +107,21 @@ fn smooth_sg(series: &[f64], w: usize, p: usize) -> Vec<f64> {
         out[i] = coeff[0];
     }
     out
+}
+
+fn rate_to_ss(rate_hz: f64, obs_freq_hz: f64) -> f64 {
+    if obs_freq_hz.abs() < 1e-12 {
+        0.0
+    } else {
+        rate_hz / obs_freq_hz
+    }
+}
+
+fn write_json_pretty<W: Write + ?Sized, T: Serialize>(out: &mut W, value: &T) -> anyhow::Result<()> {
+    let s = serde_json::to_string_pretty(value)?;
+    out.write_all(s.as_bytes())?;
+    out.write_all(b"\n")?;
+    Ok(())
 }
 
 // Compute baseline phase after derotating by estimated delay/rate over time-frequency grid
@@ -223,6 +238,7 @@ fn compute_uv_for_pair(
     version = "0.1.0",
     author = "Masanori AKIMOTO  <masanori.akimoto.ac@gmail.com>",
     about = "Global (antenna-based) fringe solver that aggregates baseline-based estimates",
+    arg_required_else_help = true,
     after_help = "Input: JSONL of baseline estimates with fields a,b,tau_s,rate_hz and optional sigma/w/snr/t_idx"
 )]
 struct Cli {
@@ -264,6 +280,10 @@ struct Cli {
     /// Precise search around the peak (as in frinZ --search)
     #[arg(long)]
     search: bool,
+
+    /// フリンジ精密探索を明示的にオフにする（既定はON）
+    #[arg(long)]
+    no_search: bool,
 
     /// Delay window [min max] in samples (as in frinZ --delay-window)
     #[arg(long, num_args = 2)]
@@ -476,6 +496,8 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let search_enabled = !cli.no_search;
+
     // Mode 1: Aggregator from JSONL (--input)
     if let Some(inp) = &cli.input {
         let infile = File::open(inp)?;
@@ -560,7 +582,7 @@ fn main() -> anyhow::Result<()> {
                 )?;
                 writeln!(
                     out,
-                    "idx  name                tau [ns]        rate [mHz]      phase [deg]"
+                    "idx  name                tau [s]         rate [Hz]       phase [deg]"
                 )?;
                 writeln!(
                     out,
@@ -573,8 +595,8 @@ fn main() -> anyhow::Result<()> {
                         "{:<4}{:<19}{:>15.6} {:>15.6} {:>15.3}",
                         ant,
                         format!("{}{}", "ANT", mark),
-                        sol.tau_s[ant] * 1e9,
-                        sol.rate_hz[ant] * 1e3,
+                        sol.tau_s[ant],
+                        sol.rate_hz[ant],
                         phi[ant].to_degrees()
                     )?;
                 }
@@ -594,14 +616,13 @@ fn main() -> anyhow::Result<()> {
                 writeln!(out, "tau_s=[{}] rate_hz=[{}]", tau_str, rate_str)?;
             } else {
                 if !cli.pretty {
-                    serde_json::to_writer(
+                    write_json_pretty(
                         &mut *out,
                         &serde_json::json!({
                             "tau_s": sol.tau_s,
                             "rate_hz": sol.rate_hz
                         }),
                     )?;
-                    writeln!(out)?;
                 }
             }
         }
@@ -628,7 +649,7 @@ fn main() -> anyhow::Result<()> {
                     )?;
                     writeln!(
                         out,
-                        "idx  name                tau [ns]        rate [mHz]      phase [deg]"
+                        "idx  name                tau [s]         rate [Hz]       phase [deg]"
                     )?;
                     writeln!(
                         out,
@@ -641,8 +662,8 @@ fn main() -> anyhow::Result<()> {
                             "{:<4}{:<19}{:>15.6} {:>15.6} {:>15.3}",
                             ant,
                             format!("{}{}", "ANT", mark),
-                            tau[ant] * 1e9,
-                            rate[ant] * 1e3,
+                            tau[ant],
+                            rate[ant],
                             phi[ant].to_degrees()
                         )?;
                     }
@@ -664,7 +685,7 @@ fn main() -> anyhow::Result<()> {
                     )?;
                 } else {
                     if !cli.pretty {
-                        serde_json::to_writer(
+                        write_json_pretty(
                             &mut *out,
                             &serde_json::json!({
                                 "t_idx": t,
@@ -672,7 +693,6 @@ fn main() -> anyhow::Result<()> {
                                 "rate_hz": rate
                             }),
                         )?;
-                        writeln!(out)?;
                     }
                 }
             }
@@ -710,18 +730,18 @@ fn main() -> anyhow::Result<()> {
         {
             if cli.pretty {
                 // delta summary
-                let mut max_dt_ns = 0.0f64;
-                let mut max_dr_mhz = 0.0f64;
+                let mut max_dt_s = 0.0f64;
+                let mut max_dr_hz = 0.0f64;
                 for ant in 0..num_ant_global {
-                    max_dt_ns = max_dt_ns.max(((tau_sm[ant] - tau_raw[ant]) * 1e9).abs());
-                    max_dr_mhz = max_dr_mhz.max(((rate_sm[ant] - rate_raw[ant]) * 1e3).abs());
+                    max_dt_s = max_dt_s.max((tau_sm[ant] - tau_raw[ant]).abs());
+                    max_dr_hz = max_dr_hz.max((rate_sm[ant] - rate_raw[ant]).abs());
                 }
                 writeln!(
                     out,
-                    "t_idx={} len_s=n/a (smoothed; |delta|max: tau={:.3} ns, rate={:.3} mHz)",
-                    t, max_dt_ns, max_dr_mhz
+                    "t_idx={} len_s=n/a (smoothed; |delta|max: tau={:.3e} s, rate={:.3e} Hz)",
+                    t, max_dt_s, max_dr_hz
                 )?;
-                writeln!(out, "idx  name                tau [ns]        rate [mHz]")?;
+                writeln!(out, "idx  name                tau [s]         rate [Hz]")?;
                 writeln!(
                     out,
                     "---- ------------------- --------------- ---------------"
@@ -733,8 +753,8 @@ fn main() -> anyhow::Result<()> {
                         "{:<4}{:<19}{:>15.6} {:>15.6}",
                         ant,
                         format!("{}{}", "ANT", mark),
-                        tau_sm[ant] * 1e9,
-                        rate_sm[ant] * 1e3
+                        tau_sm[ant],
+                        rate_sm[ant]
                     )?;
                 }
             } else if cli.plain {
@@ -754,7 +774,7 @@ fn main() -> anyhow::Result<()> {
                     t, tau_str, rate_str
                 )?;
             } else {
-                serde_json::to_writer(
+                write_json_pretty(
                     &mut *out,
                     &serde_json::json!({
                         "t_idx": t,
@@ -763,7 +783,6 @@ fn main() -> anyhow::Result<()> {
                         "smoothed": true
                     }),
                 )?;
-                writeln!(out)?;
             }
         }
         return Ok(());
@@ -779,7 +798,7 @@ fn main() -> anyhow::Result<()> {
         "gfrinZ".to_string(),
         format!("--rate-padding={}", cli.rate_padding),
     ];
-    if cli.search {
+    if search_enabled {
         argv.push("--search".to_string());
     }
     if cli.delay_window.len() == 2 {
@@ -798,6 +817,7 @@ fn main() -> anyhow::Result<()> {
 
     // 1本目のヘッダを基準に整合性チェック
     let mut canonical: Option<(i32, i32, i32, f32)> = None; // (fft, fs, pp, ts)
+    let mut obs_freq_hz: Option<f64> = None;
 
     // moved struct CorEntry to module scope
 
@@ -875,6 +895,18 @@ fn main() -> anyhow::Result<()> {
             ));
         }
 
+        if let Some(prev) = obs_freq_hz {
+            let rel = (header.observing_frequency - prev).abs() / prev.max(1.0);
+            if rel > 1e-6 {
+                eprintln!(
+                    "#WARN: observing_frequency mismatch: {} Hz (expected {})",
+                    header.observing_frequency, prev
+                );
+            }
+        } else {
+            obs_freq_hz = Some(header.observing_frequency);
+        }
+
         let times = read_sector_times(&header, &mmap);
         ants_set.insert(a);
         ants_set.insert(b);
@@ -907,6 +939,30 @@ fn main() -> anyhow::Result<()> {
             header,
             times,
         });
+    }
+
+    // 3局入力時に三角形が成立しているか簡易チェック（欠損基線を警告）
+    if ants_set.len() == 3 {
+        let mut ants: Vec<usize> = ants_set.iter().copied().collect();
+        ants.sort_unstable();
+        let mut pair_set: BTreeSet<(usize, usize)> = BTreeSet::new();
+        for e in &entries {
+            let (p, q) = if e.a <= e.b { (e.a, e.b) } else { (e.b, e.a) };
+            pair_set.insert((p, q));
+        }
+        let combos = vec![(ants[0], ants[1]), (ants[0], ants[2]), (ants[1], ants[2])];
+        let mut missing: Vec<String> = Vec::new();
+        for (p, q) in combos {
+            if !pair_set.contains(&(p, q)) {
+                missing.push(format!("{}-{}", p, q));
+            }
+        }
+        if !missing.is_empty() || pair_set.len() != 3 {
+            anyhow::bail!(
+                "--cor で三角形が未成立です。欠損基線: {}",
+                if missing.is_empty() { "(unknown)".to_string() } else { missing.join(", ") }
+            );
+        }
     }
 
     // FFT点数の最小値を計算（--rebin-to-min-fft のとき利用）
@@ -946,6 +1002,11 @@ fn main() -> anyhow::Result<()> {
                 );
             }
         }
+    }
+
+    let obs_freq_hz = obs_freq_hz.unwrap_or(0.0);
+    if obs_freq_hz <= 0.0 {
+        eprintln!("#WARN: observing_frequency が 0 Hz なので rate の s/s 変換をスキップします");
     }
 
     let mut bp_map: std::collections::HashMap<(usize, usize), Vec<num_complex::Complex<f32>>> =
@@ -1078,7 +1139,7 @@ fn main() -> anyhow::Result<()> {
         );
         println!(
             "#PARAM: search={} rate_padding={} phase_kind={} auto_flip={}",
-            cli.search, cli.rate_padding, cli.phase_kind, cli.auto_flip
+            search_enabled, cli.rate_padding, cli.phase_kind, cli.auto_flip
         );
         if !cli.rfi.is_empty() {
             println!("#PARAM: rfi={:?}", cli.rfi);
@@ -1188,7 +1249,7 @@ fn main() -> anyhow::Result<()> {
                 process_ifft(&freq_rate_array, e.header.fft_point, padding_length);
             // 枠組み上、FrinZArgsを適当に用意
             let mut argv: Vec<String> = vec!["frinZ".to_string()];
-            if cli.search {
+            if search_enabled {
                 argv.push("--search".to_string());
             }
             let args = FrinZArgs::parse_from(argv);
@@ -1204,6 +1265,7 @@ fn main() -> anyhow::Result<()> {
                 args.primary_search_mode(),
             );
 
+            // cor ファイルの遅延・レートは「ant2 - ant1」。gfrinZ も B-A 系で扱う（符号反転しない）。
             let tau_s = analysis.residual_delay as f64 / e.header.sampling_speed as f64;
             let rate_hz = analysis.residual_rate as f64;
             let snr = analysis.delay_snr as f64;
@@ -1224,18 +1286,12 @@ fn main() -> anyhow::Result<()> {
                 w_phase: (snr * snr).max(1e-20),
             });
             phase_map.insert((e.a, e.b), phase_peak_rad);
-            bl_list.push((
-                e.a,
-                e.b,
-                tau_s,
-                rate_hz,
-                if cli.phase_kind.to_lowercase().starts_with("f") {
-                    analysis.freq_phase as f64
-                } else {
-                    analysis.delay_phase as f64
-                },
-                snr,
-            ));
+            let ph_deg = if cli.phase_kind.to_lowercase().starts_with("f") {
+                analysis.freq_phase as f64
+            } else {
+                analysis.delay_phase as f64
+            };
+            bl_list.push((e.a, e.b, tau_s, rate_hz, ph_deg, snr));
         }
 
         // アンテナ解
@@ -1248,11 +1304,14 @@ fn main() -> anyhow::Result<()> {
             utc,
             (length_sectors as f32) * ts
         )?;
+        if obs_freq_hz > 0.0 {
+            writeln!(out, "observing_frequency={:.6} Hz (rate=s/s)", obs_freq_hz)?;
+        }
         // Baseline-based fringe search results (for comparison)
         writeln!(out, "Baselines:")?;
         writeln!(
             out,
-            "a-b  name                    tau [ns]        rate [mHz]      phase [deg]"
+            "a-b  name                    tau [s]         rate [s/s]       phase [deg]"
         )?;
         writeln!(
             out,
@@ -1263,12 +1322,12 @@ fn main() -> anyhow::Result<()> {
             let nb = ant_names.get(b).cloned().unwrap_or_else(|| "?".to_string());
             writeln!(
                 out,
-                "{:>1}-{:>1}  {:<23} {:>15.6} {:>15.6} {:>15.3}",
+                "{:>1}-{:>1}  {:<23} {:>15.6} {:>15.6e} {:>15.3}",
                 a,
                 b,
                 format!("{}-{} (SNR={:.1})", na, nb, snr),
-                (*tau) * 1e9,
-                (*rate) * 1e3,
+                *tau,
+                rate_to_ss(*rate, obs_freq_hz),
                 *ph
             )?;
         }
@@ -1285,7 +1344,7 @@ fn main() -> anyhow::Result<()> {
             ));
         }
         writeln!(out, "Antennas:{}", names_line)?;
-        writeln!(out, "idx  name                tau [ns]        rate [mHz]")?;
+        writeln!(out, "idx  name                tau [s]         rate [s/s]")?;
         writeln!(
             out,
             "---- ------------------- --------------- ---------------"
@@ -1295,11 +1354,11 @@ fn main() -> anyhow::Result<()> {
             let mark = if ant == cli.reference { " (ref)" } else { "" };
             writeln!(
                 out,
-                "{:<4}{:<19}{:>15.6} {:>15.6}",
+                "{:<4}{:<19}{:>15.6e} {:>15.6e}",
                 ant,
                 format!("{}{}", name, mark),
-                sol.tau_s[ant] * 1e9,
-                sol.rate_hz[ant] * 1e3
+                sol.tau_s[ant],
+                rate_to_ss(sol.rate_hz[ant], obs_freq_hz)
             )?;
         }
         // クロージャ（三角が構成できるとき）
@@ -1744,6 +1803,7 @@ fn main() -> anyhow::Result<()> {
                 "b": e.b,
                 "tau_s": tau_s,
                 "rate_hz": rate_hz,
+                "rate_s_per_s": rate_to_ss(rate_hz, obs_freq_hz),
                 "snr": snr,
                 "weight_tau": w_tau,
                 "weight_rate": w_rate,
@@ -1985,14 +2045,14 @@ fn main() -> anyhow::Result<()> {
             let dof = (m_rows as isize) - (n_unknowns as isize);
 
             // Residuals and RMSE
-            let mut r_tau_ns: Vec<f64> = Vec::with_capacity(used);
-            let mut r_rate_mhz: Vec<f64> = Vec::with_capacity(used);
+            let mut r_tau_s: Vec<f64> = Vec::with_capacity(used);
+            let mut r_rate_ss: Vec<f64> = Vec::with_capacity(used);
             for s in &baselines_used {
                 // 残差RMSEは残差解で評価（--model適用時も同一基準で比較）
                 let dt = sol_res.tau_s[s.a] - sol_res.tau_s[s.b];
                 let dr = sol_res.rate_hz[s.a] - sol_res.rate_hz[s.b];
-                r_tau_ns.push((s.tau_s - dt) * 1e9);
-                r_rate_mhz.push((s.rate_hz - dr) * 1e3);
+                r_tau_s.push(s.tau_s - dt);
+                r_rate_ss.push(rate_to_ss(s.rate_hz - dr, obs_freq_hz));
             }
             let rmse = |v: &Vec<f64>| -> f64 {
                 if v.is_empty() {
@@ -2002,8 +2062,8 @@ fn main() -> anyhow::Result<()> {
                     (ss / (v.len() as f64)).sqrt()
                 }
             };
-            let rmse_tau_ns = rmse(&r_tau_ns);
-            let rmse_rate_mhz = rmse(&r_rate_mhz);
+            let rmse_tau_s = rmse(&r_tau_s);
+            let rmse_rate_ss = rmse(&r_rate_ss);
 
             // Print pretty block
             writeln!(
@@ -2013,6 +2073,9 @@ fn main() -> anyhow::Result<()> {
                 utc,
                 (length_sectors as f32) * ts
             )?;
+            if obs_freq_hz > 0.0 {
+                writeln!(out, "observing_frequency={:.6} Hz (rate=s/s)", obs_freq_hz)?;
+            }
             // Antenna mapping
             let mut names_line = String::new();
             let mut keys: Vec<usize> = ant_names.keys().cloned().collect();
@@ -2031,8 +2094,8 @@ fn main() -> anyhow::Result<()> {
             // (already printed above; avoid duplicate)
             writeln!(
                 out,
-                "Residual RMSE: tau={:.3} ns, rate={:.3} mHz",
-                rmse_tau_ns, rmse_rate_mhz
+                "Residual RMSE: tau={:.3e} s, rate={:.3e} s/s",
+                rmse_tau_s, rmse_rate_ss
             )?;
             if !sign_flips.is_empty() {
                 let flips_str = sign_flips
@@ -2332,7 +2395,7 @@ fn main() -> anyhow::Result<()> {
             // NOTE: Single-window ad-hoc double fit removed; use time-series fit in upcoming --fit-model.
             writeln!(
                 out,
-                "idx  name                tau [ns]        rate [mHz]      phase [deg]"
+                "idx  name                tau [s]         rate [s/s]       phase [deg]"
             )?;
             writeln!(
                 out,
@@ -2346,11 +2409,11 @@ fn main() -> anyhow::Result<()> {
                 let mark = if ant == cli.reference { " (ref)" } else { "" };
                 writeln!(
                     out,
-                    "{:<4}{:<19}{:>15.6} {:>15.6} {:>15.3}",
+                    "{:<4}{:<19}{:>15.6e} {:>15.6e} {:>15.3}",
                     ant,
                     format!("{}{}", name, mark),
-                    sol.tau_s[ant] * 1e9,
-                    sol.rate_hz[ant] * 1e3,
+                    sol.tau_s[ant],
+                    rate_to_ss(sol.rate_hz[ant], obs_freq_hz),
                     phi_ant[ant].to_degrees()
                 )?;
             }
@@ -2364,12 +2427,12 @@ fn main() -> anyhow::Result<()> {
             let rate_str = sol
                 .rate_hz
                 .iter()
-                .map(|v| format!("{:.9e}", v))
+                .map(|v| format!("{:.9e}", rate_to_ss(*v, obs_freq_hz)))
                 .collect::<Vec<_>>()
                 .join(",");
             writeln!(
                 out,
-                "t_idx={} utc={} len_s={:.3} tau_s=[{}] rate_hz=[{}]",
+                "t_idx={} utc={} len_s={:.3} tau_s=[{}] rate_ss=[{}]",
                 l1,
                 utc,
                 (length_sectors as f32) * ts,
@@ -2554,12 +2617,41 @@ fn main() -> anyhow::Result<()> {
                 None
             };
 
+            let rate_ss: Vec<f64> = sol
+                .rate_hz
+                .iter()
+                .map(|v| rate_to_ss(*v, obs_freq_hz))
+                .collect();
+
+            let antennas_json: Vec<serde_json::Value> = sol
+                .tau_s
+                .iter()
+                .enumerate()
+                .map(|(idx, &tau)| {
+                    let name = ant_names
+                        .get(&(idx as usize))
+                        .cloned()
+                        .unwrap_or_else(|| "?".to_string());
+                    serde_json::json!({
+                        "id": idx,
+                        "name": name,
+                        "tau_s": tau,
+                        "rate_hz": sol.rate_hz[idx],
+                        "rate_s_per_s": rate_ss[idx],
+                    })
+                })
+                .collect();
+
             let mut obj = serde_json::json!({
                 "t_idx": l1,
                 "utc": utc,
                 "tau_s": sol.tau_s,
+                "rate_s_per_s": rate_ss,
                 "rate_hz": sol.rate_hz,
+                "observing_frequency_hz": obs_freq_hz,
                 "win_len_s": (length_sectors as f32) * ts,
+                "reference": cli.reference,
+                "antennas": antennas_json,
                 "diagnostics": {
                     "used_baselines": used,
                     "ignored_baselines": ignored,
@@ -2765,8 +2857,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             if !cli.pretty {
-                serde_json::to_writer(&mut *out, &obj)?;
-                writeln!(out)?;
+                write_json_pretty(&mut *out, &obj)?;
             }
         }
     }
@@ -2903,7 +2994,7 @@ fn main() -> anyhow::Result<()> {
                         "t_idx={} utc={} len_s={:.3} (smoothed)",
                         w.t_idx, w.utc, w.len_s
                     )?;
-                    writeln!(out, "idx  name                tau [ns]        rate [mHz]")?;
+                    writeln!(out, "idx  name                tau [s]         rate [s/s]")?;
                     writeln!(
                         out,
                         "---- ------------------- --------------- ---------------"
@@ -2916,11 +3007,11 @@ fn main() -> anyhow::Result<()> {
                         let mark = if ant == cli.reference { " (ref)" } else { "" };
                         writeln!(
                             out,
-                            "{:<4}{:<19}{:>15.6} {:>15.6}",
+                            "{:<4}{:<19}{:>15.6e} {:>15.6e}",
                             ant,
                             format!("{}{}", name, mark),
-                            w.tau[ant] * 1e9,
-                            w.rate[ant] * 1e3
+                            w.tau[ant],
+                            rate_to_ss(w.rate[ant], obs_freq_hz)
                         )?;
                     }
                 }
@@ -2935,29 +3026,55 @@ fn main() -> anyhow::Result<()> {
                     let rate_str = w
                         .rate
                         .iter()
-                        .map(|v| format!("{:.9e}", v))
+                        .map(|v| format!("{:.9e}", rate_to_ss(*v, obs_freq_hz)))
                         .collect::<Vec<_>>()
                         .join(",");
                     writeln!(
                         out,
-                        "t_idx={} utc={} len_s={:.3} tau_s=[{}] rate_hz=[{}] (smoothed)",
+                        "t_idx={} utc={} len_s={:.3} tau_s=[{}] rate_ss=[{}] (smoothed)",
                         w.t_idx, w.utc, w.len_s, tau_str, rate_str
                     )?;
                 }
             } else {
                 for w in &smoothed {
-                    serde_json::to_writer(
+                    let rate_ss: Vec<f64> = w
+                        .rate
+                        .iter()
+                        .map(|v| rate_to_ss(*v, obs_freq_hz))
+                        .collect();
+                    let antennas_json: Vec<serde_json::Value> = w
+                        .tau
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, &tau)| {
+                            let name = ant_names
+                                .get(&(idx as usize))
+                                .cloned()
+                                .unwrap_or_else(|| "?".to_string());
+                            serde_json::json!({
+                                "id": idx,
+                                "name": name,
+                                "tau_s": tau,
+                                "rate_hz": w.rate[idx],
+                                "rate_s_per_s": rate_ss[idx],
+                            })
+                        })
+                        .collect();
+                    write_json_pretty(
                         &mut *out,
                         &serde_json::json!({
                             "t_idx": w.t_idx,
                             "utc": w.utc,
                             "tau_s": w.tau,
+                            "rate_s_per_s": rate_ss,
                             "rate_hz": w.rate,
+                            "observing_frequency_hz": obs_freq_hz,
                             "win_len_s": w.len_s,
+                            "reference": cli.reference,
+                            "antennas": antennas_json,
                             "smoothed": true
                         }),
                     )?;
-                    writeln!(out)?;
                 }
             }
         }

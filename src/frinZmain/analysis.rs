@@ -5,7 +5,7 @@ use num_complex::Complex;
 use crate::args::Args;
 use crate::fitting;
 use crate::header::CorHeader;
-use crate::utils::{mjd_cal, noise_level, radec2azalt, rate_cal, safe_arg};
+use crate::utils::{mjd_cal, noise_level, radec2azalt, rate_cal, safe_arg, uvw_cal, rate_delay_to_lm};
 
 type C32 = Complex<f32>;
 
@@ -60,8 +60,8 @@ pub struct AnalysisResults {
     // Ranges
     pub rate_range: Vec<f32>,
     // Sky Coordinates
-    //pub l_coord: f64,
-    //pub m_coord: f64,
+    pub l_coord: f64,
+    pub m_coord: f64,
 }
 
 pub fn analyze_results(
@@ -366,7 +366,6 @@ pub fn analyze_results(
         }
     }
 
-    /*
     // --- Sky Coordinate Calculation ---
     let (u, v, _w, du_dt, dv_dt) = uvw_cal(
         header.station1_position,
@@ -386,7 +385,6 @@ pub fn analyze_results(
         du_dt,
         dv_dt,
     );
-    */
 
     // --- Antenna Az/El Calculation ---
     let (ant1_az, ant1_el, ant1_hgt) = radec2azalt(
@@ -447,7 +445,7 @@ pub fn analyze_results(
         // residual_acel: 0.0, // Placeholder
         corrected_acel: args.acel_correct,
         rate_range,
-        //l_coord,
-        //m_coord,
+        l_coord,
+        m_coord,
     }
 }

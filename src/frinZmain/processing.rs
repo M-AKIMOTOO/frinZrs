@@ -672,8 +672,16 @@ pub fn process_cor_file(
 
             if l1 == loop_count - 1 && args.output {
                 if let Some(path) = &output_path {
+                    let length_label = if args.length == 0 {
+                        "0".to_string()
+                    } else {
+                        args.length.to_string()
+                    };
+                    let out_dir = path.join(format!("time_domain/len{}s", length_label));
+                    fs::create_dir_all(&out_dir)?;
                     let output_basename = first_output_basename.as_ref().unwrap_or(&base_filename);
-                    let output_file_path = path.join(format!("{}_time.txt", output_basename));
+                    let output_file_path =
+                        out_dir.join(format!("{}_delay_rate_search.txt", output_basename));
                     fs::write(output_file_path, &delay_output_str)?;
                 }
             }
@@ -704,8 +712,16 @@ pub fn process_cor_file(
 
             if l1 == loop_count - 1 && args.output {
                 if let Some(path) = &output_path {
+                    let length_label = if args.length == 0 {
+                        "0".to_string()
+                    } else {
+                        args.length.to_string()
+                    };
+                    let out_dir = path.join(format!("freq_domain/len{}s", length_label));
+                    fs::create_dir_all(&out_dir)?;
                     let output_basename = first_output_basename.as_ref().unwrap_or(&base_filename);
-                    let output_file_path = path.join(format!("{}_freq.txt", output_basename));
+                    let output_file_path =
+                        out_dir.join(format!("{}_freq_rate_search.txt", output_basename));
                     fs::write(output_file_path, &freq_output_str)?;
                 }
             }
