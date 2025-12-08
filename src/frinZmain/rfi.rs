@@ -16,25 +16,28 @@ pub fn parse_rfi_ranges(rfi_args: &[String], rbw: f32) -> io::Result<Vec<(usize,
             process::exit(1);
         }
 
-        let min_mhz: f32 = parts[0].parse().map_err(|_| {
+        let min_mhz_int: i32 = parts[0].parse().map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Invalid number for RFI min: {}", parts[0]),
+                format!("Invalid integer for RFI min: {}", parts[0]),
             )
         })?;
-        let max_mhz: f32 = parts[1].parse().map_err(|_| {
+        let max_mhz_int: i32 = parts[1].parse().map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Invalid number for RFI max: {}", parts[1]),
+                format!("Invalid integer for RFI max: {}", parts[1]),
             )
         })?;
 
-        if min_mhz >= max_mhz {
-            eprintln!("Invalid RFI range: min ({}) >= max ({}).", min_mhz, max_mhz);
+        if min_mhz_int >= max_mhz_int {
+            eprintln!(
+                "Invalid RFI range: min ({}) >= max ({}).",
+                min_mhz_int, max_mhz_int
+            );
             process::exit(1);
         }
-        let min_chan = (min_mhz / rbw).floor() as usize;
-        let max_chan = (max_mhz / rbw).ceil() as usize;
+        let min_chan = (min_mhz_int as f32 / rbw).floor() as usize;
+        let max_chan = (max_mhz_int as f32 / rbw).ceil() as usize;
         ranges.push((min_chan, max_chan));
     }
     Ok(ranges)

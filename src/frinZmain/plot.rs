@@ -613,6 +613,8 @@ pub fn add_plot(
                 }
             })
             .y_labels(if filename_suffix == "phase" { 7 } else { 5 })
+            .x_max_light_lines(0)
+            .y_max_light_lines(0)
             .label_style(("sans-serif ", 25).into_font())
             .draw()?;
 

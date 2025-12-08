@@ -327,6 +327,8 @@ fn plot_closure_phase(
 ) -> Result<(), Box<dyn Error>> {
     let drawing_area = BitMapBackend::new(path.to_str().unwrap(), (900, 600)).into_drawing_area();
     drawing_area.fill(&WHITE)?;
+    let (legend_area, chart_area) = drawing_area.split_vertically(50);
+    legend_area.fill(&WHITE)?;
 
     let first_time = rows.first().map(|row| row.timestamp).unwrap();
     let y_axis = PhaseAxis::new(-180.0f64..180.0f64, 30.0);
@@ -336,23 +338,23 @@ fn plot_closure_phase(
         .map(|sample| (sample.timestamp - first_time).num_milliseconds() as f64 / 1000.0)
         .unwrap_or(1.0)
         .max(1.0);
-    let mut chart = ChartBuilder::on(&drawing_area)
-        .margin(20)
-        .x_label_area_size(50)
-        .y_label_area_size(60)
+    let mut chart = ChartBuilder::on(&chart_area)
+        .margin(10)
+        .x_label_area_size(55)
+        .y_label_area_size(65)
         .build_cartesian_2d(0.0..x_max, y_axis)?;
 
     chart
         .configure_mesh()
         .x_desc(format!(
-            "Elapsed time since {} [s]",
+            "Elapsed time [s] since {} UT",
             first_time.format("%Y/%j %H:%M:%S")
         ))
         .y_desc("Phase [deg]")
-        .x_labels(10)
-        .x_label_formatter(&|x| format!("{:>6.0}", x))
+        .x_labels(13)
+        .x_label_formatter(&|x| format!("{:>5.0}", x))
         .y_label_formatter(&|y| format!("{:>4.0}", *y))
-        .y_labels(13)
+        .y_labels(15)
         .label_style(("sans-serif", 24))
         .axis_desc_style(("sans-serif", 28))
         .light_line_style(&WHITE)
@@ -390,11 +392,24 @@ fn plot_closure_phase(
         .label("closure (φ1+φ2-φ3)")
         .legend(move |(x, y)| Circle::new((x + 10, y), 5, closure_color.filled()));
 
-    chart
-        .configure_series_labels()
-        .border_style(&BLACK)
-        .background_style(&WHITE.mix(0.8))
-        .draw()?;
+    // Manual legend drawn above the plot area to avoid covering data points.
+    let mut x_pos = 20;
+    let y_pos = 15;
+    let font = ("sans-serif", 22).into_font();
+    let mut draw_legend_entry =
+        |text: &str, color: RGBColor| -> Result<(), Box<dyn Error>> {
+            legend_area.draw(&Circle::new((x_pos, y_pos), 6, color.filled()))?;
+            x_pos += 10;
+            legend_area.draw(&Text::new(text.to_string(), (x_pos +10, y_pos), font.clone()))?;
+            // Rough spacing: marker + text width + padding
+            x_pos += text.chars().count() as i32 * 12;
+            Ok(())
+        };
+
+    for (label, color) in labels.iter().zip(colors.iter()) {
+        draw_legend_entry(label, *color)?;
+    }
+    draw_legend_entry("closure (φ1+φ2-φ3)", closure_color)?;
 
     Ok(())
 }

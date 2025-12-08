@@ -211,6 +211,14 @@ pub fn process_cor_file(
 
     // --- RFI Handling ---
     let rfi_ranges = parse_rfi_ranges(&args.rfi, rbw)?;
+    let rfi_display = if args.rfi.is_empty() {
+        "-".to_string()
+    } else if rfi_ranges.is_empty() {
+        "(invalid)".to_string()
+    } else {
+        args.rfi.join(",")
+    };
+    // RFI ranges are reflected in output tables; no additional banner needed.
 
     // --- Bandpass Handling ---
     let mut bandpass_data = if let Some(bp_path) = &args.bandpass {
@@ -234,6 +242,13 @@ pub fn process_cor_file(
                 *bp = Vec::new();
             }
         }
+    }
+
+    let bandpass_active = bandpass_data
+        .as_ref()
+        .map_or(false, |bp| !bp.is_empty());
+    if args.bandpass.is_some() {
+        println!("#Bandpass applied: {}", if bandpass_active { "True" } else { "False" });
     }
 
     let mut processing_header = header.clone();
@@ -625,20 +640,26 @@ pub fn process_cor_file(
         }
 
         if !args.frequency {
-            let delay_output_line = format_delay_output(&analysis_results, &label_str, args.length);
+            let delay_output_line = format_delay_output(
+                &analysis_results,
+                &label_str,
+                args.length,
+                &rfi_display,
+                bandpass_active,
+            );
             if l1 == 0 {
                 let station1_label = format!("{}-azel", header.station1_name.trim());
                 let station2_label = format!("{}-azel", header.station2_name.trim());
-                let header_str = format!(
-                    concat!(
-                        "#*****************************************************************************************************************************************************************************************\n",
-                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            {:<20}            {:<16}         MJD\n",
-                        "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]\n",
-                        "#*****************************************************************************************************************************************************************************************"
-                    ),
-                    station1_label,
-                    station2_label
-                );
+                    let header_str = format!(
+                        concat!(
+                            "#******************************************************************************************************************************************************************************************************************\n",
+                            "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            {:<10}              {:<10}             MJD        RFI        BP       \n",
+                            "#                                        [s]      [%]               [deg]     1-sigma[%]       [sample]       [Hz]      az[deg]  el[deg]  hgt[m]    az[deg]  el[deg]  hgt[m]                   [MHz]      [T/F]     \n",
+                            "#******************************************************************************************************************************************************************************************************************"
+                        ),
+                        station1_label,
+                        station2_label
+                    );
                 if !suppress_output {
                     print!("{}\n", header_str);
                 }
@@ -686,16 +707,22 @@ pub fn process_cor_file(
                 }
             }
         } else {
-            let freq_output_line = format_freq_output(&analysis_results, &label_str, args.length);
+            let freq_output_line = format_freq_output(
+                &analysis_results,
+                &label_str,
+                args.length,
+                &rfi_display,
+                bandpass_active,
+            );
             if l1 == 0 {
                 let station1_label = format!("{}-azel", header.station1_name.trim());
                 let station2_label = format!("{}-azel", header.station2_name.trim());
                 let header_str = format!(
                     concat!(
-                        "#*******************************************************************************************************************************************************************************************\n",
-                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            {:<20}             {:<16}        MJD     \n",
-                        "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]                \n",
-                        "#*******************************************************************************************************************************************************************************************"
+                        "#**********************************************************************************************************************************************************************************************************\n",
+                        "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Frequency     Noise-level      Res-Rate            {:<10}             {:<10}        MJD        RFI       BP\n",
+                        "#                                        [s]      [%]              [deg]       [MHz]       1-sigma[%]        [Hz]        az[deg]  el[deg]  hgt[m]   az[deg]  el[deg]  hgt[m]             [MHz]      [T/F]\n",
+                        "#**********************************************************************************************************************************************************************************************************"
                     ),
                     station1_label,
                     station2_label
