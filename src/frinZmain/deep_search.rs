@@ -253,9 +253,9 @@ fn get_coarse_estimates(
     args: &Args,
     effective_fft_point: i32,
 ) -> Result<(f32, f32), Box<dyn Error>> {
-    // delay-windowとrate-windowが指定されている場合は、その範囲で探索
-    if !args.delay_window.is_empty() && !args.rate_window.is_empty() {
-        println!("[DEEP SEARCH] Using specified delay and rate windows for coarse estimation");
+    // drange/rrange が指定されている場合は、その範囲で探索
+    if !args.drange.is_empty() && !args.rrange.is_empty() {
+        println!("[DEEP SEARCH] Using specified delay and rate ranges for coarse estimation");
 
         let (mut freq_rate_array, padding_length) = process_fft(
             complex_vec,

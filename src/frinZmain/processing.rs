@@ -914,8 +914,8 @@ pub fn process_cor_file(
                         &analysis_results.rate_range,
                         analysis_results.length_f32,
                         effective_integ_time,
-                        &args.delay_window,
-                        &args.rate_window,
+                        &args.drange,
+                        &args.rrange,
                         max_norm as f64,
                     )?;
                 } else {
@@ -1054,6 +1054,7 @@ pub fn process_cor_file(
                         output_filename.to_str().unwrap(),
                         bw as f64,
                         max_norm_freq as f64,
+                        &args.frange,
                     )?;
                 }
             }

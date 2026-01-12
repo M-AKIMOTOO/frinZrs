@@ -21,8 +21,8 @@ pub fn delay_plane(
     rate_range: &[f32],
     length: f32,
     effective_integration_length: f32,
-    delay_window: &[f32],
-    rate_window: &[f32],
+    drange: &[f32],
+    rrange: &[f32],
     max_amplitude: f64,
     //cmap_time: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -49,18 +49,18 @@ pub fn delay_plane(
         * 1.1;
 
     let (delay_line_min, delay_line_max, heatmap_delay_min, heatmap_delay_max) =
-        if delay_window.is_empty() {
+        if drange.is_empty() {
             (-32.0, 32.0, -10.0, 10.0)
         } else {
             (
-                delay_window[0] as f64,
-                delay_window[1] as f64,
-                delay_window[0] as f64,
-                delay_window[1] as f64,
+                drange[0] as f64,
+                drange[1] as f64,
+                drange[0] as f64,
+                drange[1] as f64,
             )
         };
 
-    let (rate_line_min, rate_line_max, heatmap_rate_min, heatmap_rate_max) = if rate_window
+    let (rate_line_min, rate_line_max, heatmap_rate_min, heatmap_rate_max) = if rrange
         .is_empty()
     {
         let rate_min_x = rate_profile
@@ -89,10 +89,10 @@ pub fn delay_plane(
         )
     } else {
         (
-            rate_window[0] as f64,
-            rate_window[1] as f64,
-            rate_window[0] as f64,
-            rate_window[1] as f64,
+            rrange[0] as f64,
+            rrange[1] as f64,
+            rrange[0] as f64,
+            rrange[1] as f64,
         )
     };
 
@@ -118,7 +118,15 @@ pub fn delay_plane(
         .label_style(("sans-serif ", 30))
         .draw()?;
 
-    chart1.draw_series(LineSeries::new(delay_profile.iter().cloned(), GREEN))?;
+    chart1.draw_series(LineSeries::new(
+        delay_profile
+            .iter()
+            .filter(|(x, y)| {
+                *x >= delay_line_min && *x <= delay_line_max && x.is_finite() && y.is_finite()
+            })
+            .cloned(),
+        GREEN,
+    ))?;
 
     // Draw bounding box for chart1
     let x_spec = chart1.x_range();
@@ -150,7 +158,15 @@ pub fn delay_plane(
         .label_style(("sans-serif ", 30))
         .draw()?;
 
-    chart2.draw_series(LineSeries::new(rate_profile.iter().cloned(), GREEN))?;
+    chart2.draw_series(LineSeries::new(
+        rate_profile
+            .iter()
+            .filter(|(x, y)| {
+                *x >= rate_line_min && *x <= rate_line_max && x.is_finite() && y.is_finite()
+            })
+            .cloned(),
+        GREEN,
+    ))?;
 
     // Draw bounding box for chart2
     let x_spec = chart2.x_range();
@@ -180,7 +196,7 @@ pub fn delay_plane(
         .y_max_light_lines(0)
         .label_style(("sans-serif ", 30))
         .x_label_formatter(&|v| format!("{:.0}", v))
-        .y_label_formatter(&|v| format!("{:.2}", v))
+        .y_label_formatter(&|v| format!("{:.2e}", v))
         .draw()?;
 
     let resolution = 100; // Increased resolution for a smoother heatmap
@@ -283,6 +299,7 @@ pub fn frequency_plane(
     output_path: &str,
     bw: f64,
     max_amplitude: f64,
+    frange: &[f32],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let width = 1400;
     let height = 1000;
@@ -317,13 +334,19 @@ pub fn frequency_plane(
         .map(|(x, _)| *x)
         .fold(f64::NEG_INFINITY, f64::max);
 
+    let (freq_min, freq_max) = if frange.len() == 2 {
+        (frange[0] as f64, frange[1] as f64)
+    } else {
+        (0.0, bw)
+    };
+
     // --- Phase Chart ---
     let mut phase_chart = ChartBuilder::on(&phase_area)
         .margin_top(20)
         .margin_left(15)
         .x_label_area_size(0)
         .y_label_area_size(120)
-        .build_cartesian_2d(0.0..bw, -180.0..180.0)?;
+        .build_cartesian_2d(freq_min..freq_max, -180.0..180.0)?;
     phase_chart
         .configure_mesh()
         //.disable_x_mesh()
@@ -338,7 +361,10 @@ pub fn frequency_plane(
         .label_style(("sans-serif ", 30))
         .draw()?;
     phase_chart.draw_series(LineSeries::new(
-        freq_phase_profile.iter().cloned(),
+        freq_phase_profile
+            .iter()
+            .filter(|(x, y)| *x >= freq_min && *x <= freq_max && x.is_finite() && y.is_finite())
+            .cloned(),
         GREEN.stroke_width(1),
     ))?;
 
@@ -355,7 +381,7 @@ pub fn frequency_plane(
         .margin_left(15)
         .x_label_area_size(65)
         .y_label_area_size(120)
-        .build_cartesian_2d(0.0..bw, 0.0..amp_max_y)?;
+        .build_cartesian_2d(freq_min..freq_max, 0.0..amp_max_y)?;
     amp_chart
         .configure_mesh()
         .x_desc("Frequency [MHz]")
@@ -370,7 +396,10 @@ pub fn frequency_plane(
         .y_label_formatter(&|y| format!("{:.1e}", y))
         .draw()?;
     amp_chart.draw_series(LineSeries::new(
-        freq_amp_profile.iter().cloned(),
+        freq_amp_profile
+            .iter()
+            .filter(|(x, y)| *x >= freq_min && *x <= freq_max && x.is_finite() && y.is_finite())
+            .cloned(),
         GREEN.stroke_width(1),
     ))?;
 
@@ -402,7 +431,12 @@ pub fn frequency_plane(
         .y_label_formatter(&|y| format!("{:.1e}", y))
         .draw()?;
     rate_chart.draw_series(LineSeries::new(
-        rate_profile.iter().cloned(),
+        rate_profile
+            .iter()
+            .filter(|(x, y)| {
+                *x >= rate_min_x && *x <= rate_max_x && x.is_finite() && y.is_finite()
+            })
+            .cloned(),
         GREEN.stroke_width(1),
     ))?;
 

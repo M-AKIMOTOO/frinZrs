@@ -17,15 +17,7 @@ pub struct Args {
     #[arg(long, aliases = ["in", "inp", "inpu"])]
     pub input: Option<PathBuf>,
 
-    /// Paths to the calibrator and target .cor files for phase referencing.
-    ///
-    /// Arguments:
-    /// 1. CALIBRATOR: Path to the calibrator .cor file.
-    /// 2. TARGET: Path to the target .cor file.
-    /// 3. FIT_DEGREE (optional): Degree of the polynomial for phase fitting. Defaults to 1.
-    /// 4. CAL_LENGTH (optional): Integration time in seconds for the calibrator. Defaults to the entire file.
-    /// 5. TGT_LENGTH (optional): Integration time in seconds for the target. Defaults to the entire file.
-    /// 6. LOOP (optional): Number of times to loop the fringe processing for both files. Defaults to 1.
+    /// Phase referencing: CAL TARGET [FIT_DEGREE CAL_LEN TGT_LEN LOOP]
     #[arg(long, num_args = 2..=6, value_names = ["CALIBRATOR", "TARGET", "FIT_DEGREE", "CAL_LENGTH", "TGT_LENGTH", "LOOP"], aliases = ["ph", "pha", "phas", "phase","phase-r", "phase-re","phase-ref","phase-refe","phase-refer","phase-refere","phase-referen","phase-referenc"])]
     pub phase_reference: Vec<String>,
 
@@ -33,39 +25,39 @@ pub struct Args {
     #[arg(long = "closure-phase", aliases = ["cp"], num_args = 0.., value_name = "FILE|KEY:VALUE")]
     pub closure_phase: Option<Vec<String>>,
 
-    /// The integration time in seconds. Defaults to the entire file.
+    /// Integration time in seconds (0 = whole file).
     #[arg(long, aliases = ["le", "len", "leng", "lengt"], default_value_t = 0)]
     pub length: i32,
 
-    /// The skip time in seconds from the start of the recording.
+    /// Skip time in seconds from the start.
     #[arg(long, aliases = ["sk", "ski"], default_value_t = 0)]
     pub skip: i32,
 
-    /// How many times to loop the fringe processing.
+    /// Number of loops.
     #[arg(long, aliases = ["lo", "loo"], default_value_t = 1)]
     pub loop_: i32,
 
-    /// RFI frequency ranges to exclude (e.g., "100,120" "400,500"). Can be specified multiple times.
+    /// RFI ranges to exclude (e.g., "100,120"). Repeatable.
     #[arg(long, num_args = 1.., value_name = "MIN,MAX")]
     pub rfi: Vec<String>,
 
-    /// Generate and save plots of the fringe or spectrum.
+    /// Generate plots.
     #[arg(long, aliases = ["pl", "plo"])]
     pub plot: bool,
 
-    /// Calculate and display the cross-power spectrum instead of the fringe.
+    /// Use frequency-domain mode.
     #[arg(long, aliases = ["fre", "freq", "frequ", "freque", "frequen", "frequenc"])]
     pub frequency: bool,
 
-    /// Output the raw complex visibility data to a binary file.
+    /// Output raw complex visibility to binary.
     #[arg(long, aliases = ["c2b", "cor2b", "cor2bi"])]
     pub cor2bin: bool,
 
-    /// Output the frequency spectrum to a binary file.
+    /// Output cross spectrum to binary.
     #[arg(long, aliases = ["spec", "spect", "spectr", "spectru"])]
     pub spectrum: bool,
 
-    /// Output the analysis results (delay/frequency) to a .txt file.
+    /// Output analysis results to .txt.
     #[arg(long, aliases = ["ou", "out", "outp", "outpu"])]
     pub output: bool,
 
@@ -81,49 +73,43 @@ pub struct Args {
     #[arg(long, aliases = ["acel","acel-corr"], default_value_t = 0.0, allow_negative_numbers = true)]
     pub acel_correct: f32,
 
-    /// Correct delay and rate based on a scan table file.
-    /// The file should contain comma-separated values of:
-    /// start_time (YYYYDDDHHMMSS), integration_time (s), delay (samples), rate (Hz)
+    /// Apply scan table corrections (CSV: start, integ, delay[samp], rate[Hz]).
     #[arg(long, value_name = "FILE")]
     pub scan_correct: Option<PathBuf>,
 
-    /// Delay window for fringe search (min, max).
-    #[arg(long, aliases = ["delay-w", "delay-wi", "delay-win", "delay-wind", "delay-windo"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
-    pub delay_window: Vec<f32>,
+    /// Delay range (min max).
+    #[arg(long = "drange", aliases = ["delay-w", "delay-win"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
+    pub drange: Vec<f32>,
 
-    /// Rate window for fringe search (min, max).
-    #[arg(long, aliases = ["rate-w", "rate-wi", "rate-win", "rate-wind", "rate-windo"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
-    pub rate_window: Vec<f32>,
+    /// Rate range (min max).
+    #[arg(long = "rrange", aliases = ["rate-w", "rate-win"], num_args = 2, value_name = "MIN MAX", allow_negative_numbers = true)]
+    pub rrange: Vec<f32>,
 
-    /// レート分解能のパディング係数（1,2,4,8,16 のみ指定可）。デフォルトは 1。
-    /// なお、`--cumulate` が指定された場合は内部的に常に 1 に上書きされます。
+    /// Frequency range for --frequency plots/search.
+    #[arg(long = "frange", num_args = 2, value_name = "MIN MAX")]
+    pub frange: Vec<f32>,
+
+    /// Rate padding factor (1/2/4/8/16). Deep defaults to 4.
     #[arg(long, aliases = ["rate-p", "rate-pa", "rate-pad", "rate-padd", "rate-paddi", "rate-paddin"], default_value_t = 1)]
     pub rate_padding: u32,
 
-    /// Cumulate length in seconds.
+    /// Cumulate length in seconds (0=off).
     #[arg(long, aliases = ["cu", "cum", "cumu", "cumul", "cumula", "cumulat"], default_value_t = 0)]
     pub cumulate: i32,
 
-    /// Generate additional plots for amplitude, SNR, phase, and noise level over time.
+    /// Extra plots of amp/SNR/phase/noise vs time.
     #[arg(long, aliases = ["add", "add-p", "add-pl", "add-plo"])]
     pub add_plot: bool,
 
-    /// Output header information to console and file.
+    /// Output header info.
     #[arg(long)]
     pub header: bool,
 
-    /// FFT チャンネル数を平均化して縮小する目標 FFT 点数。
-    /// 元の FFT 点数以上は指定できません。
+    /// Rebin FFT channels to this point count.
     #[arg(long, value_name = "POINTS")]
     pub fft_rebin: Option<i32>,
 
-    /// Specifies the search mode. [possible values: peak, deep, rate, acel]
-    /// - peak: Precise search for the fringe peak using iterative fitting. (equivalent to the old --search flag).
-    /// - deep: A deep, hierarchical search for fringes. 6 層のグリッド探索で得た候補の中央値を residual delay/rate として採用し、ノイズピークより安定した推定を返します（旧 --search-deep）。
-    /// - rate: A search for the fringe rate by performing a linear fit. (equivalent to the old --rate-search flag).
-    /// - acel: A search for fringe acceleration by performing a quadratic fit.
-    ///
-    /// If `--search` is provided without a value, it defaults to `peak`.
+    /// Search mode: peak (default), deep, rate, or acel.
     #[arg(
         long,
         num_args = 0..=1,
@@ -134,96 +120,68 @@ pub struct Args {
     )]
     pub search: Vec<String>,
 
-    /// Number of iterations for the precise search mode (--search=peak).
+    /// Iterations for --search=peak.
     #[arg(long, default_value_t = 5)]
     pub iter: u32,
 
-    /// Generate dynamic spectrum plot.
+    /// Plot dynamic spectrum.
     #[arg(long, aliases = ["ds","dynamic"])]
     pub dynamic_spectrum: bool,
 
-    /// Path to the bandpass calibration binary file made by --bandpass-table argument.
+    /// Bandpass calibration file.
     #[arg(long, aliases = ["bp"])]
     pub bandpass: Option<PathBuf>,
 
-    /// Output the bandpass-corrected complex spectrum to a binary file.
+    /// Write bandpass-corrected spectrum to binary.
     #[arg(long, aliases = ["bptable"])]
     pub bandpass_table: bool,
 
-    /// Number of CPU cores to use for parallel processing. Only effective with `--search=deep`.
-    /// If 0, automatically determines the number of cores.
-    /// If specified value is greater than available CPU cores, it defaults to half of available cores.
+    /// CPU cores for --search deep (0 = auto).
     #[arg(long, default_value_t = 0)]
     pub cpu: u32,
 
-    /// Flag data by time or sector number (pp).
-    /// Modes:
-    ///  time <START> <END>... : Skips processing for segments within the YYYYDDDHHMMSS time ranges.
-    ///  pp <START> <END>...   : Replaces visibility data with 0+0j for the given sector number ranges.
+    /// Flag data by time or pp ranges.
     #[arg(long, num_args = 1.., value_name = "MODE [ARGS...]", aliases = ["flag"])]
     pub flagging: Vec<String>,
 
-    /// Calculate and plot the Allan deviation of the phase data.
-    /// Requires --length and --loop to be set to generate a time series.
+    /// Plot Allan deviation (requires length/loop).
     #[arg(long, aliases = ["allan","allan-dev"])]
     pub allan_deviance: bool,
 
-    /// Generate heatmaps of raw visibility data (amplitude and phase).
-    /// Requires --input. The program will exit after plotting.
+    /// Heatmaps of raw visibility (amp/phase).
     #[arg(long, aliases = ["ra","raw","raw-v","raw-vi","raw-vis","raw-visi","raw-visib","raw-visibi","raw-visibils","raw-visibili","raw-visibilit"])]
     pub raw_visibility: bool,
 
-    /// Generate UV coverage plot; optional value (0 = planar, 1 = 3D). Defaults to 1.
+    /// UV coverage plot (0 planar, 1 3D).
     #[arg(long, num_args = 0..=1, default_missing_value = "1")]
     pub uv: Option<i32>,
 
     #[arg(long, aliases = ["frmap"], num_args = 0.., value_name = "KEY[:VALUE]")]
     pub fringe_rate_map: Option<Vec<String>>,
 
-    /// Perform maser analysis.
-    /// Accepts key-value pairs such as:
-    ///   off:<path>     -- Off-source .cor file (required)
-    ///   rest:<MHz>     -- Rest frequency override (defaults to 6668.5192)
-    ///   Vlst:<km/s>    -- Override LSR velocity correction
-    ///   corrfreq:<x>   -- Multiplier applied to the sampling frequency
-    ///   band:<start-end> -- Frequency window offsets in MHz relative to observing frequency
-    ///   subt:<start-end> -- Absolute frequency window in MHz (overrides band)
-    ///   onoff:<0|1>   -- Use (ON-OFF)/OFF when 0 (default), or (ON-OFF) when 1
-    ///   gauss:amp,Vlst,fwhm,[amp,Vlst,fwhm...] -- Apply Gaussian mixture fits on the velocity spectrum
-    ///
-    /// Positional arguments (legacy): first token = off-source path, second = rest frequency.
+    /// Maser analysis (see --detail).
     #[arg(long, num_args = 1.., value_name = "KEY:VALUE")]
     pub maser: Vec<String>,
 
-    /// Perform multi-sideband analysis.
-    /// Arguments:
-    /// 1. C_BAND_DATA: Path to the C-band .cor file.
-    /// 2. C_BAND_BP: Path to the C-band bandpass file. Use -1 to disable.
-    /// 3. C_BAND_DELAY: Delay for C-band in seconds.
-    /// 4. X_BAND_DATA: Path to the X-band .cor file.
-    /// 5. X_BAND_BP: Path to the X-band bandpass file. Use -1 to disable.
-    /// 6. X_BAND_DELAY: Delay for X-band in seconds.
-    #[arg(long, num_args = 6, value_names = ["C_BAND_DATA", "C_BAND_BP", "C_BAND_DELAY", "X_BAND_DATA", "X_BAND_BP", "X_BAND_DELAY"], aliases = ["msb"], allow_negative_numbers = true)]
+    /// Multi-sideband inputs (see --detail).
+    #[arg(long, num_args = 6, value_names = ["C_COR", "C_BP", "C_DELAY", "X_COR", "X_BP", "X_DELAY"], aliases = ["msb"], allow_negative_numbers = true)]
     pub multi_sideband: Vec<String>,
 
-    /// Plot antenna uptime (Az/El) over UT.
+    /// Plot antenna uptime (Az/El).
     #[arg(long)]
     pub uptimeplot: bool,
 
-    /// Run Earth-rotation imaging on the input visibility data.
-    /// Sub-options (key[:value]):
-    ///   size:<pixels>        Image size per axis (default 256)
-    ///   cell:<arcsec>        Cell size in arcsec/pixel (auto if omitted)
-    ///   clean[:0|1]          Enable CLEAN (default 0 / disabled)
-    ///   gain:<value>         CLEAN loop gain (default 0.1)
-    ///   threshold:<Jy>       CLEAN stopping threshold Jy (default 0.01)
-    ///   iter:<count>         CLEAN max iterations (default 200)
+    /// Earth-rotation imaging (see --detail).
     #[arg(long, num_args = 0.., value_name = "KEY[:VALUE]", requires = "input")]
     pub imaging: Option<Vec<String>>,
 
-    /// Perform a test of the Earth-rotation synthesis imaging module.
+    /// Run imaging test.
     #[arg(long)]
     pub imaging_test: bool,
+
+    /// Show detailed CLI guide and exit.
+    #[arg(long)]
+    pub detail: bool,
 }
 
 impl Args {

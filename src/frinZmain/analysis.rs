@@ -97,14 +97,14 @@ pub fn analyze_results(
     let delay_noise_raw = noise_level(delay_rate_array.view(), delay_rate_array.mean().unwrap());
     let delay_noise = sanitize_noise(delay_noise_raw);
 
-    let (peak_rate_idx, peak_delay_idx) = if !args.delay_window.is_empty()
-        && !args.rate_window.is_empty()
+    let (peak_rate_idx, peak_delay_idx) = if !args.drange.is_empty()
+        && !args.rrange.is_empty()
     {
         // Case 3: Window options are specified, search within them.
-        let delay_win_low = args.delay_window[0];
-        let delay_win_high = args.delay_window[1];
-        let rate_win_low = args.rate_window[0];
-        let rate_win_high = args.rate_window[1];
+        let delay_win_low = args.drange[0];
+        let delay_win_high = args.drange[1];
+        let rate_win_low = args.rrange[0];
+        let rate_win_high = args.rrange[1];
 
         let mut max_val_in_window = 0.0f32;
         let mut temp_peak_rate_idx = padding_length_half;
@@ -186,10 +186,18 @@ pub fn analyze_results(
     let freq_rate_2d_data_array = freq_rate_array.clone().mapv(|x| x.norm());
 
     let (peak_freq_row_idx, peak_rate_col_idx) =
-        if !args.rate_window.is_empty() {
+        if !args.rrange.is_empty() || !args.frange.is_empty() {
             // Case 3: Window option is specified.
-            let rate_win_low = args.rate_window[0];
-            let rate_win_high = args.rate_window[1];
+            let (rate_win_low, rate_win_high) = if !args.rrange.is_empty() {
+                (args.rrange[0], args.rrange[1])
+            } else {
+                (rate_range[0], *rate_range.last().unwrap_or(&rate_range[0]))
+            };
+            let (freq_win_low, freq_win_high) = if args.frange.len() == 2 {
+                (args.frange[0], args.frange[1])
+            } else {
+                (freq_range[0], *freq_range.last().unwrap_or(&freq_range[0]))
+            };
 
             let mut max_val_in_window = 0.0f32;
             let mut temp_peak_freq_row_idx = 0;
@@ -198,6 +206,10 @@ pub fn analyze_results(
             for r_idx in 0..rate_range.len() {
                 if rate_range[r_idx] >= rate_win_low && rate_range[r_idx] <= rate_win_high {
                     for f_idx in 0..freq_range.len() {
+                        let freq_mhz = freq_range[f_idx];
+                        if freq_mhz < freq_win_low || freq_mhz > freq_win_high {
+                            continue;
+                        }
                         let current_val = freq_rate_2d_data_array[[f_idx, r_idx]];
                         if current_val > max_val_in_window {
                             max_val_in_window = current_val;
@@ -211,7 +223,16 @@ pub fn analyze_results(
         } else if search_mode == Some("peak") || search_mode == Some("deep") {
             // Case 2: --search or --search_deep is specified, no window. Find the global maximum.
             let (mut max_val, mut max_f_idx, mut max_r_idx) = (0.0f32, 0, 0);
+            let (freq_win_low, freq_win_high) = if args.frange.len() == 2 {
+                (args.frange[0], args.frange[1])
+            } else {
+                (freq_range[0], *freq_range.last().unwrap_or(&freq_range[0]))
+            };
             for f_idx in 0..freq_rate_2d_data_array.shape()[0] {
+                let freq_mhz = freq_range[f_idx];
+                if freq_mhz < freq_win_low || freq_mhz > freq_win_high {
+                    continue;
+                }
                 for r_idx in 0..freq_rate_2d_data_array.shape()[1] {
                     let current_val = freq_rate_2d_data_array[[f_idx, r_idx]];
                     if current_val > max_val {

@@ -862,24 +862,40 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let mut maser_mode = MaserMode::default();
     let mut integration_state: Option<IntegrationState> = None;
 
-    for entry in &args.maser {
-        if let Some((key, value)) = entry.split_once(':') {
+    let mut idx = 0;
+    while idx < args.maser.len() {
+        let entry = &args.maser[idx];
+        if let Some((key, raw_value)) = entry.split_once(':') {
+            let mut value_owned = raw_value.trim().to_string();
+            if value_owned.is_empty() && idx + 1 < args.maser.len() {
+                idx += 1;
+                value_owned = args.maser[idx].trim().to_string();
+            }
+            if value_owned.is_empty() {
+                return Err(format!(
+                    "Error: parameter '{}' requires a value (e.g., {}:<val>).",
+                    key.trim(),
+                    key.trim()
+                )
+                .into());
+            }
+
             match key.trim().to_lowercase().as_str() {
                 "off" => {
-                    off_source_path = Some(PathBuf::from(value.trim()));
+                    off_source_path = Some(PathBuf::from(value_owned.trim()));
                 }
                 "rest" => {
-                    rest_freq_mhz = value.trim().parse()?;
+                    rest_freq_mhz = value_owned.trim().parse()?;
                     rest_freq_overridden = true;
                 }
                 "vlst" => {
-                    override_vlsr = Some(value.trim().parse()?);
+                    override_vlsr = Some(value_owned.trim().parse()?);
                 }
                 "corrfreq" => {
-                    corrfreq = value.trim().parse()?;
+                    corrfreq = value_owned.trim().parse()?;
                 }
                 "band" => {
-                    let mut parts = value.trim().split('-');
+                    let mut parts = value_owned.trim().split('-');
                     let start: f64 = parts
                         .next()
                         .ok_or("Error: band requires start-end in MHz offset.")?
@@ -900,7 +916,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                     user_band_range = Some((start, end));
                 }
                 "subt" => {
-                    let mut parts = value.trim().split('-');
+                    let mut parts = value_owned.trim().split('-');
                     let start: f64 = parts
                         .next()
                         .ok_or("Error: subt requires start-end in MHz.")?
@@ -921,7 +937,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                     user_subt_range = Some((start, end));
                 }
                 "onoff" => {
-                    let mode: u8 = value.trim().parse()?;
+                    let mode: u8 = value_owned.trim().parse()?;
                     if mode > 1 {
                         return Err(
                             "Error: onoff accepts only 0 ((ON-OFF)/OFF) or 1 (ON-OFF).".into()
@@ -930,11 +946,11 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                     onoff_mode = Some(mode);
                 }
                 "mode" => {
-                    maser_mode = MaserMode::from_str(value.trim())
+                    maser_mode = MaserMode::from_str(value_owned.trim())
                         .map_err(|e| format!("Error parsing --maser mode: {}", e))?;
                 }
                 "gauss" => {
-                    let params: Vec<&str> = value
+                    let params: Vec<&str> = value_owned
                         .split(',')
                         .map(|s| s.trim())
                         .filter(|s| !s.is_empty())
@@ -973,6 +989,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         } else {
             positional_args.push(entry);
         }
+        idx += 1;
     }
 
     if off_source_path.is_none() {

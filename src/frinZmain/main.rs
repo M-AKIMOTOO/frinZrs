@@ -93,6 +93,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         Err(e) => e.exit(),
     };
 
+    if args.detail {
+        const DETAIL_TEXT: &str = include_str!("command_detail.txt");
+        print!("{}", DETAIL_TEXT);
+        return Ok(());
+    }
+
     if args.scan_correct.is_some() {
         if !args.search.is_empty() {
             eprintln!("Error: --scan-correct cannot be used with --search.");
