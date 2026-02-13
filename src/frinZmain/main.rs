@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
     let rate_padding_explicit =
-        matches.value_source("rate-padding") == Some(ValueSource::CommandLine);
+        matches.value_source("rate_padding") == Some(ValueSource::CommandLine);
 
     let mut args = match Args::from_arg_matches_mut(&mut matches) {
         Ok(args) => args,

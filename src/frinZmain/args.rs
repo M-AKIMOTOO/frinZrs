@@ -17,8 +17,8 @@ pub struct Args {
     #[arg(long, aliases = ["in", "inp", "inpu"])]
     pub input: Option<PathBuf>,
 
-    /// Phase referencing: CAL TARGET [FIT_DEGREE CAL_LEN TGT_LEN LOOP]
-    #[arg(long, num_args = 2..=6, value_names = ["CALIBRATOR", "TARGET", "FIT_DEGREE", "CAL_LENGTH", "TGT_LENGTH", "LOOP"], aliases = ["ph", "pha", "phas", "phase","phase-r", "phase-re","phase-ref","phase-refe","phase-refer","phase-refere","phase-referen","phase-referenc"])]
+    /// Phase referencing: CAL TARGET [FIT_SPEC CAL_LEN TGT_LEN LOOP]
+    #[arg(long, num_args = 2..=6, value_names = ["CALIBRATOR", "TARGET", "FIT_SPEC", "CAL_LENGTH", "TGT_LENGTH", "LOOP"], aliases = ["ph", "pha", "phas", "phase","phase-r", "phase-re","phase-ref","phase-refe","phase-refer","phase-refere","phase-referen","phase-referenc"])]
     pub phase_reference: Vec<String>,
 
     /// Compute closure phase from three baselines. Provide: FILE1 FILE2 FILE3 [refant:NAME].

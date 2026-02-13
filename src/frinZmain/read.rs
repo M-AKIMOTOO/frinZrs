@@ -14,6 +14,25 @@ const SECTOR_HEADER_SIZE: u64 = 128;
 // セクターヘッダー内での有効積分時間のオフセット
 const EFFECTIVE_INTEG_TIME_OFFSET: u64 = 112;
 
+fn normalize_effective_integration_time(value: f32) -> f32 {
+    if !value.is_finite() || value <= 0.0 {
+        return 1.0;
+    }
+    if (value - 1.0).abs() <= 0.1 {
+        return 1.0;
+    }
+
+    let mut a = 0.1f32;
+    while a >= 0.000001 {
+        if value >= a * 0.9 && value <= a * 1.1 {
+            return a;
+        }
+        a /= 10.0;
+    }
+
+    value
+}
+
 pub fn read_visibility_data(
     cursor: &mut Cursor<&[u8]>,
     header: &CorHeader,
@@ -99,25 +118,7 @@ pub fn read_visibility_data(
         );
     }
 
-    let mut a = 1.0f32;
-    let mut corrected = false;
-
-    if effective_integ_time >= 0.9 {
-        // 1.0に近い場合の特別な処理
-        effective_integ_time = 1.0;
-        //corrected = true;
-    } else {
-        a /= 10.0; // 最初のaは0.1から始める
-        while a >= 0.000001 && !corrected {
-            // ある程度の小さい値まで繰り返す
-            // effective_integ_timeがaの0.9倍からaまでの範囲にあるか
-            if effective_integ_time >= a * 0.9 && effective_integ_time <= a {
-                effective_integ_time = a;
-                corrected = true;
-            }
-            a /= 10.0;
-        }
-    }
+    effective_integ_time = normalize_effective_integration_time(effective_integ_time);
 
     Ok((complex_vec, obs_time, effective_integ_time))
 }

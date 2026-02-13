@@ -873,6 +873,9 @@ pub fn phase_reference_plot(
         .configure_mesh()
         .x_desc("Time [UTC]")
         .y_desc("Phase [deg]")
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
+        .light_line_style(&TRANSPARENT)
         .x_label_formatter(&|ts| {
             chrono::Utc
                 .timestamp_opt(*ts as i64, 0)

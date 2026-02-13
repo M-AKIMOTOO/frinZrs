@@ -187,6 +187,56 @@ pub fn fit_polynomial_least_squares(
     Ok(coeffs.iter().cloned().collect())
 }
 
+/// Fits y = c0 + c1*x + ... + cn*x^n + a*sin(w*x) + b*cos(w*x)
+/// using least squares. Returns coefficients in this order:
+/// [c0..cn, a_sin, b_cos].
+pub fn fit_polynomial_plus_sinusoid_least_squares(
+    x_coords: &[f64],
+    y_values: &[f64],
+    degree: usize,
+    period_sec: f64,
+) -> Result<Vec<f64>, Box<dyn Error>> {
+    let n = x_coords.len();
+    let cols = degree + 3; // poly (degree+1) + sin + cos
+    if n < cols {
+        return Err(Box::new(FittingError(format!(
+            "Not enough data points ({}) for polynomial+sin fitting with {} parameters. Need at least {} points.",
+            n, cols, cols
+        ))));
+    }
+    if !period_sec.is_finite() || period_sec <= 0.0 {
+        return Err(Box::new(FittingError(format!(
+            "Invalid sinusoid period: {}",
+            period_sec
+        ))));
+    }
+
+    let omega = 2.0 * f64::consts::PI / period_sec;
+
+    let mut a_data = Vec::with_capacity(n * cols);
+    for &x in x_coords {
+        for i in 0..=degree {
+            a_data.push(x.powi(i as i32));
+        }
+        a_data.push((omega * x).sin());
+        a_data.push((omega * x).cos());
+    }
+    let a = DMatrix::from_row_slice(n, cols, &a_data);
+    let y = DVector::from_vec(y_values.to_vec());
+
+    let ata = a.transpose() * &a;
+    let aty = a.transpose() * y;
+    let lu = ata.lu();
+    let coeffs = lu.solve(&aty).ok_or_else(|| {
+        Box::new(FittingError(
+            "Failed to solve linear system for polynomial+sin fitting. Matrix might be singular."
+                .to_string(),
+        ))
+    })?;
+
+    Ok(coeffs.iter().cloned().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
