@@ -114,7 +114,7 @@ pub struct Args {
     #[arg(long, value_name = "POINTS")]
     pub fft_rebin: Option<i32>,
 
-    /// Search mode: peak (default; delay-rate peak + local Zoom FFT/CZT refinement), deep, rate, or acel.
+    /// Search mode: peak (default), deep, rate, or acel.
     #[arg(
         long,
         num_args = 0..=1,
@@ -128,14 +128,6 @@ pub struct Args {
     /// Iterations for --search=peak/deep (deep default=4 when omitted).
     #[arg(long, default_value_t = 5)]
     pub iter: u32,
-
-    /// CZT rate samples for local zoom refinement in --search peak (odd number recommended).
-    #[arg(long, default_value_t = 33)]
-    pub czt_points: u32,
-
-    /// CZT half-span in coarse rate bins for --search peak (e.g. 1.0 => ±1 coarse bin).
-    #[arg(long, default_value_t = 1.0, allow_negative_numbers = false)]
-    pub czt_span_bins: f32,
 
     /// Plot dynamic spectrum.
     #[arg(long, aliases = ["ds","dynamic"])]

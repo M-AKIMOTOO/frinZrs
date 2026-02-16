@@ -6,9 +6,7 @@ use std::process;
 
 use crate::analysis::AnalysisResults;
 use chrono::{DateTime, Duration, Utc};
-use image::ImageBuffer;
-use imageproc::filter;
-use ndarray::{Array, Array1, Array2};
+use ndarray::{Array, Array2};
 use num_complex::Complex;
 
 use crate::analysis::analyze_results;
@@ -556,6 +554,8 @@ pub fn process_cor_file(
                 Some("peak") => {
                     let mut total_delay_correct = loop_args.delay_correct;
                     let mut total_rate_correct = loop_args.rate_correct;
+                    let delay_bounds = window_bounds(&args.drange);
+                    let rate_bounds = window_bounds(&args.rrange);
 
                     for _ in 0..args.iter {
                         let (iter_results, _, _) = run_analysis_pipeline(
@@ -577,6 +577,14 @@ pub fn process_cor_file(
                         )?;
                         total_delay_correct += iter_results.delay_offset;
                         total_rate_correct += iter_results.rate_offset;
+
+                        // Keep iterative updates inside user-specified absolute windows.
+                        if let Some((low, high)) = delay_bounds {
+                            total_delay_correct = total_delay_correct.clamp(low, high);
+                        }
+                        if let Some((low, high)) = rate_bounds {
+                            total_rate_correct = total_rate_correct.clamp(low, high);
+                        }
                     }
 
                     let (mut final_analysis_results, final_freq_rate_array, final_delay_rate_array) =
@@ -598,14 +606,28 @@ pub fn process_cor_file(
                             effective_fft_point,
                         )?;
 
+                    // Reflect the final residual re-evaluation so the reported value
+                    // corresponds to the last constrained peak estimate.
+                    let mut final_delay_abs =
+                        total_delay_correct + final_analysis_results.residual_delay;
+                    let mut final_rate_abs =
+                        total_rate_correct + final_analysis_results.residual_rate;
+
+                    if let Some((low, high)) = delay_bounds {
+                        final_delay_abs = final_delay_abs.clamp(low, high);
+                    }
+                    if let Some((low, high)) = rate_bounds {
+                        final_rate_abs = final_rate_abs.clamp(low, high);
+                    }
+
                     final_analysis_results.length_f32 =
                         physical_length as f32 * effective_integ_time;
-                    final_analysis_results.corrected_delay = total_delay_correct;
-                    final_analysis_results.corrected_rate = total_rate_correct;
+                    final_analysis_results.corrected_delay = final_delay_abs;
+                    final_analysis_results.corrected_rate = final_rate_abs;
                     final_analysis_results.corrected_acel = args.acel_correct;
                     final_analysis_results.residual_delay =
-                        total_delay_correct - loop_args.delay_correct;
-                    final_analysis_results.residual_rate = total_rate_correct - loop_args.rate_correct;
+                        final_delay_abs - loop_args.delay_correct;
+                    final_analysis_results.residual_rate = final_rate_abs - loop_args.rate_correct;
                     (
                         final_analysis_results,
                         final_freq_rate_array,
@@ -903,19 +925,6 @@ pub fn process_cor_file(
                         .iter()
                         .map(|c| c.norm())
                         .fold(0.0f32, |acc, x| acc.max(x));
-                    let mut img = ImageBuffer::new(cols, rows);
-                    for y in 0..rows {
-                        for x in 0..cols {
-                            let val = delay_rate_2d_data_comp[[y as usize, x as usize]].norm();
-                            let normalized_val = if max_norm > 0.0 {
-                                (val / max_norm * 255.0) as u8
-                            } else {
-                                0
-                            };
-                            img.put_pixel(x, y, image::Luma([normalized_val]));
-                        }
-                    }
-                    let blurred_img = filter::gaussian_blur_f32(&img, 1.0);
                     let delay_data: Vec<f32> = analysis_results
                         .delay_range
                         .iter()
@@ -926,31 +935,103 @@ pub fn process_cor_file(
                         .iter()
                         .map(|&x| x as f32)
                         .collect();
+                    let (delay_plot_min, delay_plot_max) = if args.drange.len() == 2 {
+                        (
+                            args.drange[0].min(args.drange[1]) as f64,
+                            args.drange[0].max(args.drange[1]) as f64,
+                        )
+                    } else {
+                        (-10.0_f64, 10.0_f64)
+                    };
+                    let (rate_plot_min, rate_plot_max) = if args.rrange.len() == 2 {
+                        (
+                            args.rrange[0].min(args.rrange[1]) as f64,
+                            args.rrange[0].max(args.rrange[1]) as f64,
+                        )
+                    } else {
+                        let rate_low = if (-8.0 / analysis_results.length_f32 as f64)
+                            < rate_data[0] as f64
+                        {
+                            rate_data[0] as f64 * effective_integ_time as f64
+                        } else {
+                            -4.0 / (analysis_results.length_f32 as f64 * effective_integ_time as f64)
+                        };
+                        let rate_high = if (8.0 / analysis_results.length_f32 as f64)
+                            > *rate_data.last().unwrap_or(&rate_data[0]) as f64
+                        {
+                            *rate_data.last().unwrap_or(&rate_data[0]) as f64
+                                * effective_integ_time as f64
+                        } else {
+                            4.0 / (analysis_results.length_f32 as f64 * effective_integ_time as f64)
+                        };
+                        (rate_low, rate_high)
+                    };
+
+                    let delay_indices: Vec<usize> = delay_data
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, &d)| {
+                            let d = d as f64;
+                            if d >= delay_plot_min && d <= delay_plot_max {
+                                Some(idx)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let rate_indices: Vec<usize> = rate_data
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, &r)| {
+                            let r = r as f64;
+                            if r >= rate_plot_min && r <= rate_plot_max {
+                                Some(idx)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    let x_start = delay_indices.first().copied().unwrap_or(0);
+                    let x_end = delay_indices
+                        .last()
+                        .copied()
+                        .unwrap_or_else(|| cols.saturating_sub(1) as usize);
+                    let y_start = rate_indices.first().copied().unwrap_or(0);
+                    let y_end = rate_indices
+                        .last()
+                        .copied()
+                        .unwrap_or_else(|| rows.saturating_sub(1) as usize);
+
+                    let x_span = (x_end.saturating_sub(x_start)).max(1) as f64;
+                    let y_span = (y_end.saturating_sub(y_start)).max(1) as f64;
                     let heatmap_func = move |delay: f64, rate: f64| -> f64 {
-                        let d_min = delay_data[0] as f64;
-                        let d_max = *delay_data.last().unwrap() as f64;
-                        let r_min = rate_data[0] as f64;
-                        let r_max = *rate_data.last().unwrap() as f64;
-                        let x_img = ((delay - d_min) / (d_max - d_min) * (cols - 1) as f64)
+                        let d_min = delay_plot_min;
+                        let d_max = delay_plot_max;
+                        let r_min = rate_plot_min;
+                        let r_max = rate_plot_max;
+                        let d_den = (d_max - d_min).abs().max(1e-12);
+                        let r_den = (r_max - r_min).abs().max(1e-12);
+                        let x_img = ((delay - d_min) / d_den * x_span)
                             .max(0.0)
-                            .min((cols - 1) as f64);
-                        let y_img = ((rate - r_min) / (r_max - r_min) * (rows - 1) as f64)
+                            .min(x_span);
+                        let y_img = ((rate - r_min) / r_den * y_span)
                             .max(0.0)
-                            .min((rows - 1) as f64);
-                        let x_floor = x_img.floor() as u32;
-                        let y_floor = y_img.floor() as u32;
-                        let x_ceil = (x_img.ceil() as u32).min(cols - 1);
-                        let y_ceil = (y_img.ceil() as u32).min(rows - 1);
+                            .min(y_span);
+                        let x_floor = x_img.floor() as usize;
+                        let y_floor = y_img.floor() as usize;
+                        let x_ceil = (x_img.ceil() as usize).min(x_span as usize);
+                        let y_ceil = (y_img.ceil() as usize).min(y_span as usize);
                         let fx = x_img - x_img.floor();
                         let fy = y_img - y_img.floor();
-                        let q11 = (blurred_img.get_pixel(x_floor, y_floor)[0] as f64) / 255.0
-                            * (max_norm as f64);
-                        let q12 = (blurred_img.get_pixel(x_ceil, y_floor)[0] as f64) / 255.0
-                            * (max_norm as f64);
-                        let q21 = (blurred_img.get_pixel(x_floor, y_ceil)[0] as f64) / 255.0
-                            * (max_norm as f64);
-                        let q22 = (blurred_img.get_pixel(x_ceil, y_ceil)[0] as f64) / 255.0
-                            * (max_norm as f64);
+                        let gx_floor = x_start + x_floor;
+                        let gy_floor = y_start + y_floor;
+                        let gx_ceil = (x_start + x_ceil).min(x_end);
+                        let gy_ceil = (y_start + y_ceil).min(y_end);
+                        let q11 = delay_rate_2d_data_comp[[gy_floor, gx_floor]].norm() as f64;
+                        let q12 = delay_rate_2d_data_comp[[gy_floor, gx_ceil]].norm() as f64;
+                        let q21 = delay_rate_2d_data_comp[[gy_ceil, gx_floor]].norm() as f64;
+                        let q22 = delay_rate_2d_data_comp[[gy_ceil, gx_ceil]].norm() as f64;
                         let r1 = q11 * (1.0 - fx) + q12 * fx;
                         let r2 = q21 * (1.0 - fx) + q22 * fx;
                         r1 * (1.0 - fy) + r2 * fy
@@ -1188,250 +1269,6 @@ fn window_bounds(window: &[f32]) -> Option<(f32, f32)> {
     }
 }
 
-fn in_window(value: f32, bounds: Option<(f32, f32)>) -> bool {
-    match bounds {
-        Some((low, high)) => value >= low && value <= high,
-        None => true,
-    }
-}
-
-fn coarse_rate_step_hz(rate_axis: &[f32], coarse_rate_hz: f32) -> Option<f32> {
-    if rate_axis.len() < 2 {
-        return None;
-    }
-    let (best_idx, _) = rate_axis
-        .iter()
-        .enumerate()
-        .map(|(idx, &value)| (idx, (value - coarse_rate_hz).abs()))
-        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))?;
-
-    let left = if best_idx > 0 {
-        Some((rate_axis[best_idx] - rate_axis[best_idx - 1]).abs())
-    } else {
-        None
-    };
-    let right = if best_idx + 1 < rate_axis.len() {
-        Some((rate_axis[best_idx + 1] - rate_axis[best_idx]).abs())
-    } else {
-        None
-    };
-
-    let step = match (left, right) {
-        (Some(l), Some(r)) => 0.5 * (l + r),
-        (Some(l), None) => l,
-        (None, Some(r)) => r,
-        (None, None) => return None,
-    };
-    if step.is_finite() && step > 0.0 {
-        Some(step)
-    } else {
-        None
-    }
-}
-
-fn refine_peak_3x3_quadratic(
-    surface: &Array2<f32>,
-    center_rate_idx: usize,
-    center_delay_idx: usize,
-    rate_axis: &[f32],
-    delay_axis: &Array1<f32>,
-    rrange: &[f32],
-    drange: &[f32],
-) -> Option<(f32, f32)> {
-    let (rows, cols) = surface.dim();
-    if rows < 3 || cols < 3 {
-        return None;
-    }
-    if center_rate_idx == 0
-        || center_delay_idx == 0
-        || center_rate_idx + 1 >= rows
-        || center_delay_idx + 1 >= cols
-    {
-        return None;
-    }
-    if rate_axis.len() != rows || delay_axis.len() != cols {
-        return None;
-    }
-
-    let rate_bounds = window_bounds(rrange);
-    let delay_bounds = window_bounds(drange);
-    for dy in -1isize..=1 {
-        for dx in -1isize..=1 {
-            let r_idx = (center_rate_idx as isize + dy) as usize;
-            let d_idx = (center_delay_idx as isize + dx) as usize;
-            if !in_window(rate_axis[r_idx], rate_bounds) || !in_window(delay_axis[d_idx], delay_bounds)
-            {
-                return None;
-            }
-        }
-    }
-
-    let f00 = surface[[center_rate_idx, center_delay_idx]] as f64;
-    let f_xm = surface[[center_rate_idx, center_delay_idx - 1]] as f64;
-    let f_xp = surface[[center_rate_idx, center_delay_idx + 1]] as f64;
-    let f_ym = surface[[center_rate_idx - 1, center_delay_idx]] as f64;
-    let f_yp = surface[[center_rate_idx + 1, center_delay_idx]] as f64;
-    let f_pp = surface[[center_rate_idx + 1, center_delay_idx + 1]] as f64;
-    let f_pm = surface[[center_rate_idx + 1, center_delay_idx - 1]] as f64;
-    let f_mp = surface[[center_rate_idx - 1, center_delay_idx + 1]] as f64;
-    let f_mm = surface[[center_rate_idx - 1, center_delay_idx - 1]] as f64;
-
-    let fx = 0.5 * (f_xp - f_xm);
-    let fy = 0.5 * (f_yp - f_ym);
-    let fxx = f_xp - 2.0 * f00 + f_xm;
-    let fyy = f_yp - 2.0 * f00 + f_ym;
-    let fxy = 0.25 * (f_pp - f_pm - f_mp + f_mm);
-
-    let det = fxx * fyy - fxy * fxy;
-    if !det.is_finite() || det.abs() < 1e-12 {
-        return None;
-    }
-    if !(fxx < 0.0 && fyy < 0.0 && det > 0.0) {
-        return None;
-    }
-
-    let delta_delay_bin = -((fyy * fx) - (fxy * fy)) / det;
-    let delta_rate_bin = ((fxy * fx) - (fxx * fy)) / det;
-    if !delta_delay_bin.is_finite() || !delta_rate_bin.is_finite() {
-        return None;
-    }
-    if delta_delay_bin.abs() > 1.0 || delta_rate_bin.abs() > 1.0 {
-        return None;
-    }
-
-    let delay_step = (delay_axis[center_delay_idx + 1] as f64 - delay_axis[center_delay_idx - 1] as f64)
-        * 0.5;
-    let rate_step = (rate_axis[center_rate_idx + 1] as f64 - rate_axis[center_rate_idx - 1] as f64)
-        * 0.5;
-    if delay_step.abs() < 1e-12 || rate_step.abs() < 1e-12 {
-        return None;
-    }
-
-    let refined_delay = (delay_axis[center_delay_idx] as f64 + delta_delay_bin * delay_step) as f32;
-    let refined_rate = (rate_axis[center_rate_idx] as f64 + delta_rate_bin * rate_step) as f32;
-    if !in_window(refined_delay, delay_bounds) || !in_window(refined_rate, rate_bounds) {
-        return None;
-    }
-
-    Some((refined_delay, refined_rate))
-}
-
-fn refine_peak_with_zoom_czt(
-    corrected_complex_vec: &[C32],
-    header: &CorHeader,
-    args: &Args,
-    physical_length: i32,
-    effective_fft_point: i32,
-    effective_integ_time: f32,
-    rfi_ranges: &[(usize, usize)],
-    bandpass_data: &Option<Vec<C32>>,
-    coarse_rate_axis: &[f32],
-    coarse_delay: f32,
-    coarse_rate: f32,
-) -> Option<(f32, f32)> {
-    let coarse_step = coarse_rate_step_hz(coarse_rate_axis, coarse_rate)?;
-    let mut rate_low: f32;
-    let mut rate_high: f32;
-
-    let mut zoom_points = args.czt_points.max(9) as usize;
-    if zoom_points % 2 == 0 {
-        zoom_points += 1;
-    }
-    let span_bins = if args.czt_span_bins.is_finite() && args.czt_span_bins > 0.0 {
-        args.czt_span_bins
-    } else {
-        1.0
-    };
-
-    rate_low = coarse_rate - coarse_step * span_bins;
-    rate_high = coarse_rate + coarse_step * span_bins;
-    if let Some((low, high)) = window_bounds(&args.rrange) {
-        rate_low = rate_low.max(low);
-        rate_high = rate_high.min(high);
-    }
-    if !rate_low.is_finite() || !rate_high.is_finite() || rate_high <= rate_low {
-        return None;
-    }
-
-    let rate_step = (rate_high - rate_low) / (zoom_points as f32 - 1.0);
-    if !rate_step.is_finite() || rate_step <= 0.0 {
-        return None;
-    }
-
-    let (mut zoom_freq_rate_array, zoom_rate_axis) = fft::process_fft_zoom_czt(
-        corrected_complex_vec,
-        physical_length,
-        effective_fft_point,
-        header.sampling_speed,
-        rfi_ranges,
-        effective_integ_time,
-        rate_low,
-        rate_step,
-        zoom_points,
-    );
-    if let Some(bp_data) = bandpass_data {
-        apply_bandpass_correction(&mut zoom_freq_rate_array, bp_data);
-    }
-
-    let zoom_delay_rate_comp = process_ifft(&zoom_freq_rate_array, effective_fft_point, zoom_points);
-    let zoom_surface = zoom_delay_rate_comp.mapv(|x| x.norm());
-
-    let fft_point_usize = effective_fft_point as usize;
-    if fft_point_usize < 3 {
-        return None;
-    }
-    let delay_axis = Array::linspace(
-        -(effective_fft_point as f32 / 2.0) + 1.0,
-        effective_fft_point as f32 / 2.0,
-        fft_point_usize,
-    );
-
-    let delay_bounds = window_bounds(&args.drange);
-    let rate_bounds = window_bounds(&args.rrange);
-    let mut best: Option<(usize, usize, f32)> = None;
-    for r_idx in 0..zoom_rate_axis.len() {
-        let rate_val = zoom_rate_axis[r_idx];
-        if !in_window(rate_val, rate_bounds) {
-            continue;
-        }
-        for d_idx in 0..delay_axis.len() {
-            let delay_val = delay_axis[d_idx];
-            if !in_window(delay_val, delay_bounds) {
-                continue;
-            }
-            let amp = zoom_surface[[r_idx, d_idx]];
-            match best {
-                Some((_, _, best_amp)) if amp <= best_amp => {}
-                _ => {
-                    best = Some((r_idx, d_idx, amp));
-                }
-            }
-        }
-    }
-    let (best_r_idx, best_d_idx, _) = best?;
-
-    let mut refined_delay = delay_axis[best_d_idx];
-    let mut refined_rate = zoom_rate_axis[best_r_idx];
-    if let Some((d, r)) = refine_peak_3x3_quadratic(
-        &zoom_surface,
-        best_r_idx,
-        best_d_idx,
-        &zoom_rate_axis,
-        &delay_axis,
-        &args.rrange,
-        &args.drange,
-    ) {
-        refined_delay = d;
-        refined_rate = r;
-    }
-
-    if (refined_delay - coarse_delay).abs() > 1.0 {
-        return None;
-    }
-
-    Some((refined_delay, refined_rate))
-}
-
 pub(crate) fn run_analysis_pipeline(
     complex_vec: &[C32],
     header: &CorHeader,
@@ -1564,7 +1401,7 @@ pub(crate) fn run_analysis_pipeline(
     let delay_rate_2d_data_comp =
         process_ifft(&freq_rate_array, effective_fft_point, padding_length);
 
-    let mut analysis_results = analyze_results(
+    let analysis_results = analyze_results(
         &freq_rate_array,
         &delay_rate_2d_data_comp,
         &header,
@@ -1575,27 +1412,6 @@ pub(crate) fn run_analysis_pipeline(
         &temp_args,
         search_mode,
     );
-
-    if search_mode == Some("peak") && !temp_args.frequency && temp_args.length != 1 {
-        if let Some((refined_delay, refined_rate)) = refine_peak_with_zoom_czt(
-            &corrected_complex_vec,
-            header,
-            &temp_args,
-            physical_length,
-            effective_fft_point,
-            effective_integ_time,
-            rfi_ranges,
-            bandpass_data,
-            &analysis_results.rate_range,
-            analysis_results.residual_delay,
-            analysis_results.residual_rate,
-        ) {
-            analysis_results.residual_delay = refined_delay;
-            analysis_results.delay_offset = refined_delay;
-            analysis_results.residual_rate = refined_rate;
-            analysis_results.rate_offset = refined_rate;
-        }
-    }
 
     Ok((analysis_results, freq_rate_array, delay_rate_2d_data_comp))
 }

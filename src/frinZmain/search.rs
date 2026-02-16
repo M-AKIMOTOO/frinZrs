@@ -766,8 +766,8 @@ mod deep {
         effective_fft_point: i32,
     ) -> Result<(f32, f32), Box<dyn Error>> {
         // drange/rrange が指定されている場合は、その範囲で探索
-        if !args.drange.is_empty() && !args.rrange.is_empty() {
-            println!("[DEEP SEARCH] Using specified delay and rate ranges for coarse estimation");
+        if !args.drange.is_empty() || !args.rrange.is_empty() {
+            println!("[DEEP SEARCH] Using specified delay/rate windows for coarse estimation");
     
             let (mut freq_rate_array, padding_length) = process_fft(
                 complex_vec,
@@ -797,8 +797,8 @@ mod deep {
                 args.primary_search_mode(),
             );
     
-            let coarse_delay = analysis_results.delay_offset;
-            let coarse_rate = analysis_results.rate_offset;
+            let coarse_delay = analysis_results.residual_delay;
+            let coarse_rate = analysis_results.residual_rate;
     
             Ok((coarse_delay, coarse_rate))
         } else {
@@ -879,8 +879,29 @@ mod deep {
     
         // 全ての組み合わせを生成
         let mut search_combinations = Vec::with_capacity(delay_points.len() * rate_points.len());
+        let delay_bounds = if args.drange.len() == 2 {
+            Some((args.drange[0].min(args.drange[1]), args.drange[0].max(args.drange[1])))
+        } else {
+            None
+        };
+        let rate_bounds = if args.rrange.len() == 2 {
+            Some((args.rrange[0].min(args.rrange[1]), args.rrange[0].max(args.rrange[1])))
+        } else {
+            None
+        };
+
         for &delay in &delay_points {
+            if let Some((low, high)) = delay_bounds {
+                if delay < low || delay > high {
+                    continue;
+                }
+            }
             for &rate in &rate_points {
+                if let Some((low, high)) = rate_bounds {
+                    if rate < low || rate > high {
+                        continue;
+                    }
+                }
                 search_combinations.push((delay, rate));
             }
         }
@@ -1147,6 +1168,16 @@ mod deep {
         let mut corrected_args = args.clone();
         corrected_args.delay_correct = delay;
         corrected_args.rate_correct = rate;
+        // Keep window semantics in absolute coordinates by converting
+        // to residual windows for already-corrected data.
+        if corrected_args.drange.len() == 2 {
+            corrected_args.drange[0] -= delay;
+            corrected_args.drange[1] -= delay;
+        }
+        if corrected_args.rrange.len() == 2 {
+            corrected_args.rrange[0] -= rate;
+            corrected_args.rrange[1] -= rate;
+        }
         corrected_args.search.clear(); // Prevent infinite loops
         corrected_args
     }

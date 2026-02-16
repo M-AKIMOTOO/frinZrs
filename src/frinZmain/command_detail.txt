@@ -3,10 +3,8 @@
 ============================================================
 
 [基本モード]
-  --search [peak|deep|rate|acel]     デフォルト peak（粗ピーク後に局所 Zoom FFT/CZT で rate を微調整）
+  --search [peak|deep|rate|acel]     デフォルト peak（delay-rate 平面のピーク探索）
   --iter N                           peak/deep の反復回数（deep は未指定時 4）
-  --czt-points N                     peak時の局所 Zoom FFT/CZT 分割点数（既定33）
-  --czt-span-bins X                  peak時の局所 Zoom FFT/CZT 探索半幅（coarseビン単位, 既定1.0）
   --frequency                        周波数ドメイン処理（未指定は時間ドメイン）
   --plot                             グラフ出力（--frequency 併用で周波数グラフ）
   --output                           frinZ/fringe_output/... に保存

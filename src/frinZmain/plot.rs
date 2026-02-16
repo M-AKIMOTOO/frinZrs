@@ -208,23 +208,31 @@ pub fn delay_plane(
         .y_label_formatter(&|v| format!("{:.2e}", v))
         .draw()?;
 
-    let resolution = 100; // Increased resolution for a smoother heatmap
+    let resolution = 150;
     let (delay_min, delay_max_hm) = (heatmap_delay_min, heatmap_delay_max);
     let (rate_min_hm, rate_max_hm) = (heatmap_rate_min, heatmap_rate_max);
     let mut heatmap_data = Vec::new();
-    let mut heatmap_data_max_val = f64::NEG_INFINITY;
 
     for xi in 0..resolution {
         for yi in 0..resolution {
-            let x = delay_min + (delay_max_hm - delay_min) * xi as f64 / (resolution - 1) as f64;
-            let y = rate_min_hm + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution - 1) as f64;
+            let x = delay_min
+                + (delay_max_hm - delay_min) * xi as f64 / (resolution - 1) as f64;
+            let y = rate_min_hm
+                + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution - 1) as f64;
             let val = heatmap_func(x, y);
             heatmap_data.push(val);
-            if val > heatmap_data_max_val {
-                heatmap_data_max_val = val;
-            }
         }
     }
+
+    let amplitude_norm = if max_amplitude.is_finite() && max_amplitude > 0.0 {
+        max_amplitude
+    } else {
+        heatmap_data
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max)
+            .max(1e-30)
+    };
 
     for (idx, val) in heatmap_data.iter().enumerate() {
         let xi = idx / resolution;
@@ -233,8 +241,8 @@ pub fn delay_plane(
         let y = rate_min_hm + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution - 1) as f64;
         let x_step = (delay_max_hm - delay_min) / (resolution - 1) as f64;
         let y_step = (rate_max_hm - rate_min_hm) / (resolution - 1) as f64;
-        let normalized_val = if heatmap_data_max_val > 0.0 {
-            *val / heatmap_data_max_val
+        let normalized_val = if amplitude_norm > 0.0 {
+            (*val / amplitude_norm).clamp(0.0, 1.0)
         } else {
             0.0
         };
