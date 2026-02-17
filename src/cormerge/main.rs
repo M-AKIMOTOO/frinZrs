@@ -5,7 +5,7 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 use clap::Parser;
 use std::error::Error;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::str;
@@ -358,7 +358,10 @@ fn get_split_element(original_filename: &Path, target_index: usize) -> Option<St
 }
 
 /// 出力ファイル名を生成する
-fn generate_output_filename(input_files: &[PathBuf]) -> Result<PathBuf, Box<dyn Error>> {
+fn generate_output_filename(
+    input_files: &[PathBuf],
+    output_dir: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
     if input_files.is_empty() {
         return Err("入力ファイルがありません.".into());
     }
@@ -407,7 +410,7 @@ fn generate_output_filename(input_files: &[PathBuf]) -> Result<PathBuf, Box<dyn 
         format!("{}_{}T_{}_cormerge.cor", base_parts, first_file_time, label)
     };
 
-    Ok(PathBuf::from(output_filename_str))
+    Ok(output_dir.join(output_filename_str))
 }
 
 /// --skip オプション指定時の対話的なスキップ処理
@@ -559,8 +562,30 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("{}個のファイルが処理対象です.", files_to_process.len());
 
+    // 出力先ディレクトリ生成 (--cor で指定したファイルの保存先配下に cormerge を作成)
+    let cor_base_dir = input_files[0]
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    for path in input_files.iter().skip(1) {
+        let parent = path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        if parent != cor_base_dir {
+            eprintln!(
+                "警告: --cor で指定したファイルが複数ディレクトリに存在します. 先頭ファイルのディレクトリ {:?} を出力先基準として使用します.",
+                cor_base_dir
+            );
+            break;
+        }
+    }
+    let output_dir = cor_base_dir.join("cormerge");
+    fs::create_dir_all(&output_dir)?;
+    println!("出力先ディレクトリ: {:?}", output_dir);
+
     // 出力ファイル名生成
-    let output_filename = generate_output_filename(&files_to_process)?;
+    let output_filename = generate_output_filename(&files_to_process, &output_dir)?;
     let info_txt_filename = output_filename.with_extension("cor.txt");
     let headers_csv_filename = output_filename.with_extension("cor.headers.csv");
 
