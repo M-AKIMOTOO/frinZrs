@@ -202,6 +202,7 @@ pub struct ProcessResult {
     pub add_plot_noise: Vec<f32>,
     pub add_plot_res_delay: Vec<f32>,
     pub add_plot_res_rate: Vec<f32>,
+    #[allow(dead_code)]
     pub add_plot_complex: Vec<Complex<f32>>,
 }
 
@@ -214,10 +215,19 @@ pub fn process_cor_file(
 ) -> Result<ProcessResult, Box<dyn Error>> {
     // --- File and Path Setup ---
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
-    let frinz_dir = parent_dir.join("frinZ");
+    let frinz_dir = if args.in_beam {
+        parent_dir.join("frinZ").join("inbeamVLBI")
+    } else {
+        parent_dir.join("frinZ")
+    };
     fs::create_dir_all(&frinz_dir)?;
 
     let basename = input_path.file_stem().unwrap().to_str().unwrap();
+    let basename_for_output = if args.in_beam {
+        format!("{}_inbeam", basename)
+    } else {
+        basename.to_string()
+    };
     let mut label: Vec<String> = basename.split('_').map(String::from).collect();
     if label.len() > 3 {
         let tail = label[3..].join("_");
@@ -228,26 +238,38 @@ pub fn process_cor_file(
     // --- Create Output Directories ---
     let mut plot_path: Option<PathBuf> = None;
     if args.plot {
-        let path = frinz_dir.join("fringe_graph");
+        let path = if args.in_beam {
+            frinz_dir.clone()
+        } else {
+            frinz_dir.join("fringe_graph")
+        };
         fs::create_dir_all(&path)?;
         plot_path = Some(path);
     }
 
     let mut output_path: Option<PathBuf> = None;
     if args.output {
-        let path = frinz_dir.join("fringe_output");
+        let path = if args.in_beam {
+            frinz_dir.clone()
+        } else {
+            frinz_dir.join("fringe_output")
+        };
         fs::create_dir_all(&path)?;
         output_path = Some(path);
     }
 
     let mut bandpass_output_path: Option<PathBuf> = None;
     if args.bandpass_table {
-        let path = frinz_dir.join("bptable");
+        let path = if args.in_beam {
+            frinz_dir.clone()
+        } else {
+            frinz_dir.join("bptable")
+        };
         fs::create_dir_all(&path)?;
         bandpass_output_path = Some(path);
     }
 
-    if args.cumulate != 0 {
+    if args.cumulate != 0 && !args.in_beam {
         let path = frinz_dir.join(format!("cumulate/len{}s", args.cumulate));
         fs::create_dir_all(&path)?;
     }
@@ -256,14 +278,18 @@ pub fn process_cor_file(
         let _ = frinz_dir.join("rfi_history");
     }
 
-    if args.add_plot {
+    if args.add_plot && !args.in_beam {
         let path = frinz_dir.join("add_plot");
         fs::create_dir_all(&path)?;
     }
 
     let mut spectrum_output_path: Option<PathBuf> = None;
     if args.spectrum {
-        let path = frinz_dir.join("crossspectrum");
+        let path = if args.in_beam {
+            frinz_dir.clone()
+        } else {
+            frinz_dir.join("spectrum")
+        };
         fs::create_dir_all(&path)?;
         spectrum_output_path = Some(path);
     }
@@ -364,9 +390,9 @@ pub fn process_cor_file(
 
     // --- Output Header Information ---
     if args.output || args.header {
-        let cor_header_path = frinz_dir.join("header");
-        fs::create_dir_all(&cor_header_path)?;
-        let header_info_str = output_header_info(&header, &cor_header_path, basename)?;
+        let header_path = frinz_dir.join("header");
+        fs::create_dir_all(&header_path)?;
+        let header_info_str = output_header_info(&header, &header_path, &basename_for_output)?;
         if args.header {
             println!("{}", header_info_str);
         }
@@ -534,10 +560,10 @@ pub fn process_cor_file(
                     )?;
                     deep_search_result.analysis_results.residual_delay -= loop_args.delay_correct;
                     deep_search_result.analysis_results.residual_rate -= loop_args.rate_correct;
-                    deep_search_result.analysis_results.corrected_delay =
-                        loop_args.delay_correct + deep_search_result.analysis_results.residual_delay;
-                    deep_search_result.analysis_results.corrected_rate =
-                        loop_args.rate_correct + deep_search_result.analysis_results.residual_rate;
+                    // corrected_* should represent user-provided/static correction values
+                    // (e.g. --delay/--rate or scan-correct), not search-updated totals.
+                    deep_search_result.analysis_results.corrected_delay = loop_args.delay_correct;
+                    deep_search_result.analysis_results.corrected_rate = loop_args.rate_correct;
                     let result_tuple = (
                         deep_search_result.analysis_results,
                         deep_search_result.freq_rate_array,
@@ -622,8 +648,9 @@ pub fn process_cor_file(
 
                     final_analysis_results.length_f32 =
                         physical_length as f32 * effective_integ_time;
-                    final_analysis_results.corrected_delay = final_delay_abs;
-                    final_analysis_results.corrected_rate = final_rate_abs;
+                    // corrected_* should remain the externally given correction values.
+                    final_analysis_results.corrected_delay = loop_args.delay_correct;
+                    final_analysis_results.corrected_rate = loop_args.rate_correct;
                     final_analysis_results.corrected_acel = args.acel_correct;
                     final_analysis_results.residual_delay =
                         final_delay_abs - loop_args.delay_correct;
@@ -668,7 +695,7 @@ pub fn process_cor_file(
         } else {
             args.length
         };
-        let base_filename = generate_output_names(
+        let mut base_filename = generate_output_names(
             &processing_header,
             &current_obs_time,
             &label_str,
@@ -677,6 +704,9 @@ pub fn process_cor_file(
             args.bandpass.is_some(),
             filename_length,
         );
+        if args.in_beam && !base_filename.ends_with("_inbeam") {
+            base_filename.push_str("_inbeam");
+        }
         if first_output_basename.is_none() {
             first_output_basename = Some(base_filename.clone());
         }
@@ -711,10 +741,14 @@ pub fn process_cor_file(
         }
 
         if args.dynamic_spectrum {
-            let dynamic_spectrum_dir = frinz_dir.join("dynamic_spectrum");
+            let dynamic_spectrum_dir = if args.in_beam {
+                frinz_dir.clone()
+            } else {
+                frinz_dir.join("dynamic_spectrum")
+            };
             fs::create_dir_all(&dynamic_spectrum_dir)?;
             let label_str: Vec<&str> = label.iter().map(|s| s.as_str()).collect();
-            let base_filename = generate_output_names(
+            let mut base_filename = generate_output_names(
                 &processing_header,
                 &current_obs_time,
                 &label_str,
@@ -723,6 +757,9 @@ pub fn process_cor_file(
                 args.bandpass.is_some(),
                 filename_length,
             );
+            if args.in_beam && !base_filename.ends_with("_inbeam") {
+                base_filename.push_str("_inbeam");
+            }
             let fft_point_half = (effective_fft_point / 2) as usize;
             let available_rows = complex_vec.len() / fft_point_half;
             let requested_rows = physical_length.max(0) as usize;
@@ -821,11 +858,25 @@ pub fn process_cor_file(
                     } else {
                         args.length.to_string()
                     };
-                    let out_dir = path.join(format!("time_domain/len{}s", length_label));
+                    let out_dir = if args.in_beam {
+                        path.clone()
+                    } else {
+                        path.join(format!("time_domain/len{}s", length_label))
+                    };
                     fs::create_dir_all(&out_dir)?;
                     let output_basename = first_output_basename.as_ref().unwrap_or(&base_filename);
-                    let output_file_path =
-                        out_dir.join(format!("{}_delay_rate_search.txt", output_basename));
+                    let output_basename = if args.in_beam {
+                        output_basename
+                            .strip_suffix("_inbeam")
+                            .unwrap_or(output_basename.as_str())
+                    } else {
+                        output_basename.as_str()
+                    };
+                    let output_file_path = if args.in_beam {
+                        out_dir.join(format!("{}_delay_rate_search_inbeam.txt", output_basename))
+                    } else {
+                        out_dir.join(format!("{}_delay_rate_search.txt", output_basename))
+                    };
                     fs::write(output_file_path, &delay_output_str)?;
                 }
             }
@@ -867,11 +918,25 @@ pub fn process_cor_file(
                     } else {
                         args.length.to_string()
                     };
-                    let out_dir = path.join(format!("freq_domain/len{}s", length_label));
+                    let out_dir = if args.in_beam {
+                        path.clone()
+                    } else {
+                        path.join(format!("freq_domain/len{}s", length_label))
+                    };
                     fs::create_dir_all(&out_dir)?;
                     let output_basename = first_output_basename.as_ref().unwrap_or(&base_filename);
-                    let output_file_path =
-                        out_dir.join(format!("{}_freq_rate_search.txt", output_basename));
+                    let output_basename = if args.in_beam {
+                        output_basename
+                            .strip_suffix("_inbeam")
+                            .unwrap_or(output_basename.as_str())
+                    } else {
+                        output_basename.as_str()
+                    };
+                    let output_file_path = if args.in_beam {
+                        out_dir.join(format!("{}_freq_rate_search_inbeam.txt", output_basename))
+                    } else {
+                        out_dir.join(format!("{}_freq_rate_search.txt", output_basename))
+                    };
                     fs::write(output_file_path, &freq_output_str)?;
                 }
             }
@@ -894,16 +959,33 @@ pub fn process_cor_file(
                 } else {
                     args.length.to_string()
                 };
-                let plot_dir = if !args.frequency {
+                let plot_dir = if args.in_beam {
+                    path.clone()
+                } else if !args.frequency {
                     path.join(format!("time_domain/len{}s", length_label))
                 } else {
                     path.join(format!("freq_domain/len{}s", length_label))
                 };
                 fs::create_dir_all(&plot_dir)?;
-                let output_filename = if !args.frequency {
-                    plot_dir.join(format!("{}_delay_rate_search.png", base_filename))
+                let base_for_plot = if args.in_beam {
+                    base_filename
+                        .strip_suffix("_inbeam")
+                        .unwrap_or(base_filename.as_str())
                 } else {
-                    plot_dir.join(format!("{}_freq_rate_search.png", base_filename))
+                    base_filename.as_str()
+                };
+                let output_filename = if !args.frequency {
+                    if args.in_beam {
+                        plot_dir.join(format!("{}_delay_rate_search_inbeam.png", base_for_plot))
+                    } else {
+                        plot_dir.join(format!("{}_delay_rate_search.png", base_for_plot))
+                    }
+                } else {
+                    if args.in_beam {
+                        plot_dir.join(format!("{}_freq_rate_search_inbeam.png", base_for_plot))
+                    } else {
+                        plot_dir.join(format!("{}_freq_rate_search.png", base_for_plot))
+                    }
                 };
 
                 if !args.frequency {
@@ -935,18 +1017,50 @@ pub fn process_cor_file(
                         .iter()
                         .map(|&x| x as f32)
                         .collect();
-                    let (delay_plot_min, delay_plot_max) = if args.drange.len() == 2 {
+                    let mut plot_drange: Vec<f32> = if args.drange.len() == 2
+                        && matches!(primary_search_mode, Some("peak") | Some("deep"))
+                    {
+                        vec![
+                            args.drange[0] - analysis_results.corrected_delay,
+                            args.drange[1] - analysis_results.corrected_delay,
+                        ]
+                    } else {
+                        args.drange.clone()
+                    };
+                    let mut plot_rrange: Vec<f32> = if args.rrange.len() == 2
+                        && matches!(primary_search_mode, Some("peak") | Some("deep"))
+                    {
+                        vec![
+                            args.rrange[0] - analysis_results.corrected_rate,
+                            args.rrange[1] - analysis_results.corrected_rate,
+                        ]
+                    } else {
+                        args.rrange.clone()
+                    };
+
+                    // In in-beam mode, default to full delay-rate plane coverage when no window is specified.
+                    if args.in_beam && plot_drange.len() != 2 {
+                        if let (Some(&d0), Some(&d1)) = (delay_data.first(), delay_data.last()) {
+                            plot_drange = vec![d0, d1];
+                        }
+                    }
+                    if args.in_beam && plot_rrange.len() != 2 {
+                        if let (Some(&r0), Some(&r1)) = (rate_data.first(), rate_data.last()) {
+                            plot_rrange = vec![r0, r1];
+                        }
+                    }
+                    let (delay_plot_min, delay_plot_max) = if plot_drange.len() == 2 {
                         (
-                            args.drange[0].min(args.drange[1]) as f64,
-                            args.drange[0].max(args.drange[1]) as f64,
+                            plot_drange[0].min(plot_drange[1]) as f64,
+                            plot_drange[0].max(plot_drange[1]) as f64,
                         )
                     } else {
                         (-10.0_f64, 10.0_f64)
                     };
-                    let (rate_plot_min, rate_plot_max) = if args.rrange.len() == 2 {
+                    let (rate_plot_min, rate_plot_max) = if plot_rrange.len() == 2 {
                         (
-                            args.rrange[0].min(args.rrange[1]) as f64,
-                            args.rrange[0].max(args.rrange[1]) as f64,
+                            plot_rrange[0].min(plot_rrange[1]) as f64,
+                            plot_rrange[0].max(plot_rrange[1]) as f64,
                         )
                     } else {
                         let rate_low = if (-8.0 / analysis_results.length_f32 as f64)
@@ -1002,6 +1116,11 @@ pub fn process_cor_file(
                         .last()
                         .copied()
                         .unwrap_or_else(|| rows.saturating_sub(1) as usize);
+
+                    let window_delay_bins = x_end.saturating_sub(x_start) + 1;
+                    let window_rate_bins = y_end.saturating_sub(y_start) + 1;
+                    let heatmap_res_x = window_delay_bins.saturating_mul(3).max(3);
+                    let heatmap_res_y = window_rate_bins.saturating_mul(3).max(3);
 
                     let x_span = (x_end.saturating_sub(x_start)).max(1) as f64;
                     let y_span = (y_end.saturating_sub(y_start)).max(1) as f64;
@@ -1096,9 +1215,12 @@ pub fn process_cor_file(
                         &analysis_results.rate_range,
                         analysis_results.length_f32,
                         effective_integ_time,
-                        &args.drange,
-                        &args.rrange,
+                        &plot_drange,
+                        &plot_rrange,
                         max_norm as f64,
+                        heatmap_res_x,
+                        heatmap_res_y,
+                        args.in_beam,
                     )?;
                 } else {
                     let freq_amp_profile: Vec<(f64, f64)> = analysis_results

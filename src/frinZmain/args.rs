@@ -125,6 +125,10 @@ pub struct Args {
     )]
     pub search: Vec<String>,
 
+    /// In-beam VLBI mode (standard delay-rate fringe search workflow).
+    #[arg(long = "in-beam", aliases = ["inbeam", "in-beam-vlbi"])]
+    pub in_beam: bool,
+
     /// Iterations for --search=peak/deep (deep default=4 when omitted).
     #[arg(long, default_value_t = 5)]
     pub iter: u32,

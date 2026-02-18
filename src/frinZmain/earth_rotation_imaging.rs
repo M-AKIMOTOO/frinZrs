@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // Earth-rotation synthesis imaging module
 
 use crate::args::Args;

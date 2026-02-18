@@ -169,7 +169,9 @@ pub struct AnalysisResults {
     // Ranges
     pub rate_range: Vec<f32>,
     // Sky Coordinates
+    #[allow(dead_code)]
     pub l_coord: f64,
+    #[allow(dead_code)]
     pub m_coord: f64,
 }
 
@@ -425,22 +427,41 @@ pub fn analyze_results(
     };
 
     if search_mode == Some("peak") {
-        let mut x_coords: Vec<f64> = Vec::new();
-        let mut y_values: Vec<f64> = Vec::new();
-        let window_size = 2;
-        let half_window = (window_size / 2) as isize;
-        for i in -half_window..=half_window {
-            let idx = peak_freq_row_idx as isize + i;
-            if idx >= 0 && idx < freq_range.len() as isize {
-                x_coords.push(freq_range[idx as usize] as f64);
-                y_values.push(freq_rate_2d_data_array[[idx as usize, peak_rate_col_idx]] as f64);
-            }
-        }
-        if x_coords.len() >= 3 {
-            if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&x_coords, &y_values) {
-                freq_freq = fit_result.peak_x as f32;
-            } else {
-                eprintln!("Warning: Quadratic fitting for frequency failed. Using original peak.");
+        let center_idx = peak_freq_row_idx as isize;
+        if center_idx > 0 && center_idx + 1 < freq_range.len() as isize {
+            let left_idx = (center_idx - 1) as usize;
+            let mid_idx = center_idx as usize;
+            let right_idx = (center_idx + 1) as usize;
+
+            let y_left = freq_rate_2d_data_array[[left_idx, peak_rate_col_idx]] as f64;
+            let y_mid = freq_rate_2d_data_array[[mid_idx, peak_rate_col_idx]] as f64;
+            let y_right = freq_rate_2d_data_array[[right_idx, peak_rate_col_idx]] as f64;
+
+            let is_local_max = y_mid.is_finite()
+                && y_left.is_finite()
+                && y_right.is_finite()
+                && y_mid >= y_left
+                && y_mid >= y_right;
+            let side_max = y_left.max(y_right);
+            // For near-delta peaks at very high frequency resolution, 3-point quadratic fitting
+            // becomes numerically unstable and adds little value. Skip fitting in that regime.
+            let is_delta_like = y_mid > 0.0 && (side_max / y_mid) < 0.02;
+
+            if is_local_max && !is_delta_like {
+                let x_coords = vec![
+                    freq_range[left_idx] as f64,
+                    freq_range[mid_idx] as f64,
+                    freq_range[right_idx] as f64,
+                ];
+                let y_values = vec![y_left, y_mid, y_right];
+                if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&x_coords, &y_values)
+                {
+                    let x_min = x_coords[0].min(x_coords[2]);
+                    let x_max = x_coords[0].max(x_coords[2]);
+                    if fit_result.peak_x >= x_min && fit_result.peak_x <= x_max {
+                        freq_freq = fit_result.peak_x as f32;
+                    }
+                }
             }
         }
     }

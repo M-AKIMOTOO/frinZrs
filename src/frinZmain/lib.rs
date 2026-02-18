@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 pub mod bispectrum;
 pub mod analysis;
 pub mod args;

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // Plot utilities for frinZ:
 // - delay/rate/frequency planes and diagnostics
 // - UV-related plots
@@ -33,6 +35,9 @@ pub fn delay_plane(
     drange: &[f32],
     rrange: &[f32],
     max_amplitude: f64,
+    heatmap_res_x: usize,
+    heatmap_res_y: usize,
+    heatmap_only: bool,
     //cmap_time: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let width = 1400;
@@ -104,6 +109,95 @@ pub fn delay_plane(
             rrange[1] as f64,
         )
     };
+
+    if heatmap_only {
+        let (heatmap_area, colorbar_area) = root.split_horizontally(width - 120);
+        let mut chart = ChartBuilder::on(&heatmap_area)
+            .margin(20)
+            .x_label_area_size(65)
+            .y_label_area_size(95)
+            .build_cartesian_2d(
+                heatmap_delay_min..heatmap_delay_max,
+                heatmap_rate_min..heatmap_rate_max,
+            )?;
+
+        chart
+            .configure_mesh()
+            .x_desc("Delay [Sample]")
+            .y_desc("Rate [Hz]")
+            .x_labels(9)
+            .y_labels(10)
+            .x_max_light_lines(0)
+            .y_max_light_lines(0)
+            .label_style(("sans-serif ", 28))
+            .x_label_formatter(&|v| format!("{:.0}", v))
+            .y_label_formatter(&|v| format!("{:.2e}", v))
+            .draw()?;
+
+        let resolution_x = heatmap_res_x.max(3);
+        let resolution_y = heatmap_res_y.max(3);
+        let amplitude_norm = if max_amplitude.is_finite() && max_amplitude > 0.0 {
+            max_amplitude
+        } else {
+            1e-30
+        };
+        let x_step = (heatmap_delay_max - heatmap_delay_min) / (resolution_x - 1) as f64;
+        let y_step = (heatmap_rate_max - heatmap_rate_min) / (resolution_y - 1) as f64;
+        for xi in 0..resolution_x {
+            for yi in 0..resolution_y {
+                let x = heatmap_delay_min
+                    + (heatmap_delay_max - heatmap_delay_min) * xi as f64 / (resolution_x - 1) as f64;
+                let y = heatmap_rate_min
+                    + (heatmap_rate_max - heatmap_rate_min) * yi as f64 / (resolution_y - 1) as f64;
+                let val = heatmap_func(x, y);
+                let normalized_val = if amplitude_norm > 0.0 {
+                    (val / amplitude_norm).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                chart.draw_series(std::iter::once(Rectangle::new(
+                    [(x, y), (x + x_step, y + y_step)],
+                    HSLColor((1.0 - normalized_val) * 0.7, 1.0, 0.5).filled(),
+                )))?;
+            }
+        }
+
+        let mut colorbar = ChartBuilder::on(&colorbar_area)
+            .margin_top(15)
+            .margin_bottom(35)
+            .set_label_area_size(LabelAreaPosition::Right, 90)
+            .set_label_area_size(LabelAreaPosition::Left, 0)
+            .set_label_area_size(LabelAreaPosition::Top, 10)
+            .set_label_area_size(LabelAreaPosition::Bottom, 20)
+            .build_cartesian_2d(0.0..1.0, 0.0..max_amplitude)?;
+
+        let steps = 100;
+        for i in 0..steps {
+            let value = i as f64 / (steps - 1) as f64;
+            let color = HSLColor(((1.0 - value) * 0.7).into(), 1.0, 0.5);
+            colorbar.draw_series(std::iter::once(Rectangle::new(
+                [
+                    (0.0, value * max_amplitude),
+                    (1.0, (value + 1.0 / steps as f64) * max_amplitude),
+                ],
+                color.filled(),
+            )))?;
+        }
+
+        colorbar
+            .configure_mesh()
+            .disable_x_mesh()
+            .disable_y_mesh()
+            .disable_x_axis()
+            .y_labels(7)
+            .y_label_style(("sans-serif ", 24))
+            .y_label_formatter(&|v| format!("{:.1e}", v))
+            .draw()?;
+
+        root.present()?;
+        compress_png_with_mode(output_path, CompressQuality::High);
+        return Ok(());
+    }
 
     // 1. Horizontal slice (Delay Profile)
     let mut chart1 = ChartBuilder::on(&upper_left)
@@ -208,48 +302,34 @@ pub fn delay_plane(
         .y_label_formatter(&|v| format!("{:.2e}", v))
         .draw()?;
 
-    let resolution = 150;
+    let resolution_x = heatmap_res_x.max(3);
+    let resolution_y = heatmap_res_y.max(3);
     let (delay_min, delay_max_hm) = (heatmap_delay_min, heatmap_delay_max);
     let (rate_min_hm, rate_max_hm) = (heatmap_rate_min, heatmap_rate_max);
-    let mut heatmap_data = Vec::new();
-
-    for xi in 0..resolution {
-        for yi in 0..resolution {
-            let x = delay_min
-                + (delay_max_hm - delay_min) * xi as f64 / (resolution - 1) as f64;
-            let y = rate_min_hm
-                + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution - 1) as f64;
-            let val = heatmap_func(x, y);
-            heatmap_data.push(val);
-        }
-    }
 
     let amplitude_norm = if max_amplitude.is_finite() && max_amplitude > 0.0 {
         max_amplitude
     } else {
-        heatmap_data
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max)
-            .max(1e-30)
+        1e-30
     };
 
-    for (idx, val) in heatmap_data.iter().enumerate() {
-        let xi = idx / resolution;
-        let yi = idx % resolution;
-        let x = delay_min + (delay_max_hm - delay_min) * xi as f64 / (resolution - 1) as f64;
-        let y = rate_min_hm + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution - 1) as f64;
-        let x_step = (delay_max_hm - delay_min) / (resolution - 1) as f64;
-        let y_step = (rate_max_hm - rate_min_hm) / (resolution - 1) as f64;
-        let normalized_val = if amplitude_norm > 0.0 {
-            (*val / amplitude_norm).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        chart3.draw_series(std::iter::once(Rectangle::new(
-            [(x, y), (x + x_step, y + y_step)],
-            HSLColor((1.0 - normalized_val) * 0.7, 1.0, 0.5).filled(),
-        )))?;
+    let x_step = (delay_max_hm - delay_min) / (resolution_x - 1) as f64;
+    let y_step = (rate_max_hm - rate_min_hm) / (resolution_y - 1) as f64;
+    for xi in 0..resolution_x {
+        for yi in 0..resolution_y {
+            let x = delay_min + (delay_max_hm - delay_min) * xi as f64 / (resolution_x - 1) as f64;
+            let y = rate_min_hm + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution_y - 1) as f64;
+            let val = heatmap_func(x, y);
+            let normalized_val = if amplitude_norm > 0.0 {
+                (val / amplitude_norm).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            chart3.draw_series(std::iter::once(Rectangle::new(
+                [(x, y), (x + x_step, y + y_step)],
+                HSLColor((1.0 - normalized_val) * 0.7, 1.0, 0.5).filled(),
+            )))?;
+        }
     }
 
     // 4. Colorbar
@@ -574,7 +654,7 @@ pub fn frequency_plane(
 use crate::utils;
 
 fn make_base_filename(args: &Args, result: &ProcessResult) -> String {
-    generate_output_names(
+    let mut base = generate_output_names(
         &result.header,
         &result.obs_time,
         &result
@@ -586,7 +666,11 @@ fn make_base_filename(args: &Args, result: &ProcessResult) -> String {
         args.frequency,
         args.bandpass.is_some(),
         result.length_arg,
-    )
+    );
+    if args.in_beam && !base.ends_with("_inbeam") {
+        base.push_str("_inbeam");
+    }
+    base
 }
 
 pub fn write_cumulate_outputs(
@@ -598,7 +682,12 @@ pub fn write_cumulate_outputs(
         return Ok(());
     }
 
-    let path = frinz_dir.join(format!("cumulate/len{}s", args.cumulate));
+    let path = if args.in_beam {
+        frinz_dir.to_path_buf()
+    } else {
+        frinz_dir.join(format!("cumulate/len{}s", args.cumulate))
+    };
+    std::fs::create_dir_all(&path)?;
     cumulate_plot(
         &result.cumulate_len,
         &result.cumulate_snr,
@@ -611,6 +700,7 @@ pub fn write_cumulate_outputs(
             .collect::<Vec<&str>>(),
         &result.obs_time,
         args.cumulate,
+        args.in_beam,
     )?;
     Ok(())
 }
@@ -625,7 +715,12 @@ pub fn write_add_plot_outputs(
         return Ok(base_filename);
     }
 
-    let path: PathBuf = frinz_dir.join("add_plot");
+    let path: PathBuf = if args.in_beam {
+        frinz_dir.to_path_buf()
+    } else {
+        frinz_dir.join("add_plot")
+    };
+    std::fs::create_dir_all(&path)?;
     let add_plot_filepath = path.join(&base_filename);
 
     if !result.add_plot_times.is_empty() {
@@ -787,8 +882,9 @@ pub fn cumulate_plot(
     label: &[&str],
     obs_time: &chrono::DateTime<chrono::Utc>,
     cumulate_arg: i32,
+    in_beam: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let base_filename = crate::output::generate_output_names(
+    let mut base_filename = crate::output::generate_output_names(
         header,
         obs_time,
         label,
@@ -797,6 +893,9 @@ pub fn cumulate_plot(
         false,
         cumulate_arg,
     );
+    if in_beam && !base_filename.ends_with("_inbeam") {
+        base_filename.push_str("_inbeam");
+    }
     let cumulate_filename = format!(
         "{}_{}_cumulate{}.png",
         base_filename, header.source_name, cumulate_arg
@@ -1594,7 +1693,7 @@ fn draw_heatmap_with_colorbar(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (rows, cols) = (data.len(), data[0].len());
 
-    let (area_width, area_height) = area.dim_in_pixel();
+    let (area_width, _area_height) = area.dim_in_pixel();
     let color_bar_area_width: u32 = 110;
     let chart_width = area_width.saturating_sub(color_bar_area_width);
 

@@ -22,6 +22,8 @@ mod fitting;
 mod frmap;
 mod header;
 mod folding;
+#[path = "inbeamVLBI.rs"]
+mod inbeam_vlbi;
 
 mod earth_rotation_imaging;
 mod logo;
@@ -46,6 +48,7 @@ use crate::earth_rotation_imaging::{
 };
 use crate::frmap::run_fringe_rate_map_analysis;
 use crate::folding::run_folding_analysis;
+use crate::inbeam_vlbi::run_inbeam_vlbi_analysis;
 use crate::maser::run_maser_analysis;
 use crate::multisideband::run_multisideband_analysis;
 use crate::phsref::run_phase_reference_analysis;
@@ -71,7 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut command = Args::command();
+    let command = Args::command();
     let mut matches = match command.try_get_matches_from(env_args.clone()) {
         Ok(m) => m,
         Err(e) => {
@@ -587,6 +590,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             exit(0);
         }
         return run_phase_reference_analysis(&args, &time_flag_ranges, &pp_flag_ranges);
+    }
+
+    if args.in_beam {
+        if let Some(input_path) = &args.input {
+            if !check_memory_usage(&args, input_path)? {
+                exit(0);
+            }
+        }
+        return run_inbeam_vlbi_analysis(&args, &time_flag_ranges, &pp_flag_ranges);
     }
 
     if let Some(input_path) = &args.input {
