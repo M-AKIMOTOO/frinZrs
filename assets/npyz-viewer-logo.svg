@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A1B3A"/>
+      <stop offset="55%" stop-color="#144C7A"/>
+      <stop offset="100%" stop-color="#2E9AA6"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8EF5D6"/>
+      <stop offset="100%" stop-color="#A1D8FF"/>
+    </linearGradient>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="196" fill="url(#bg)"/>
+  <rect x="132" y="132" width="760" height="760" rx="144" fill="none" stroke="#8CC4FF" stroke-opacity="0.35" stroke-width="8"/>
+
+  <g opacity="0.32">
+    <path d="M240 300 H784" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M240 390 H784" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M240 480 H784" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M240 570 H784" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M240 660 H784" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M312 228 V732" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M420 228 V732" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M528 228 V732" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M636 228 V732" stroke="#CFE8FF" stroke-width="4"/>
+    <path d="M744 228 V732" stroke="#CFE8FF" stroke-width="4"/>
+  </g>
+
+  <path
+    d="M220 580
+       C280 520, 320 520, 370 580
+       C430 650, 490 650, 550 580
+       C620 500, 680 500, 740 580
+       C785 640, 820 640, 860 590"
+    fill="none"
+    stroke="url(#wave)"
+    stroke-width="26"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#softGlow)"
+  />
+
+  <text
+    x="512"
+    y="470"
+    text-anchor="middle"
+    font-size="170"
+    font-weight="700"
+    font-family="Avenir Next, Futura, sans-serif"
+    fill="#EAF6FF"
+    letter-spacing="3"
+  >npyz</text>
+</svg>

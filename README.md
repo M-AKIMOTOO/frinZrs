@@ -1,12 +1,9 @@
-<img src="./src/frinZmain/logo1.png" width=45%>  <img src="./src/frinZmain/logo2.png" width=45%>
+<img src="./src/frinZmain/frinZlogo1.png" width=45%>  <img src="./src/frinZmain/frinZlogo2.png" width=45%>
 
 # frinZrs
 
 Rust version of frinZ.py - A high-performance fringe-fitting tool for VLBI data analysis.  
 Original Python version: https://github.com/M-AKIMOTOO/frinZ.py
-
-## Note
-If the OS is Rocky Linux 8, you have to install the fontconfig-devel package.
 
 ## Overview
 
@@ -22,6 +19,7 @@ frinZrs is a Rust implementation of the frinZ fringe-fitting tool for processing
 - **Visualization** with delay/rate plots and cumulative SNR plots
 - **Multiple output formats** (text, binary, plots)
 - **Cross-power spectrum analysis**
+- **Pulsar gating analysis** with dedispersion, folding, and gating reports
 
 ## Installation
 
@@ -34,6 +32,8 @@ cd frinZrs
 
 # Install to ~/.cargo/bin
 cargo install --bin frinZ --path .
+# OR
+cargo install --bin frinZrs --path .
 ```
 
 ### Development Build
@@ -41,7 +41,29 @@ cargo install --bin frinZ --path .
 ```bash
 # Run directly
 cargo run --bin frinZ --release -- [OPTIONS]
+# OR
+cargo run --bin frinZ-rs --release -- [OPTIONS]
 ```
+
+**Note:** Both `frinZ` and `frinZ-rs` are identical programs. On Windows, antivirus software may flag the compiled binary.
+
+### npyz-viewer (Numpy .npy/.npz viewer)
+
+`frinZ-rs` now includes a separate GUI binary:
+
+```bash
+cargo run --bin npyz-viewer --release -- /path/to/file.npy
+```
+
+Install scripts with file association and icon:
+
+- Linux: `./scripts/install_linux_npyz_viewer.sh`
+- macOS: `./scripts/install_macos_npyz_viewer.sh`
+- Windows 11 (PowerShell): `powershell -ExecutionPolicy Bypass -File .\scripts\install_windows_npyz_viewer.ps1`
+
+Icon source file:
+
+- `assets/npyz-viewer-logo.svg`
 
 ## Usage
 
@@ -70,9 +92,10 @@ frinZ --input data.cor --skip 10
 # Basic phase referencing (calibrator, target)
 frinZ --phase-reference cal.cor target.cor
 
-# With polynomial degree and custom integration times
+# With fit_spec and custom integration times
 frinZ --phase-reference cal.cor target.cor 2 60 120 3
-# Arguments: calibrator target fit_degree cal_length target_length loop
+# Arguments: calibrator target fit_spec cal_length target_length loop
+# fit_spec: <deg>, sin, <deg>+sin, <deg>+sin:<period_sec>
 ```
 
 ### Analysis Options
@@ -156,6 +179,25 @@ frinZ --input data.cor \
 frinZ --phase-reference cal.cor target.cor 1 30 60 5 \
   --search --plot --output
 ```
+
+### Pulsar Gating Analysis
+
+```bash
+pulsar_gating --input data.cor \
+  --period 0.253 --dm 26.7 \
+  --bins 128 --on-duty 0.12
+```
+
+Outputs (CSV + PNG) are written under `frinZ/pulsar_gating` next to the input file:
+- `*_raw_time_series.*` – frequency-integrated amplitudes without DM correction
+- `*_dedispersed_time_series.*` – dedispersed, frequency-integrated amplitude vs time
+- `*_mean_spectrum.*` – time-integrated spectrum across channels
+- `*_dedispersed_spectrum.*` – DM 補正後の時間積分スペクトル
+- `*_profile.*` – folded pulse profile and gating summary
+- `*_raw_heatmap.png` – amplitude/phase heatmap of the raw spectra (PP × channel)
+- `*_dedispersed_heatmap.png` – DM 補正後のスペクトル行列（指定した場合のみ）
+- `*_phase_resolved_amplitude.png` – DM 補正後のパルス位相 vs 振幅プロファイル
+- `*_phase_series.png` – 周波数積分後の時系列を位相軸に展開した散布図
 
 ## Output Files
 
