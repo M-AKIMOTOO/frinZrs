@@ -1,11 +1,11 @@
 use std::error::Error;
 use std::fs;
 use std::io::Cursor;
-use std::io::Read;
 use std::path::Path;
 
 use crate::args::Args;
 use crate::header::parse_header;
+use crate::input_support::{output_stem_from_path, read_input_bytes};
 use crate::plot;
 use crate::read::read_visibility_data;
 use crate::utils::safe_arg;
@@ -22,11 +22,8 @@ pub fn run_raw_visibility_plot(args: &Args) -> Result<(), Box<dyn Error>> {
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let output_dir = parent_dir.join("frinZ").join("rawvis");
     fs::create_dir_all(&output_dir)?;
-    let base_filename = input_path.file_stem().unwrap().to_str().unwrap();
-
-    let mut file = fs::File::open(input_path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
+    let base_filename = output_stem_from_path(input_path)?;
+    let buffer = read_input_bytes(input_path)?;
     let mut cursor = Cursor::new(buffer.as_slice());
 
     let header = parse_header(&mut cursor)?;

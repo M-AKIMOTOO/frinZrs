@@ -37,6 +37,7 @@
        off:<path>           OFF ソース .cor
        off:linear           OFF無し時、band/subt 範囲でロバスト直線ベースライン推定
        off:quad             OFF無し時、band/subt 範囲でロバスト2次ベースライン推定
+       off:linear/off:quad の外れ値除外は残差中央値基準で ±4σ（σ = MAD/0.6745、±1σではない）
        rest:<MHz>           基準周波数（既定 6668.5192）
        band:<start-end>     観測周波数からの相対範囲 (MHz)
        subt:<start-end>     絶対周波数範囲 (MHz) ※指定時は band より優先
@@ -44,8 +45,8 @@
        onoff:0|1            0=(ON-OFF)/OFF（既定）、1=(ON-OFF)
        Vlst:<km/s>          LSR 速度補正の上書き
        corrfreq:<x>         サンプリング周波数への倍率
-       *_maser_data.tsv には baseline_mask 列 (1=ベースラインfit採用点, 0=除外点) を出力。
-       他に、出力グラフ/TSV は frinZ/maser/ 配下へ保存。
+       *_maser_data.npy には baseline_mask 列 (1=ベースラインfit採用点, 0=除外点) を出力。
+       他に、出力グラフ/NPY は frinZ/maser/ 配下へ保存。
   --folding key:val...（可視光度fold）
        period:<sec>         折り畳み周期（必須）
        pdot:<s/s>           周期微分（任意）
@@ -62,7 +63,7 @@
        ecc:<0..1), omega_deg:<deg> 楕円軌道パラメータ
        eph:<FILE>           上記キーを key=value or KEY VALUE で書いたエフェメリスファイル
        --delay/--rate/--acel を適用した複素ビジビリティで fold を実行。
-       出力は frinZ/folding/*_folding_profile.png, *_folding_profile.tsv, *_folding_summary.txt。
+       出力は frinZ/folding/*_folding_profile.png, *_folding_profile.npy, *_folding_summary.txt。
   --multi-sideband C_COR C_BP C_DELAY X_COR X_BP X_DELAY
        BP に -1 を入れると当該バンド BP 無効化。
   --fringe-rate-map key[:val]...
@@ -74,10 +75,13 @@
 
 [出力・グラフ補助]
   --add-plot                         Amp/SNR/位相/雑音の時系列
+                                     データファイル名は *_addplot.npy
   --cumulate <SEC>                   積分時間 vs S/N（両対数、フィット付き）
-  --bandpass-table                   補正後スペクトルをバイナリ保存
-  --spectrum                         クロススペクトルをバイナリ保存
+  --bandpass-table                   補正後スペクトルを NPY 保存
+  --spectrum                         クロススペクトルを NPY 保存
   --cor2bin                          生可視光度をバイナリ保存
+  解析データは NPY で出力（*.tsv / *.spec / *.bin は生成しない、ただし --cor2bin は除く）
+  標準出力テキスト（検索結果テーブル等）は .npy 化しない
 
 [その他]
   --fft-rebin <PTS>                  FFT チャンネルを平均化して縮小

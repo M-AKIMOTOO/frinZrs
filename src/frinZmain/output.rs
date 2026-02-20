@@ -1,14 +1,91 @@
+#![allow(non_local_definitions, unexpected_cfgs)]
+
 use byteorder::{LittleEndian, WriteBytesExt};
 use chrono::{DateTime, Utc};
 use num_complex::Complex;
+use npyz::WriterBuilder;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::analysis::AnalysisResults;
 use crate::header::CorHeader;
 
 type C32 = Complex<f32>;
+
+#[allow(non_local_definitions, unexpected_cfgs)]
+#[derive(npyz::Serialize, npyz::Deserialize, npyz::AutoSerialize, Clone, Copy)]
+pub struct ComplexRiRow {
+    pub real: f32,
+    pub imag: f32,
+}
+
+#[allow(non_local_definitions, unexpected_cfgs)]
+#[derive(npyz::Serialize, npyz::Deserialize, npyz::AutoSerialize, Clone, Copy)]
+struct AddPlotRow {
+    elapsed_time_s: f32,
+    amplitude_pct: f32,
+    snr: f32,
+    phase_deg: f32,
+    noise_level_pct: f32,
+    res_delay_samp: f32,
+    res_rate_hz: f32,
+}
+
+pub fn npy<T: npyz::AutoSerialize>(output_path: &Path, rows: &[T]) -> io::Result<()> {
+    let file = File::create(output_path)?;
+    let mut writer = npyz::WriteOptions::new()
+        .default_dtype()
+        .writer(file)
+        .begin_1d()?;
+    for row in rows {
+        writer.push(row)?;
+    }
+    writer.finish()?;
+    Ok(())
+}
+
+pub fn npy_f32_2d(
+    output_path: &Path,
+    rows: usize,
+    cols: usize,
+    values: &[f32],
+) -> io::Result<()> {
+    if rows.checked_mul(cols).unwrap_or(0) != values.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "rows*cols must match values.len()",
+        ));
+    }
+    let file = File::create(output_path)?;
+    let mut writer = npyz::WriteOptions::new()
+        .default_dtype()
+        .shape(&[rows as u64, cols as u64])
+        .writer(file)
+        .begin_nd()?;
+    for value in values {
+        writer.push(value)?;
+    }
+    writer.finish()?;
+    Ok(())
+}
+
+pub fn write_complex_spectrum_npy(path: &Path, spectrum: &[C32]) -> io::Result<PathBuf> {
+    let npy_path = if path.extension().and_then(|v| v.to_str()) == Some("npy") {
+        path.to_path_buf()
+    } else {
+        path.with_extension("npy")
+    };
+    let rows: Vec<ComplexRiRow> = spectrum
+        .iter()
+        .map(|c| ComplexRiRow {
+            real: c.re,
+            imag: c.im,
+        })
+        .collect();
+    npy(&npy_path, &rows)?;
+    Ok(npy_path)
+}
 
 pub fn output_header_info(
     header: &CorHeader,
@@ -247,26 +324,25 @@ pub fn write_add_plot_data_to_file(
     res_delay: &[f32],
     res_rate: &[f32],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let output_file_path = output_dir.join(format!("{}_add_plot_data.tsv", base_filename));
-    let file = File::create(&output_file_path)?;
-    let mut writer = BufWriter::new(file);
-
-    // Write header
-    writeln!(
-        writer,
-        "#Elapsed Time [s]\tAmplitude [%]\tSNR\tPhase [deg]\tNoise Level [%]\tRes Delay [samp]\tRes Rate [Hz]"
-    )?;
-
-    // Write data
-    for i in 0..elapsed_times.len() {
-        writeln!(
-            writer,
-            "{:.3}\t{:.6}\t{:.2}\t{:.3}\t{:.6}\t{:.6}\t{:.6e}",
-            elapsed_times[i], amp[i], snr[i], phase[i], noise[i], res_delay[i], res_rate[i]
-        )?;
-    }
-
-    writer.flush()?;
-    //println!("Add plot data written to: {:?}", output_file_path);
+    let output_file_path = output_dir.join(format!("{}_addplot.npy", base_filename));
+    let rows: Vec<AddPlotRow> = elapsed_times
+        .iter()
+        .zip(amp.iter())
+        .zip(snr.iter())
+        .zip(phase.iter())
+        .zip(noise.iter())
+        .zip(res_delay.iter())
+        .zip(res_rate.iter())
+        .map(|((((((&elapsed_time_s, &amplitude_pct), &snr), &phase_deg), &noise_level_pct), &res_delay_samp), &res_rate_hz)| AddPlotRow {
+            elapsed_time_s,
+            amplitude_pct,
+            snr,
+            phase_deg,
+            noise_level_pct,
+            res_delay_samp,
+            res_rate_hz,
+        })
+        .collect();
+    npy(&output_file_path, &rows)?;
     Ok(())
 }

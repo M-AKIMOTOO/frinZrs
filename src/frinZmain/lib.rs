@@ -1,16 +1,17 @@
 #![allow(non_snake_case)]
 
-pub mod bispectrum;
 pub mod analysis;
 pub mod args;
 pub mod bandpass;
-pub mod search;
+pub mod bispectrum;
 pub mod fft;
 pub mod fitting;
-pub mod frmap;
 pub mod folding;
+pub mod frmap;
 pub mod header;
+pub mod input_support;
 pub mod maser;
+pub mod search;
 
 pub mod earth_rotation_imaging;
 pub mod multisideband;

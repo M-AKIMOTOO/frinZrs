@@ -1,16 +1,18 @@
 // Bispectrum / closure-phase analysis module.
 // This code multiplies three baseline visibilities to form the bispectrum,
 // then derives closure phase and related statistics/plots.
+#![allow(non_local_definitions, unexpected_cfgs)]
+
 use crate::args::Args;
 use crate::bandpass::read_bandpass_file;
-use crate::search;
 use crate::fft;
 use crate::header::{parse_header, CorHeader};
-use crate::output::write_phase_corrected_spectrum_binary;
+use crate::output::{npy, write_phase_corrected_spectrum_binary};
 use crate::png_compress::{compress_png_with_mode, CompressQuality};
 use crate::processing::run_analysis_pipeline;
 use crate::read::{read_sector_header, read_visibility_data};
 use crate::rfi::parse_rfi_ranges;
+use crate::search;
 use chrono::{DateTime, Utc};
 use num_complex::Complex;
 use plotters::coord::ranged1d::{KeyPointHint, NoDefaultFormatting, Ranged, ValueFormatter};
@@ -39,6 +41,31 @@ const ST2_CLOCK_RATE_OFFSET: usize = 224;
 const ST2_CLOCK_ACEL_OFFSET: usize = 232;
 const ST2_CLOCK_JERK_OFFSET: usize = 240;
 const ST2_CLOCK_SNAP_OFFSET: usize = 248;
+
+#[allow(non_local_definitions, unexpected_cfgs)]
+#[derive(npyz::Serialize, npyz::Deserialize, npyz::AutoSerialize, Clone, Copy)]
+struct ClosureNpyRow {
+    epoch_unix_sec: f64,
+    re_v1: f32,
+    im_v1: f32,
+    amp_v1: f32,
+    phase_v1_deg: f32,
+    re_v2: f32,
+    im_v2: f32,
+    amp_v2: f32,
+    phase_v2_deg: f32,
+    re_v3: f32,
+    im_v3: f32,
+    amp_v3: f32,
+    phase_v3_deg: f32,
+    re_bispectrum: f32,
+    im_bispectrum: f32,
+    amp_bispectrum: f32,
+    amp_bispectrum_cuberoot: f32,
+    closure_argb_deg: f32,
+    closure_from_phases_deg: f32,
+    i_norm: f32,
+}
 
 fn wrap_phase_deg(value: f32) -> f32 {
     let mut wrapped = (value + 180.0) % 360.0;
@@ -696,7 +723,11 @@ fn collect_baseline_visibility(
         info,
         file_header_raw,
         loops,
-        baseline_label: format!("{}-{}", header.station1_name.trim(), header.station2_name.trim()),
+        baseline_label: format!(
+            "{}-{}",
+            header.station1_name.trim(),
+            header.station2_name.trim()
+        ),
     })
 }
 
@@ -850,7 +881,11 @@ fn build_closure_products(
         let closure_phase_deg = wrap_phase_deg(bispectrum.arg().to_degrees());
 
         let bis_amp = bispectrum.norm();
-        let bis_amp_cuberoot = if bis_amp > 0.0 { bis_amp.powf(1.0 / 3.0) } else { 0.0 };
+        let bis_amp_cuberoot = if bis_amp > 0.0 {
+            bis_amp.powf(1.0 / 3.0)
+        } else {
+            0.0
+        };
 
         let mut sector_header = lp1.sector_header.clone();
         if sector_header.len() >= SECTOR_HEADER_SIZE {
@@ -1020,10 +1055,12 @@ fn compute_bispectrum_stats(values: &[C32], closure_phase_deg: &[f32]) -> Bispec
     let amp_mean = amps.iter().sum::<f64>() / n;
     let amp_std = stddev(&amps, amp_mean);
 
-    let unit_sum = closure_phase_deg.iter().fold(C32::new(0.0, 0.0), |acc, deg| {
-        let rad = deg.to_radians();
-        acc + C32::from_polar(1.0, rad)
-    });
+    let unit_sum = closure_phase_deg
+        .iter()
+        .fold(C32::new(0.0, 0.0), |acc, deg| {
+            let rad = deg.to_radians();
+            acc + C32::from_polar(1.0, rad)
+        });
     let mut rbar = unit_sum.norm() as f64 / n;
     if !rbar.is_finite() {
         rbar = 0.0;
@@ -1083,56 +1120,33 @@ fn compute_closure_stats(rows: &[ClosureSample]) -> ClosureStats {
     }
 }
 
-fn write_closure_tsv(
-    path: &Path,
-    labels: &[String],
-    rows: &[ClosureSample],
-) -> Result<(), Box<dyn Error>> {
-    let mut file = File::create(path)?;
-    writeln!(
-        file,
-        "epoch\tRe({})\tIm({})\t|{}|\tphase_{}[deg]\tRe({})\tIm({})\t|{}|\tphase_{}[deg]\tRe({})\tIm({})\t|{}|\tphase_{}[deg]\tRe(B)\tIm(B)\t|B|\t|B|^(1/3)\tclosure[arg(B)][deg]\tclosure[from phases][deg]\tI_norm",
-        labels[0],
-        labels[0],
-        labels[0],
-        labels[0],
-        labels[1],
-        labels[1],
-        labels[1],
-        labels[1],
-        labels[2],
-        labels[2],
-        labels[2],
-        labels[2],
-    )?;
-
-    for row in rows {
-        writeln!(
-            file,
-            "{}\t{:.9e}\t{:.9e}\t{:.9e}\t{:.3}\t{:.9e}\t{:.9e}\t{:.9e}\t{:.3}\t{:.9e}\t{:.9e}\t{:.9e}\t{:.3}\t{:.9e}\t{:.9e}\t{:.9e}\t{:.9e}\t{:.3}\t{:.3}\t{:.9e}",
-            row.timestamp.format("%Y/%j %H:%M:%S"),
-            row.raw_complex[0].re,
-            row.raw_complex[0].im,
-            row.baseline_amp[0],
-            row.baseline_phase_deg[0],
-            row.raw_complex[1].re,
-            row.raw_complex[1].im,
-            row.baseline_amp[1],
-            row.baseline_phase_deg[1],
-            row.raw_complex[2].re,
-            row.raw_complex[2].im,
-            row.baseline_amp[2],
-            row.baseline_phase_deg[2],
-            row.bispectrum.re,
-            row.bispectrum.im,
-            row.bispectrum_amp,
-            row.bispectrum_amp_cuberoot,
-            row.closure_phase_deg,
-            row.closure_from_baselines_deg,
-            row.normalized_intensity,
-        )?;
-    }
-
+fn write_closure_npy(path: &Path, rows: &[ClosureSample]) -> Result<(), Box<dyn Error>> {
+    let npy_rows: Vec<ClosureNpyRow> = rows
+        .iter()
+        .map(|row| ClosureNpyRow {
+            epoch_unix_sec: row.timestamp.timestamp_millis() as f64 / 1000.0,
+            re_v1: row.raw_complex[0].re,
+            im_v1: row.raw_complex[0].im,
+            amp_v1: row.baseline_amp[0],
+            phase_v1_deg: row.baseline_phase_deg[0],
+            re_v2: row.raw_complex[1].re,
+            im_v2: row.raw_complex[1].im,
+            amp_v2: row.baseline_amp[1],
+            phase_v2_deg: row.baseline_phase_deg[1],
+            re_v3: row.raw_complex[2].re,
+            im_v3: row.raw_complex[2].im,
+            amp_v3: row.baseline_amp[2],
+            phase_v3_deg: row.baseline_phase_deg[2],
+            re_bispectrum: row.bispectrum.re,
+            im_bispectrum: row.bispectrum.im,
+            amp_bispectrum: row.bispectrum_amp,
+            amp_bispectrum_cuberoot: row.bispectrum_amp_cuberoot,
+            closure_argb_deg: row.closure_phase_deg,
+            closure_from_phases_deg: row.closure_from_baselines_deg,
+            i_norm: row.normalized_intensity,
+        })
+        .collect();
+    npy(path, &npy_rows)?;
     Ok(())
 }
 
@@ -1268,7 +1282,11 @@ fn plot_closure_phase(
         chart
             .draw_series(rows.iter().map(|sample| {
                 let x = (sample.timestamp - first_time).num_milliseconds() as f64 / 1000.0;
-                Circle::new((x, sample.baseline_phase_deg[idx] as f64), 4, color.filled())
+                Circle::new(
+                    (x, sample.baseline_phase_deg[idx] as f64),
+                    4,
+                    color.filled(),
+                )
             }))?
             .label(label.clone())
             .legend(move |(x, y)| Circle::new((x + 10, y), 5, color.filled()));
@@ -1278,7 +1296,11 @@ fn plot_closure_phase(
     chart
         .draw_series(rows.iter().map(|sample| {
             let x = (sample.timestamp - first_time).num_milliseconds() as f64 / 1000.0;
-            Circle::new((x, sample.closure_phase_deg as f64), 4, closure_color.filled())
+            Circle::new(
+                (x, sample.closure_phase_deg as f64),
+                4,
+                closure_color.filled(),
+            )
         }))?
         .label("closure arg(B)")
         .legend(move |(x, y)| Circle::new((x + 10, y), 5, closure_color.filled()));
@@ -1304,7 +1326,11 @@ fn plot_closure_phase(
     let mut draw_legend_entry = |text: &str, color: RGBColor| -> Result<(), Box<dyn Error>> {
         legend_area.draw(&Circle::new((x_pos, y_pos), 6, color.filled()))?;
         x_pos += 10;
-        legend_area.draw(&Text::new(text.to_string(), (x_pos + 10, y_pos), font.clone()))?;
+        legend_area.draw(&Text::new(
+            text.to_string(),
+            (x_pos + 10, y_pos),
+            font.clone(),
+        ))?;
         x_pos += text.chars().count() as i32 * 11;
         Ok(())
     };
@@ -1500,15 +1526,22 @@ pub fn run_closure_phase_analysis(
         return Err("refant must not be empty.".into());
     }
 
-    let loaded1 = collect_baseline_visibility(&cor_paths[0], args, time_flag_ranges, pp_flag_ranges)?;
-    let loaded2 = collect_baseline_visibility(&cor_paths[1], args, time_flag_ranges, pp_flag_ranges)?;
-    let loaded3 = collect_baseline_visibility(&cor_paths[2], args, time_flag_ranges, pp_flag_ranges)?;
+    let loaded1 =
+        collect_baseline_visibility(&cor_paths[0], args, time_flag_ranges, pp_flag_ranges)?;
+    let loaded2 =
+        collect_baseline_visibility(&cor_paths[1], args, time_flag_ranges, pp_flag_ranges)?;
+    let loaded3 =
+        collect_baseline_visibility(&cor_paths[2], args, time_flag_ranges, pp_flag_ranges)?;
 
     let fft1 = loaded1.info.header.fft_point;
     let fft2 = loaded2.info.header.fft_point;
     let fft3 = loaded3.info.header.fft_point;
     if fft1 != fft2 || fft1 != fft3 {
-        return Err(format!("FFT mismatch across baselines: {}, {}, {}", fft1, fft2, fft3).into());
+        return Err(format!(
+            "FFT mismatch across baselines: {}, {}, {}",
+            fft1, fft2, fft3
+        )
+        .into());
     }
 
     let base1_st1 = normalize_name(&loaded1.info.header.station1_name);
@@ -1679,13 +1712,13 @@ pub fn run_closure_phase_analysis(
         sanitized_ref, sanitized_mid, sanitized_third, suffix_token
     );
 
-    let tsv_path = closure_dir.join(format!("{}_complex.tsv", base_name));
+    let npy_path = closure_dir.join(format!("{}_complex.npy", base_name));
     let summary_path = closure_dir.join(format!("{}_summary.txt", base_name));
     let closure_png = closure_dir.join(format!("{}_closurephase.png", base_name));
     let bis_png = closure_dir.join(format!("{}_bispectrum.png", base_name));
     let bis_cor = parent_dir.join(format!("{}_bispectrum.cor", base_name));
 
-    write_closure_tsv(&tsv_path, &labels, &rows)?;
+    write_closure_npy(&npy_path, &rows)?;
     write_summary(&summary_path, &labels, &pair_labels, &stats)?;
     plot_closure_phase(&closure_png, &labels, &rows)?;
     plot_bispectrum(&bis_png, &rows)?;
@@ -1706,7 +1739,7 @@ pub fn run_closure_phase_analysis(
         &bispec_spectra,
     )?;
 
-    println!("#Saved TSV to {}", tsv_path.display());
+    println!("#Saved NPY to {}", npy_path.display());
     println!("#Saved summary to {}", summary_path.display());
     println!("#Saved closure plot to {}", closure_png.display());
     println!("#Saved bispectrum plot to {}", bis_png.display());

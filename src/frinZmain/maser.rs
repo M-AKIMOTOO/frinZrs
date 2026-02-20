@@ -1,15 +1,19 @@
+#![allow(non_local_definitions, unexpected_cfgs)]
+
+use crate::png_compress::{compress_png_with_mode, CompressQuality};
 use ndarray::{Array1, Axis};
 use plotters::prelude::*;
-use crate::png_compress::{compress_png_with_mode, CompressQuality};
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::args::Args;
 use crate::fft::process_fft;
 use crate::header::{parse_header, CorHeader};
+use crate::input_support::{output_stem_from_path, read_input_bytes};
+use crate::output::npy;
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
 
@@ -26,6 +30,24 @@ use nalgebra::{storage::Owned, DMatrix, DVector, Dyn, Matrix3, Vector3};
 const C_KM_S: f64 = 299792.458; // Speed of light in km/s
 const FWHM_TO_SIGMA: f64 = 0.42466090014400953; // 1 / (2 * sqrt(2 ln 2))
 const MIN_FWHM_KMS: f64 = 1.0e-3; // clamp to avoid zero-width components
+
+#[allow(non_local_definitions, unexpected_cfgs)]
+#[derive(npyz::Serialize, npyz::Deserialize, npyz::AutoSerialize, Clone, Copy)]
+struct MaserSegmentRow {
+    frequency_offset_mhz: f64,
+    velocity_km_s: f64,
+    onsource: f32,
+    offsource: f32,
+    baseline_mask: u8,
+}
+
+#[allow(non_local_definitions, unexpected_cfgs)]
+#[derive(npyz::Serialize, npyz::Deserialize, npyz::AutoSerialize, Clone, Copy)]
+struct MaserStackedRow {
+    frequency_offset_mhz: f64,
+    velocity_km_s: f64,
+    normalized_intensity: f32,
+}
 
 macro_rules! maser_logln {
     ($log:expr, $($arg:tt)*) => {{
@@ -57,12 +79,6 @@ fn format_with_precision(value: f64, digits: usize) -> String {
     } else {
         format!("{:.*}", digits, value)
     }
-}
-
-fn format_f32_precision(value: f64, digits: usize) -> String {
-    let digits = digits.min(6);
-    let value_f32 = value as f32;
-    format_with_precision(value_f32 as f64, digits)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -763,9 +779,7 @@ fn get_spectrum_segment(
     loop_index: i32,
     log_lines: &mut Vec<String>,
 ) -> Result<Option<SpectrumData>, Box<dyn Error>> {
-    let mut file = File::open(file_path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
+    let buffer = read_input_bytes(file_path)?;
     let mut cursor = Cursor::new(buffer.as_slice());
 
     let header = parse_header(&mut cursor)?;
@@ -1294,24 +1308,27 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let chunk_length = if args.length > 0 {
-        let off_note = match &off_spec {
-            OffSpec::File(_) => "OFF source uses full span".to_string(),
-            OffSpec::Baseline(kind) => format!("OFF is {} baseline fit in analysis window", kind.as_str()),
-        };
-        maser_logln!(
+    let chunk_length =
+        if args.length > 0 {
+            let off_note = match &off_spec {
+                OffSpec::File(_) => "OFF source uses full span".to_string(),
+                OffSpec::Baseline(kind) => {
+                    format!("OFF is {} baseline fit in analysis window", kind.as_str())
+                }
+            };
+            maser_logln!(
             log_lines,
             "  Maser processing will segment the ON source with --length={} and --loop={} ({}).",
             args.length, args.loop_, off_note
         );
-        args.length
-    } else {
-        maser_logln!(
-            log_lines,
-            "  Maser processing will use the full data span (single segment)."
-        );
-        0
-    };
+            args.length
+        } else {
+            maser_logln!(
+                log_lines,
+                "  Maser processing will use the full data span (single segment)."
+            );
+            0
+        };
     let mut on_segments: Vec<SpectrumData> = Vec::new();
     let mut loop_index: usize = 0;
     let loop_limit: usize = if chunk_length > 0 {
@@ -1430,7 +1447,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
     let parent_dir = on_source_path.parent().unwrap_or_else(|| Path::new(""));
     let output_dir = parent_dir.join("frinZ").join("maser");
     fs::create_dir_all(&output_dir)?;
-    let on_stem = on_source_path.file_stem().unwrap().to_str().unwrap();
+    let on_stem = output_stem_from_path(on_source_path)?;
 
     let freq_resolution_mhz = (header_on.sampling_speed as f64 * corrfreq / 2.0 / 1e6)
         / (header_on.fft_point as f64 / 2.0);
@@ -1608,7 +1625,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             freq_resolution_mhz,
             channel_width_kms,
             &output_dir,
-            on_stem,
+            &on_stem,
             integration_state.as_mut(),
             write_segment_outputs,
             freq_precision,
@@ -1708,34 +1725,25 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             );
 
             let stacked_suffix = "_stacked";
-            let integ_tsv =
-                output_dir.join(format!("{}{}_maser_data.tsv", on_stem, stacked_suffix));
-            let mut integ_file = File::create(&integ_tsv)?;
-            writeln!(
-                integ_file,
-                "# Frequency_Offset_MHz\tVelocity_km/s\tNormalized_Intensity"
-            )?;
+            let integ_npy =
+                output_dir.join(format!("{}{}_maser_data.npy", on_stem, stacked_suffix));
             let freq_reference = integration
                 .frequency_axis_mhz
                 .first()
                 .copied()
                 .unwrap_or(0.0);
-            for ((&freq, &vel), &power) in integration
+            let stacked_rows: Vec<MaserStackedRow> = integration
                 .frequency_axis_mhz
                 .iter()
                 .zip(velocity_axis.iter())
                 .zip(integration.averaged_spec.iter())
-            {
-                let freq_offset = freq - freq_reference;
-                let freq_offset_str = format_f32_precision(freq_offset, freq_precision);
-                let vel_str = format_f32_precision(vel, vel_precision);
-                let power_str = format!("{:.6}", power);
-                writeln!(
-                    integ_file,
-                    "{}\t{}\t{}",
-                    freq_offset_str, vel_str, power_str
-                )?;
-            }
+                .map(|((&freq, &vel), &power)| MaserStackedRow {
+                    frequency_offset_mhz: freq - freq_reference,
+                    velocity_km_s: vel,
+                    normalized_intensity: power,
+                })
+                .collect();
+            npy(&integ_npy, &stacked_rows)?;
 
             let normalized_plot_data_freq: Vec<(f64, f32)> = integration
                 .frequency_axis_mhz
@@ -1776,7 +1784,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
             )?;
 
             let stacked_vel_plot =
-                output_dir.join(format!("{}{}_maser_Vlsr1.png", on_stem, stacked_suffix));
+                output_dir.join(format!("{}{}_maser_vlsr1.png", on_stem, stacked_suffix));
             plot_maser_spectrum(
                 &stacked_vel_plot,
                 &normalized_plot_data_vel,
@@ -1810,7 +1818,7 @@ pub fn run_maser_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
                 .collect();
             if !zoomed_plot_data.is_empty() {
                 let stacked_zoom_plot =
-                    output_dir.join(format!("{}{}_maser_Vlsr2.png", on_stem, stacked_suffix));
+                    output_dir.join(format!("{}{}_maser_vlsr2.png", on_stem, stacked_suffix));
                 plot_maser_spectrum(
                     &stacked_zoom_plot,
                     &zoomed_plot_data,
@@ -1938,9 +1946,7 @@ fn analyze_segment(
         } else if fit.coeff_shifted.len() >= 2 {
             format!(
                 "{:.6e} + {:.6e}*(f-{:.6})",
-                fit.coeff_shifted[0],
-                fit.coeff_shifted[1],
-                fit.x_center_mhz
+                fit.coeff_shifted[0], fit.coeff_shifted[1], fit.x_center_mhz
             )
         } else {
             format!("{:.6e}", fit.coeff_shifted[0])
@@ -2092,25 +2098,26 @@ fn analyze_segment(
     };
 
     if write_outputs {
-        let tsv_filename = output_dir.join(format!("{}{}_maser_data.tsv", on_stem, suffix));
-        let mut file = File::create(&tsv_filename)?;
-        writeln!(
-            file,
-            "# Frequency_Offset_MHz\tVelocity_km/s\tonsourc\toffsource\tbaseline_mask"
-        )?;
-        for (idx, &freq_mhz) in analysis_freq_mhz.iter().enumerate() {
-            let freq_offset_mhz = freq_mhz - base_freq_mhz;
-            let freq_offset_str = format_f32_precision(freq_offset_mhz, freq_precision);
-            let vel_str = format_f32_precision(analysis_velocity_kms[idx], vel_precision);
-            let on_str = format!("{:.6}", analysis_spec_on[idx]);
-            let off_str = format!("{:.6}", analysis_spec_off[idx]);
-            let mask_flag = if baseline_mask[idx] { 1 } else { 0 };
-            writeln!(
-                file,
-                "{}\t{}\t{}\t{}\t{}",
-                freq_offset_str, vel_str, on_str, off_str, mask_flag
-            )?;
-        }
+        let npy_filename = output_dir.join(format!("{}{}_maser_data.npy", on_stem, suffix));
+        let segment_rows: Vec<MaserSegmentRow> = analysis_freq_mhz
+            .iter()
+            .zip(analysis_velocity_kms.iter())
+            .zip(analysis_spec_on.iter())
+            .zip(analysis_spec_off.iter())
+            .zip(baseline_mask.iter())
+            .map(
+                |((((&freq_mhz, &velocity_km_s), &onsource), &offsource), &baseline_mask)| {
+                    MaserSegmentRow {
+                        frequency_offset_mhz: freq_mhz - base_freq_mhz,
+                        velocity_km_s,
+                        onsource,
+                        offsource,
+                        baseline_mask: if baseline_mask { 1 } else { 0 },
+                    }
+                },
+            )
+            .collect();
+        npy(&npy_filename, &segment_rows)?;
 
         if let Some(ref comps) = gaussian_fit_components {
             let fit_filename = output_dir.join(format!("{}{}_maser_fit.txt", on_stem, suffix));
@@ -2209,7 +2216,7 @@ fn analyze_segment(
             .map(|(&x, &y)| (x, y))
             .collect();
         let maser_vel_plot_filename =
-            output_dir.join(format!("{}{}_maser_Vlsr1.png", on_stem, suffix));
+            output_dir.join(format!("{}{}_maser_vlsr1.png", on_stem, suffix));
         plot_maser_spectrum(
             &maser_vel_plot_filename,
             &normalized_plot_data_vel,
@@ -2255,7 +2262,7 @@ fn analyze_segment(
                         .collect()
                 });
             let maser_zoom_plot_filename =
-                output_dir.join(format!("{}{}_maser_Vlsr2.png", on_stem, suffix));
+                output_dir.join(format!("{}{}_maser_vlsr2.png", on_stem, suffix));
             plot_maser_spectrum(
                 &maser_zoom_plot_filename,
                 &zoomed_plot_data,

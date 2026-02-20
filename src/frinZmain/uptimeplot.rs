@@ -1,14 +1,15 @@
 use crate::args::Args;
 use crate::header::parse_header;
+use crate::input_support::{output_stem_from_path, read_input_bytes};
+use crate::png_compress::{compress_png_with_mode, CompressQuality};
 use crate::read::read_visibility_data;
 use crate::utils::radec2azalt;
 use chrono::{DateTime, Duration, TimeZone, Timelike, Utc};
 use plotters::coord::Shift;
 use plotters::prelude::*;
 use std::error::Error;
-use std::fs::{self, File};
-use crate::png_compress::{compress_png_with_mode, CompressQuality};
-use std::io::{Cursor, Read};
+use std::fs;
+use std::io::Cursor;
 use std::path::Path;
 
 const CANVAS_SIZE: (u32, u32) = (1400, 900);
@@ -21,9 +22,7 @@ pub fn run_uptime_plot(args: &Args) -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let mut file = File::open(input_path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
+    let buffer = read_input_bytes(input_path)?;
 
     let mut cursor = Cursor::new(buffer.as_slice());
     let header = parse_header(&mut cursor)?;
@@ -54,10 +53,7 @@ pub fn run_uptime_plot(args: &Args) -> Result<(), Box<dyn Error>> {
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let output_dir = parent_dir.join("frinZ").join("uptime");
     fs::create_dir_all(&output_dir)?;
-    let base_stem = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or("Invalid input filename")?;
+    let base_stem = output_stem_from_path(input_path)?;
 
     let observation_points_station1 = generate_time_series(
         start_time,

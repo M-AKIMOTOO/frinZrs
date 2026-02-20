@@ -4,7 +4,7 @@
 use std::error::Error;
 use std::fs;
 use std::fs::File;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -14,6 +14,8 @@ use num_complex::Complex;
 use crate::args::Args;
 use crate::fft::{apply_phase_correction, process_fft, process_ifft};
 use crate::header::{parse_header, CorHeader};
+use crate::input_support::{output_stem_from_path, read_input_bytes};
+use crate::output::{npy, npy_f32_2d};
 use crate::plot::{plot_cross_section, plot_sky_map, plot_uv_coverage};
 use crate::read::read_visibility_data;
 use crate::utils::{rate_cal, uvw_cal};
@@ -228,12 +230,10 @@ pub fn run_fringe_rate_map_analysis(
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let frinz_dir = parent_dir.join("frinZ").join("frmap");
     fs::create_dir_all(&frinz_dir)?;
-    let file_stem = input_path.file_stem().unwrap().to_str().unwrap();
+    let file_stem = output_stem_from_path(input_path)?;
 
     // --- Read .cor File ---
-    let mut file = fs::File::open(input_path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
+    let buffer = read_input_bytes(input_path)?;
     let mut cursor = Cursor::new(buffer.as_slice());
 
     // --- Parse Header ---
@@ -532,14 +532,15 @@ pub fn run_fringe_rate_map_analysis(
     plot_sky_map(&map_filename, &total_map, cell_size_rad, max_x, max_y)?;
     println!("Fringe rate map saved to: {:?}", map_filename);
 
-    let map_bin_filename = frinz_dir.join(format!("{}_frmap.bin", file_stem));
-    let mut map_file = File::create(&map_bin_filename)?;
-    map_file.write_all(&(image_size as u32).to_le_bytes())?;
-    map_file.write_all(&(image_size as u32).to_le_bytes())?;
-    for val in total_map.iter() {
-        map_file.write_all(&val.to_le_bytes())?;
-    }
-    println!("Fringe rate map data saved to: {:?}", map_bin_filename);
+    let map_npy_filename = frinz_dir.join(format!("{}_frmap.npy", file_stem));
+    let map_values: Vec<f32> = total_map.iter().copied().collect();
+    npy_f32_2d(
+        &map_npy_filename,
+        image_size,
+        image_size,
+        &map_values,
+    )?;
+    println!("Fringe rate map data saved to: {:?}", map_npy_filename);
 
     let beam_map_filename = frinz_dir.join(format!("{}_beam.png", file_stem));
     plot_sky_map(
@@ -555,13 +556,10 @@ pub fn run_fringe_rate_map_analysis(
     plot_uv_coverage(&uv_coverage_filename, &all_uv_data)?;
     println!("UV coverage plot saved to: {:?}", uv_coverage_filename);
 
-    let uv_bin_filename = frinz_dir.join(format!("{}_uv.bin", file_stem));
-    let mut uv_file = File::create(&uv_bin_filename)?;
-    for (u, v) in &all_uv_data {
-        uv_file.write_all(&u.to_le_bytes())?;
-        uv_file.write_all(&v.to_le_bytes())?;
-    }
-    println!("UV coverage data saved to: {:?}", uv_bin_filename);
+    let uv_npy_filename = frinz_dir.join(format!("{}_uv.npy", file_stem));
+    let uv_rows: Vec<[f32; 2]> = all_uv_data.iter().map(|(u, v)| [*u, *v]).collect();
+    npy(&uv_npy_filename, &uv_rows)?;
+    println!("UV coverage data saved to: {:?}", uv_npy_filename);
 
     let horizontal_profile = total_map.row(max_y);
     let vertical_profile = total_map.column(max_x);
@@ -625,11 +623,9 @@ fn run_frmap_maser(
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let frinz_dir = parent_dir.join("frinZ").join("frmap");
     fs::create_dir_all(&frinz_dir)?;
-    let file_stem = input_path.file_stem().unwrap().to_str().unwrap();
+    let file_stem = output_stem_from_path(input_path)?;
 
-    let mut file = File::open(input_path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
+    let buffer = read_input_bytes(input_path)?;
     let mut cursor = Cursor::new(buffer.as_slice());
 
     let header = parse_header(&mut cursor)?;
@@ -1045,13 +1041,10 @@ fn run_frmap_maser(
     plot_uv_coverage(&uv_coverage_filename, &all_uv_data)?;
     println!("UV coverage plot saved to {:?}", uv_coverage_filename);
 
-    let uv_bin_filename = frinz_dir.join(format!("{}_uv.bin", file_stem));
-    let mut uv_file = File::create(&uv_bin_filename)?;
-    for (u, v) in &all_uv_data {
-        uv_file.write_all(&u.to_le_bytes())?;
-        uv_file.write_all(&v.to_le_bytes())?;
-    }
-    println!("UV coverage data saved to {:?}", uv_bin_filename);
+    let uv_npy_filename = frinz_dir.join(format!("{}_uv.npy", file_stem));
+    let uv_rows: Vec<[f32; 2]> = all_uv_data.iter().map(|(u, v)| [*u, *v]).collect();
+    npy(&uv_npy_filename, &uv_rows)?;
+    println!("UV coverage data saved to {:?}", uv_npy_filename);
 
     Ok(())
 }

@@ -1,8 +1,9 @@
+#![allow(non_local_definitions, unexpected_cfgs)]
+
 use astro::ecliptic;
 use astro::planet::{self, Planet};
 use astro::time;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use memmap2::Mmap;
 use nalgebra::{Matrix3, Vector3};
 use num_complex::Complex;
 use plotters::prelude::*;
@@ -15,6 +16,8 @@ use std::path::{Path, PathBuf};
 use crate::args::Args;
 use crate::bandpass::read_bandpass_file;
 use crate::header::parse_header;
+use crate::input_support::{open_input_mmap, output_stem_from_path};
+use crate::output::npy;
 use crate::png_compress::{compress_png_with_mode, CompressQuality};
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
@@ -65,6 +68,19 @@ struct FoldBin {
     phase_deg: f64,
     count: usize,
     on_bin: bool,
+}
+
+#[allow(non_local_definitions, unexpected_cfgs)]
+#[derive(npyz::Serialize, npyz::Deserialize, npyz::AutoSerialize, Clone, Copy)]
+struct FoldProfileRow {
+    bin: u32,
+    phase: f64,
+    amp: f64,
+    real: f64,
+    imag: f64,
+    phase_deg: f64,
+    count: u32,
+    on_bin: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -164,11 +180,7 @@ fn parse_f64(value: &str, key: &str) -> Result<f64, Box<dyn Error>> {
         .map_err(|_| format!("Error: invalid value '{}' for {}.", value, key).into())
 }
 
-fn parse_datetime_or_mjd(
-    value: &str,
-    allow_mjd: bool,
-    key: &str,
-) -> Result<f64, Box<dyn Error>> {
+fn parse_datetime_or_mjd(value: &str, allow_mjd: bool, key: &str) -> Result<f64, Box<dyn Error>> {
     if let Some(unix) = parse_datetime_to_unix_sec(value) {
         return Ok(unix);
     }
@@ -324,18 +336,15 @@ fn apply_key_value(
             state.source_dec_override_rad = Some(v);
         }
         _ => {
-            return Err(format!(
-                "Error: unknown --folding key '{}'.",
-                key
-            )
-            .into());
+            return Err(format!("Error: unknown --folding key '{}'.", key).into());
         }
     }
     Ok(())
 }
 
 fn parse_ephemeris_file(path: &Path, state: &mut FoldingParseState) -> Result<(), Box<dyn Error>> {
-    let file = File::open(path).map_err(|e| format!("Error opening ephemeris file {:?}: {}", path, e))?;
+    let file =
+        File::open(path).map_err(|e| format!("Error opening ephemeris file {:?}: {}", path, e))?;
     let reader = BufReader::new(file);
     for line in reader.lines() {
         let line = line?;
@@ -684,7 +693,11 @@ fn ecef_to_equatorial_km(ecef_km: &Vector3<f64>, jd: f64) -> Vector3<f64> {
     rot * ecef_km
 }
 
-fn barycentric_delay_sec(obs_unix_sec: f64, observer_ecef_m: [f64; 3], src_hat: &Vector3<f64>) -> f64 {
+fn barycentric_delay_sec(
+    obs_unix_sec: f64,
+    observer_ecef_m: [f64; 3],
+    src_hat: &Vector3<f64>,
+) -> f64 {
     let jd = unix_to_julian_day(obs_unix_sec);
     let earth_helio_eq = earth_heliocentric_equatorial_km(jd);
     let observer_ecef_km = Vector3::new(
@@ -726,8 +739,7 @@ fn orbital_delay_sec(obs_unix_sec: f64, orbital: &OrbitalEphemeris) -> f64 {
         let sin_w = orbital.omega_rad.sin();
         let cos_w = orbital.omega_rad.cos();
         let fac = (1.0 - orbital.ecc * orbital.ecc).sqrt();
-        return orbital.a1_sec
-            * (sin_w * (e.cos() - orbital.ecc) + fac * cos_w * e.sin());
+        return orbital.a1_sec * (sin_w * (e.cos() - orbital.ecc) + fac * cos_w * e.sin());
     }
 
     0.0
@@ -766,8 +778,7 @@ pub fn run_folding_analysis(
         );
     }
 
-    let file = File::open(input_path)?;
-    let mmap = unsafe { Mmap::map(&file)? };
+    let (mmap, _temp_input_guard) = open_input_mmap(input_path)?;
     let mut cursor = Cursor::new(&mmap[..]);
     let header = parse_header(&mut cursor)?;
 
@@ -932,11 +943,13 @@ pub fn run_folding_analysis(
         let vis = coherent_sum / coherent_count as f32;
         // Use sector index + effective integration to preserve sub-second timing.
         // .cor sector headers typically store integer seconds, which is too coarse for pulsar folding.
-        let mut corrected_time_unix =
-            first_sector_unix + sector_idx as f64 * effective_integ_time as f64 + 0.5 * effective_integ_time as f64;
+        let mut corrected_time_unix = first_sector_unix
+            + sector_idx as f64 * effective_integ_time as f64
+            + 0.5 * effective_integ_time as f64;
 
         if cfg.spin.use_barycentric {
-            let bary_delay = barycentric_delay_sec(corrected_time_unix, observer_mid_ecef_m, &src_hat);
+            let bary_delay =
+                barycentric_delay_sec(corrected_time_unix, observer_mid_ecef_m, &src_hat);
             corrected_time_unix += bary_delay;
             update_minmax(&mut bary_delay_minmax, bary_delay);
         }
@@ -953,8 +966,8 @@ pub fn run_folding_analysis(
             phase_epoch_unix_sec = Some(corrected_time_unix);
         }
         let phase_epoch = phase_epoch_unix_sec.unwrap_or(corrected_time_unix);
-        let phase =
-            (spin_phase_cycles(corrected_time_unix, &cfg.spin, phase_epoch) + cfg.phase0).rem_euclid(1.0);
+        let phase = (spin_phase_cycles(corrected_time_unix, &cfg.spin, phase_epoch) + cfg.phase0)
+            .rem_euclid(1.0);
         let bin_idx = ((phase * cfg.bins as f64).floor() as usize).min(cfg.bins - 1);
 
         bin_sum[bin_idx] += Complex::<f64>::new(vis.re as f64, vis.im as f64);
@@ -1010,9 +1023,11 @@ pub fn run_folding_analysis(
         off_amps.iter().sum::<f64>() / off_amps.len() as f64
     };
     let off_std = if off_amps.len() > 1 {
-        let var =
-            off_amps.iter().map(|v| (v - off_mean) * (v - off_mean)).sum::<f64>()
-                / (off_amps.len() - 1) as f64;
+        let var = off_amps
+            .iter()
+            .map(|v| (v - off_mean) * (v - off_mean))
+            .sum::<f64>()
+            / (off_amps.len() - 1) as f64;
         var.sqrt()
     } else {
         0.0
@@ -1026,31 +1041,24 @@ pub fn run_folding_analysis(
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let output_dir = parent_dir.join("frinZ").join("folding");
     fs::create_dir_all(&output_dir)?;
-    let stem = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("folding");
+    let stem = output_stem_from_path(input_path).unwrap_or_else(|_| "folding".to_string());
 
-    let profile_path = output_dir.join(format!("{stem}_folding_profile.tsv"));
-    let mut profile_file = File::create(&profile_path)?;
-    writeln!(
-        profile_file,
-        "bin\tphase\tamp\treal\timag\tphase_deg\tcount\ton_bin"
-    )?;
-    for (idx, bin) in profile.iter().enumerate() {
-        writeln!(
-            profile_file,
-            "{}\t{:.9}\t{:.9}\t{:.9}\t{:.9}\t{:.6}\t{}\t{}",
-            idx,
-            bin.phase_center,
-            bin.amp,
-            bin.mean_complex.re,
-            bin.mean_complex.im,
-            bin.phase_deg,
-            bin.count,
-            if bin.on_bin { 1 } else { 0 }
-        )?;
-    }
+    let profile_path = output_dir.join(format!("{stem}_folding_profile.npy"));
+    let profile_rows: Vec<FoldProfileRow> = profile
+        .iter()
+        .enumerate()
+        .map(|(idx, bin)| FoldProfileRow {
+            bin: idx as u32,
+            phase: bin.phase_center,
+            amp: bin.amp,
+            real: bin.mean_complex.re,
+            imag: bin.mean_complex.im,
+            phase_deg: bin.phase_deg,
+            count: bin.count as u32,
+            on_bin: if bin.on_bin { 1 } else { 0 },
+        })
+        .collect();
+    npy(&profile_path, &profile_rows)?;
 
     let profile_png_path = output_dir.join(format!("{stem}_folding_profile.png"));
     plot_folding_profile(
@@ -1064,8 +1072,16 @@ pub fn run_folding_analysis(
 
     let summary_path = output_dir.join(format!("{stem}_folding_summary.txt"));
     let mut summary_file = File::create(&summary_path)?;
-    writeln!(summary_file, "input                 : {}", input_path.display())?;
-    writeln!(summary_file, "source                : {}", header.source_name.trim())?;
+    writeln!(
+        summary_file,
+        "input                 : {}",
+        input_path.display()
+    )?;
+    writeln!(
+        summary_file,
+        "source                : {}",
+        header.source_name.trim()
+    )?;
     writeln!(
         summary_file,
         "station pair          : {}-{}",
@@ -1077,7 +1093,11 @@ pub fn run_folding_analysis(
         "obs frequency [MHz]   : {:.6}",
         header.observing_frequency / 1e6
     )?;
-    writeln!(summary_file, "period [s]            : {:.9}", cfg.spin.period_sec)?;
+    writeln!(
+        summary_file,
+        "period [s]            : {:.9}",
+        cfg.spin.period_sec
+    )?;
     writeln!(
         summary_file,
         "period dot [s/s]      : {:.6e}",
@@ -1089,7 +1109,11 @@ pub fn run_folding_analysis(
     writeln!(
         summary_file,
         "barycentric correction: {}",
-        if cfg.spin.use_barycentric { "on" } else { "off" }
+        if cfg.spin.use_barycentric {
+            "on"
+        } else {
+            "off"
+        }
     )?;
     writeln!(
         summary_file,
@@ -1100,10 +1124,18 @@ pub fn run_folding_analysis(
         writeln!(summary_file, "ephemeris file        : {}", path.display())?;
     }
     if let Some((mn, mx)) = bary_delay_minmax {
-        writeln!(summary_file, "bary delay [s] min/max: {:+.9} / {:+.9}", mn, mx)?;
+        writeln!(
+            summary_file,
+            "bary delay [s] min/max: {:+.9} / {:+.9}",
+            mn, mx
+        )?;
     }
     if let Some((mn, mx)) = orbital_delay_minmax {
-        writeln!(summary_file, "orb delay [s] min/max : {:+.9} / {:+.9}", mn, mx)?;
+        writeln!(
+            summary_file,
+            "orb delay [s] min/max : {:+.9} / {:+.9}",
+            mn, mx
+        )?;
     }
     if let Some(orb) = &cfg.spin.orbital {
         writeln!(summary_file, "orb pb [s]            : {:.9}", orb.pb_sec)?;
@@ -1133,7 +1165,11 @@ pub fn run_folding_analysis(
         end_sector.saturating_sub(start_sector)
     )?;
     writeln!(summary_file, "used samples          : {}", used_samples)?;
-    writeln!(summary_file, "skipped by time flag  : {}", skipped_time_flag)?;
+    writeln!(
+        summary_file,
+        "skipped by time flag  : {}",
+        skipped_time_flag
+    )?;
     writeln!(summary_file, "skipped empty/invalid : {}", skipped_empty)?;
     if let Some(t) = first_obs_time {
         writeln!(summary_file, "first epoch (UTC)     : {}", t)?;
@@ -1168,7 +1204,11 @@ pub fn run_folding_analysis(
     writeln!(summary_file, "off mean              : {:.9}", off_mean)?;
     writeln!(summary_file, "off std               : {:.9}", off_std)?;
     writeln!(summary_file, "fold SNR              : {:.6}", snr)?;
-    writeln!(summary_file, "profile png           : {}", profile_png_path.display())?;
+    writeln!(
+        summary_file,
+        "profile png           : {}",
+        profile_png_path.display()
+    )?;
 
     println!("Running folding analysis...");
     println!("  Input: {}", input_path.display());
@@ -1177,7 +1217,11 @@ pub fn run_folding_analysis(
     println!("  Bins: {}", cfg.bins);
     println!(
         "  Barycentric correction: {}",
-        if cfg.spin.use_barycentric { "on" } else { "off" }
+        if cfg.spin.use_barycentric {
+            "on"
+        } else {
+            "off"
+        }
     );
     println!(
         "  Orbital correction: {}",
@@ -1207,7 +1251,7 @@ pub fn run_folding_analysis(
         profile[peak_idx].phase_center, peak_amp, snr
     );
     println!("  Fold profile PNG: {}", profile_png_path.display());
-    println!("  Fold profile TSV: {}", profile_path.display());
+    println!("  Fold profile NPY: {}", profile_path.display());
     println!("  Summary: {}", summary_path.display());
 
     Ok(())

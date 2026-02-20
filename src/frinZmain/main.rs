@@ -2,7 +2,7 @@
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::error::Error;
 use std::fs;
-use std::io::{self, Cursor, Read, Write};
+use std::io::{self, Cursor, Write};
 use std::process::exit;
 
 use chrono::{DateTime, Utc};
@@ -19,9 +19,10 @@ mod search;
 //mod error;
 mod fft;
 mod fitting;
+mod folding;
 mod frmap;
 mod header;
-mod folding;
+mod input_support;
 #[path = "inbeamVLBI.rs"]
 mod inbeam_vlbi;
 
@@ -38,16 +39,17 @@ mod raw_visibility;
 mod read;
 mod rfi;
 mod uptimeplot;
-mod uv;
 mod utils;
+mod uv;
 
 use crate::args::{check_memory_usage, Args};
 use crate::bispectrum::run_closure_phase_analysis;
 use crate::earth_rotation_imaging::{
     parse_imaging_cli_options, perform_imaging, run_earth_rotation_imaging, Visibility,
 };
-use crate::frmap::run_fringe_rate_map_analysis;
 use crate::folding::run_folding_analysis;
+use crate::frmap::run_fringe_rate_map_analysis;
+use crate::input_support::{output_stem_from_path, read_input_bytes};
 use crate::inbeam_vlbi::run_inbeam_vlbi_analysis;
 use crate::maser::run_maser_analysis;
 use crate::multisideband::run_multisideband_analysis;
@@ -208,20 +210,21 @@ fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("Error creating output directory {:?}: {}", output_dir, e);
             exit(1);
         }
-        let base_filename = input_path.file_stem().unwrap().to_str().unwrap();
-
-        let mut file = match fs::File::open(input_path) {
-            Ok(f) => f,
+        let base_filename = match output_stem_from_path(input_path) {
+            Ok(stem) => stem,
             Err(e) => {
-                eprintln!("Error opening input file {:?}: {}", input_path, e);
+                eprintln!("Error resolving input stem {:?}: {}", input_path, e);
                 exit(1);
             }
         };
-        let mut buffer = Vec::new();
-        if let Err(e) = file.read_to_end(&mut buffer) {
+
+        let buffer = match read_input_bytes(input_path) {
+            Ok(buf) => buf,
+            Err(e) => {
             eprintln!("Error reading input file {:?}: {}", input_path, e);
             exit(1);
-        }
+            }
+        };
         let mut cursor = Cursor::new(buffer.as_slice());
 
         let header = match crate::header::parse_header(&mut cursor) {
@@ -605,7 +608,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         if !check_memory_usage(&args, input_path)? {
             exit(0);
         }
-        let result = process_cor_file(input_path, &args, &time_flag_ranges, &pp_flag_ranges, false)?;
+        let result =
+            process_cor_file(input_path, &args, &time_flag_ranges, &pp_flag_ranges, false)?;
         let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
         let frinz_dir = parent_dir.join("frinZ");
         write_cumulate_outputs(&args, &result, &frinz_dir)?;

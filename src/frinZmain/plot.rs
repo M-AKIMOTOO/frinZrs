@@ -4,12 +4,12 @@
 // - delay/rate/frequency planes and diagnostics
 // - UV-related plots
 // - multi-sideband summary plot (merged from former plot_msb.rs)
-use crate::png_compress::{compress_png, compress_png_with_mode, CompressQuality};
-use crate::utils::safe_arg;
 use crate::args::Args;
 use crate::output;
 use crate::output::generate_output_names;
+use crate::png_compress::{compress_png, compress_png_with_mode, CompressQuality};
 use crate::processing::ProcessResult;
+use crate::utils::safe_arg;
 use chrono::{DateTime, TimeZone, Utc};
 use ndarray::Array2; // Added for dynamic spectrum
 use num_complex::Complex;
@@ -74,9 +74,7 @@ pub fn delay_plane(
             )
         };
 
-    let (rate_line_min, rate_line_max, heatmap_rate_min, heatmap_rate_max) = if rrange
-        .is_empty()
-    {
+    let (rate_line_min, rate_line_max, heatmap_rate_min, heatmap_rate_max) = if rrange.is_empty() {
         let rate_min_x = rate_profile
             .iter()
             .map(|(x, _)| *x)
@@ -146,7 +144,8 @@ pub fn delay_plane(
         for xi in 0..resolution_x {
             for yi in 0..resolution_y {
                 let x = heatmap_delay_min
-                    + (heatmap_delay_max - heatmap_delay_min) * xi as f64 / (resolution_x - 1) as f64;
+                    + (heatmap_delay_max - heatmap_delay_min) * xi as f64
+                        / (resolution_x - 1) as f64;
                 let y = heatmap_rate_min
                     + (heatmap_rate_max - heatmap_rate_min) * yi as f64 / (resolution_y - 1) as f64;
                 let val = heatmap_func(x, y);
@@ -318,7 +317,8 @@ pub fn delay_plane(
     for xi in 0..resolution_x {
         for yi in 0..resolution_y {
             let x = delay_min + (delay_max_hm - delay_min) * xi as f64 / (resolution_x - 1) as f64;
-            let y = rate_min_hm + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution_y - 1) as f64;
+            let y =
+                rate_min_hm + (rate_max_hm - rate_min_hm) * yi as f64 / (resolution_y - 1) as f64;
             let val = heatmap_func(x, y);
             let normalized_val = if amplitude_norm > 0.0 {
                 (val / amplitude_norm).clamp(0.0, 1.0)
@@ -380,7 +380,7 @@ pub fn delay_plane(
         ))?;
         y += 35;
     }
-    
+
     root.present()?;
     compress_png_with_mode(output_path, CompressQuality::High);
     Ok(())
@@ -397,6 +397,8 @@ pub fn frequency_plane(
     bw: f64,
     max_amplitude: f64,
     frange: &[f32],
+    heatmap_res_x: usize,
+    heatmap_res_y: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let width = 1400;
     let height = 1000;
@@ -530,9 +532,7 @@ pub fn frequency_plane(
     rate_chart.draw_series(LineSeries::new(
         rate_profile
             .iter()
-            .filter(|(x, y)| {
-                *x >= rate_min_x && *x <= rate_max_x && x.is_finite() && y.is_finite()
-            })
+            .filter(|(x, y)| *x >= rate_min_x && *x <= rate_max_x && x.is_finite() && y.is_finite())
             .cloned(),
         GREEN.stroke_width(1),
     ))?;
@@ -564,13 +564,14 @@ pub fn frequency_plane(
         .label_style(("sans-serif ", 30))
         .draw()?;
 
-    let resolution = 500;
+    let resolution_x = heatmap_res_x.max(2);
+    let resolution_y = heatmap_res_y.max(2);
     let mut heatmap_values = Vec::new();
     let mut heatmap_data_max_val = f64::NEG_INFINITY;
-    for i in 0..resolution {
-        for j in 0..resolution {
-            let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / (resolution - 1) as f64;
-            let x = 0.0 + bw * j as f64 / (resolution - 1) as f64;
+    for i in 0..resolution_y {
+        for j in 0..resolution_x {
+            let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / (resolution_y - 1) as f64;
+            let x = 0.0 + bw * j as f64 / (resolution_x - 1) as f64;
             let val = heatmap_func(x, y);
             heatmap_values.push(val);
             if val > heatmap_data_max_val {
@@ -580,12 +581,12 @@ pub fn frequency_plane(
     }
 
     for (idx, val) in heatmap_values.iter().enumerate() {
-        let i = idx / resolution;
-        let j = idx % resolution;
-        let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / (resolution - 1) as f64;
-        let x = 0.0 + bw * j as f64 / (resolution - 1) as f64;
-        let x_step = bw / (resolution - 1) as f64;
-        let y_step = (rate_max_x - rate_min_x) / (resolution - 1) as f64;
+        let i = idx / resolution_x;
+        let j = idx % resolution_x;
+        let y = rate_min_x + (rate_max_x - rate_min_x) * i as f64 / (resolution_y - 1) as f64;
+        let x = 0.0 + bw * j as f64 / (resolution_x - 1) as f64;
+        let x_step = bw / (resolution_x - 1) as f64;
+        let y_step = (rate_max_x - rate_min_x) / (resolution_y - 1) as f64;
         let normalized_val = if heatmap_data_max_val > 0.0 {
             *val / heatmap_data_max_val
         } else {
@@ -648,6 +649,91 @@ pub fn frequency_plane(
 
     root.present()?;
     compress_png_with_mode(output_path, CompressQuality::High);
+    Ok(())
+}
+
+pub fn plot_bandpass_spectrum(
+    output_path: &str,
+    spectrum: &[Complex<f32>],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if spectrum.is_empty() {
+        return Ok(());
+    }
+
+    let width = 933;
+    let height = 600;
+    let root = BitMapBackend::new(output_path, (width, height)).into_drawing_area();
+    root.fill(&WHITE)?;
+    // Vertical layout ratio: phase:amplitude = 1:2
+    let (upper, lower) = root.split_vertically(height / 3);
+
+    let amp_points: Vec<(f64, f64)> = spectrum
+        .iter()
+        .enumerate()
+        .map(|(i, z)| (i as f64, z.norm() as f64))
+        .collect();
+    let phase_points: Vec<(f64, f64)> = spectrum
+        .iter()
+        .enumerate()
+        .map(|(i, z)| (i as f64, safe_arg(z).to_degrees() as f64))
+        .collect();
+
+    let x_max = if spectrum.len() > 1 {
+        (spectrum.len() - 1) as f64
+    } else {
+        1.0
+    };
+    let amp_max = amp_points
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(0.0f64, f64::max)
+        .max(1e-12)
+        * 1.1;
+
+    let mut phase_chart = ChartBuilder::on(&upper)
+        .margin_top(20)
+        .margin_left(20)
+        .margin_right(20)
+        .margin_bottom(6)
+        .x_label_area_size(0)
+        .y_label_area_size(80)
+        .build_cartesian_2d(0.0..x_max, -180.0..180.0)?;
+    phase_chart
+        .configure_mesh()
+        .y_desc("Phase [deg]")
+        .x_labels(0)
+        .y_labels(7)
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
+        .label_style(("sans-serif", 24))
+        .y_label_formatter(&|v| format!("{:.0}", v))
+        .draw()?;
+    phase_chart.draw_series(LineSeries::new(phase_points, RED.stroke_width(1)))?;
+
+    let mut amp_chart = ChartBuilder::on(&lower)
+        .margin_top(6)
+        .margin_left(20)
+        .margin_right(20)
+        .margin_bottom(20)
+        .x_label_area_size(60)
+        .y_label_area_size(80)
+        .build_cartesian_2d(0.0..x_max, 0.0..amp_max)?;
+    amp_chart
+        .configure_mesh()
+        .x_desc("Channel")
+        .y_desc("Amplitude")
+        .x_labels(10)
+        .y_labels(8)
+        .x_max_light_lines(0)
+        .y_max_light_lines(0)
+        .label_style(("sans-serif", 24))
+        .x_label_formatter(&|v| format!("{:.0}", v))
+        .y_label_formatter(&|v| format!("{:.1}", v))
+        .draw()?;
+    amp_chart.draw_series(LineSeries::new(amp_points, RED.stroke_width(1)))?;
+
+    root.present()?;
+    compress_png_with_mode(output_path, CompressQuality::Low);
     Ok(())
 }
 
@@ -970,7 +1056,13 @@ pub fn cumulate_plot(
         let ln_y: Vec<f64> = cumulate_snr
             .iter()
             .zip(cumulate_len.iter())
-            .filter_map(|(&y, &x)| if x > 0.0 && y > 0.0 { Some((y as f64).ln()) } else { None })
+            .filter_map(|(&y, &x)| {
+                if x > 0.0 && y > 0.0 {
+                    Some((y as f64).ln())
+                } else {
+                    None
+                }
+            })
             .collect();
         if ln_x.len() == ln_y.len() && ln_x.len() >= 2 {
             let n = ln_x.len() as f64;
@@ -999,7 +1091,9 @@ pub fn cumulate_plot(
                     }),
                     &RED,
                 );
-                chart.draw_series(fit_series)?.label(format!("fit: y = {:.2e} x^{:.3}", a_fit, b_fit));
+                chart
+                    .draw_series(fit_series)?
+                    .label(format!("fit: y = {:.2e} x^{:.3}", a_fit, b_fit));
 
                 // Reference line with b = 0.5, forced to pass the first point
                 let a_ref = (cumulate_snr[0] as f64) / (cumulate_len[0] as f64).powf(0.5);
@@ -1012,7 +1106,9 @@ pub fn cumulate_plot(
                     }),
                     &BLUE,
                 );
-                chart.draw_series(ref_series)?.label(format!("b=0.5: y = {:.2e} x^{:.1}", a_ref, 0.5));
+                chart
+                    .draw_series(ref_series)?
+                    .label(format!("b=0.5: y = {:.2e} x^{:.1}", a_ref, 0.5));
 
                 chart
                     .configure_series_labels()
@@ -1293,6 +1389,7 @@ pub fn plot_acel_search_result<P: AsRef<Path>>(
         .y_labels(10)
         .x_max_light_lines(0)
         .y_max_light_lines(0)
+        .light_line_style(&TRANSPARENT)
         .label_style(("sans-serif", 20).into_font())
         .draw()?;
 

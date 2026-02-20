@@ -14,19 +14,20 @@ use crate::args::Args;
 use crate::bandpass::{
     apply_bandpass_correction, read_bandpass_file, write_complex_spectrum_binary,
 };
-use crate::search;
 use crate::fft::{self, process_fft, process_ifft};
 use crate::header::{parse_header, CorHeader};
+use crate::input_support::{open_input_mmap, output_stem_from_path};
 use crate::output::{
     format_delay_output, format_freq_output, generate_output_names, output_header_info,
 };
 use crate::plot::{
-    delay_plane, frequency_plane, plot_dynamic_spectrum_freq, plot_dynamic_spectrum_lag,
+    delay_plane, frequency_plane, plot_bandpass_spectrum, plot_dynamic_spectrum_freq,
+    plot_dynamic_spectrum_lag,
 };
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
+use crate::search;
 use crate::utils::{parse_flag_time, safe_arg};
-use memmap2::Mmap;
 
 type C32 = Complex<f32>;
 
@@ -113,7 +114,10 @@ fn parse_scan_correct_file(path: &Path) -> Result<Vec<ScanCorrection>, Box<dyn E
     Ok(corrections)
 }
 
-fn find_correction_for_time(corrections: &[ScanCorrection], time: &DateTime<Utc>) -> Option<(f32, f32)> {
+fn find_correction_for_time(
+    corrections: &[ScanCorrection],
+    time: &DateTime<Utc>,
+) -> Option<(f32, f32)> {
     for corr in corrections {
         if *time >= corr.start_time && *time < corr.end_time {
             return Some((corr.delay, corr.rate));
@@ -213,6 +217,8 @@ pub fn process_cor_file(
     pp_flag_ranges: &[(u32, u32)],
     suppress_output: bool,
 ) -> Result<ProcessResult, Box<dyn Error>> {
+    let suppress_fringe_output = suppress_output || args.spectrum || args.bandpass_table;
+
     // --- File and Path Setup ---
     let parent_dir = input_path.parent().unwrap_or_else(|| Path::new(""));
     let frinz_dir = if args.in_beam {
@@ -222,7 +228,7 @@ pub fn process_cor_file(
     };
     fs::create_dir_all(&frinz_dir)?;
 
-    let basename = input_path.file_stem().unwrap().to_str().unwrap();
+    let basename = output_stem_from_path(input_path)?;
     let basename_for_output = if args.in_beam {
         format!("{}_inbeam", basename)
     } else {
@@ -247,16 +253,15 @@ pub fn process_cor_file(
         plot_path = Some(path);
     }
 
-    let mut output_path: Option<PathBuf> = None;
-    if args.output {
+    let output_path: Option<PathBuf> = {
         let path = if args.in_beam {
             frinz_dir.clone()
         } else {
             frinz_dir.join("fringe_output")
         };
         fs::create_dir_all(&path)?;
-        output_path = Some(path);
-    }
+        Some(path)
+    };
 
     let mut bandpass_output_path: Option<PathBuf> = None;
     if args.bandpass_table {
@@ -295,8 +300,7 @@ pub fn process_cor_file(
     }
 
     // --- Read .cor File ---
-    let file = File::open(input_path)?;
-    let mmap = unsafe { Mmap::map(&file)? };
+    let (mmap, _temp_input_guard) = open_input_mmap(input_path)?;
     let mut cursor = Cursor::new(&mmap[..]);
 
     // --- Parse Header ---
@@ -372,11 +376,12 @@ pub fn process_cor_file(
         }
     }
 
-    let bandpass_active = bandpass_data
-        .as_ref()
-        .map_or(false, |bp| !bp.is_empty());
+    let bandpass_active = bandpass_data.as_ref().map_or(false, |bp| !bp.is_empty());
     if args.bandpass.is_some() {
-        println!("#Bandpass applied: {}", if bandpass_active { "True" } else { "False" });
+        println!(
+            "#Bandpass applied: {}",
+            if bandpass_active { "True" } else { "False" }
+        );
     }
 
     let mut processing_header = header.clone();
@@ -713,30 +718,41 @@ pub fn process_cor_file(
 
         if args.spectrum {
             if let Some(path) = &spectrum_output_path {
-                let output_file_path = path.join(format!("{}_cross.spec", base_filename));
+                let spectrum = analysis_results.freq_rate_spectrum.to_vec();
+                let output_stem_path = path.join(format!("{}_spect", base_filename));
+                let output_file_path = output_stem_path.with_extension("npy");
                 write_complex_spectrum_binary(
                     &output_file_path,
-                    &analysis_results.freq_rate_spectrum.to_vec(),
+                    &spectrum,
                     effective_fft_point,
                     1,
                 )?;
+                let output_png_path = output_stem_path.with_extension("png");
+                plot_bandpass_spectrum(output_png_path.to_str().unwrap(), &spectrum)?;
                 println!(
-                    "Cross-power spectrum file written to {:?}",
-                    output_file_path
+                    "Cross-power spectrum NPY/PNG written to \"{}.npy/.png\"",
+                    output_stem_path.display()
                 );
             }
         }
 
         if args.bandpass_table {
             if let Some(path) = &bandpass_output_path {
-                let output_file_path = path.join(format!("{}_bptable.bin", base_filename));
+                let spectrum = analysis_results.freq_rate_spectrum.to_vec();
+                let output_stem_path = path.join(format!("{}_bptable", base_filename));
+                let output_file_path = output_stem_path.with_extension("npy");
                 write_complex_spectrum_binary(
                     &output_file_path,
-                    &analysis_results.freq_rate_spectrum.to_vec(),
+                    &spectrum,
                     effective_fft_point,
                     0,
                 )?;
-                println!("Bandpass binary file written to {:?}", output_file_path);
+                let output_png_path = output_stem_path.with_extension("png");
+                plot_bandpass_spectrum(output_png_path.to_str().unwrap(), &spectrum)?;
+                println!(
+                    "Bandpass spectrum NPY/PNG written to \"{}.npy/.png\"",
+                    output_stem_path.display()
+                );
             }
         }
 
@@ -810,7 +826,7 @@ pub fn process_cor_file(
             if l1 == 0 {
                 let station1_label = format!("{}-azel", header.station1_name.trim());
                 let station2_label = format!("{}-azel", header.station2_name.trim());
-                    let header_str = format!(
+                let header_str = format!(
                         concat!(
                             "#******************************************************************************************************************************************************************************************************************\n",
                             "#      Epoch        Label    Source     Length    Amp      SNR     Phase     Noise-level      Res-Delay     Res-Rate            {:<10}              {:<10}             MJD        RFI        BP       \n",
@@ -820,12 +836,12 @@ pub fn process_cor_file(
                         station1_label,
                         station2_label
                     );
-                if !suppress_output {
+                if !suppress_fringe_output {
                     print!("{}\n", header_str);
                 }
                 delay_output_str += &format!("{}\n", header_str);
             }
-            if !suppress_output {
+            if !suppress_fringe_output {
                 print!("{}\n", delay_output_line);
             }
             delay_output_str += &format!("{}\n", delay_output_line);
@@ -851,7 +867,7 @@ pub fn process_cor_file(
                 add_plot_res_rate.push(analysis_results.residual_rate);
             }
 
-            if l1 == loop_count - 1 && args.output {
+            if l1 == loop_count - 1 {
                 if let Some(path) = &output_path {
                     let length_label = if args.length == 0 {
                         "0".to_string()
@@ -901,17 +917,17 @@ pub fn process_cor_file(
                     station1_label,
                     station2_label
                 );
-                if !suppress_output {
+                if !suppress_fringe_output {
                     print!("{}\n", header_str);
                 }
                 freq_output_str += &format!("{}\n", header_str);
             }
-            if !suppress_output {
+            if !suppress_fringe_output {
                 print!("{}\n", freq_output_line);
             }
             freq_output_str += &format!("{}\n", freq_output_line);
 
-            if l1 == loop_count - 1 && args.output {
+            if l1 == loop_count - 1 {
                 if let Some(path) = &output_path {
                     let length_label = if args.length == 0 {
                         "0".to_string()
@@ -1063,13 +1079,13 @@ pub fn process_cor_file(
                             plot_rrange[0].max(plot_rrange[1]) as f64,
                         )
                     } else {
-                        let rate_low = if (-8.0 / analysis_results.length_f32 as f64)
-                            < rate_data[0] as f64
-                        {
-                            rate_data[0] as f64 * effective_integ_time as f64
-                        } else {
-                            -4.0 / (analysis_results.length_f32 as f64 * effective_integ_time as f64)
-                        };
+                        let rate_low =
+                            if (-8.0 / analysis_results.length_f32 as f64) < rate_data[0] as f64 {
+                                rate_data[0] as f64 * effective_integ_time as f64
+                            } else {
+                                -4.0 / (analysis_results.length_f32 as f64
+                                    * effective_integ_time as f64)
+                            };
                         let rate_high = if (8.0 / analysis_results.length_f32 as f64)
                             > *rate_data.last().unwrap_or(&rate_data[0]) as f64
                         {
@@ -1117,10 +1133,16 @@ pub fn process_cor_file(
                         .copied()
                         .unwrap_or_else(|| rows.saturating_sub(1) as usize);
 
-                    let window_delay_bins = x_end.saturating_sub(x_start) + 1;
-                    let window_rate_bins = y_end.saturating_sub(y_start) + 1;
-                    let heatmap_res_x = window_delay_bins.saturating_mul(3).max(3);
-                    let heatmap_res_y = window_rate_bins.saturating_mul(3).max(3);
+                    let (heatmap_res_x, heatmap_res_y) = if args.in_beam {
+                        // In in-beam mode, draw with 3x the native array dimensions.
+                        (
+                            (cols as usize).saturating_mul(3).max(3),
+                            (rows as usize).saturating_mul(3).max(3),
+                        )
+                    } else {
+                        // In normal time-domain plot mode, use a fixed rendering resolution.
+                        (1500, 1500)
+                    };
 
                     let x_span = (x_end.saturating_sub(x_start)).max(1) as f64;
                     let y_span = (y_end.saturating_sub(y_start)).max(1) as f64;
@@ -1131,12 +1153,8 @@ pub fn process_cor_file(
                         let r_max = rate_plot_max;
                         let d_den = (d_max - d_min).abs().max(1e-12);
                         let r_den = (r_max - r_min).abs().max(1e-12);
-                        let x_img = ((delay - d_min) / d_den * x_span)
-                            .max(0.0)
-                            .min(x_span);
-                        let y_img = ((rate - r_min) / r_den * y_span)
-                            .max(0.0)
-                            .min(y_span);
+                        let x_img = ((delay - d_min) / d_den * x_span).max(0.0).min(x_span);
+                        let y_img = ((rate - r_min) / r_den * y_span).max(0.0).min(y_span);
                         let x_floor = x_img.floor() as usize;
                         let y_floor = y_img.floor() as usize;
                         let x_ceil = (x_img.ceil() as usize).min(x_span as usize);
@@ -1359,6 +1377,8 @@ pub fn process_cor_file(
                         bw as f64,
                         max_norm_freq as f64,
                         &args.frange,
+                        freq_rate_array.shape()[0],
+                        freq_rate_array.shape()[1],
                     )?;
                 }
             }

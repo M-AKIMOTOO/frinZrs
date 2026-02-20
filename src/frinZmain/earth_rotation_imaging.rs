@@ -4,15 +4,15 @@
 
 use crate::args::Args;
 use crate::bandpass::read_bandpass_file;
-use crate::search;
 use crate::fft::apply_phase_correction;
 use crate::header::{parse_header, CorHeader};
+use crate::input_support::{open_input_mmap, output_stem_from_path};
 use crate::processing::run_analysis_pipeline;
 use crate::read::read_visibility_data;
 use crate::rfi::parse_rfi_ranges;
+use crate::search;
 use crate::utils;
 use chrono::{DateTime, Utc};
-use memmap2::Mmap;
 use plotters::prelude::*;
 use rustfft::{
     num_complex::{Complex, Complex32},
@@ -23,7 +23,6 @@ use serde_json::to_string_pretty;
 use std::error::Error;
 use std::f64::consts::PI;
 use std::fs;
-use std::fs::File;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
@@ -815,10 +814,7 @@ pub fn run_earth_rotation_imaging(
     let result = perform_imaging_with_config(&visibilities, &config)?;
 
     let output_dir = prepare_imaging_output_dir(input_path)?;
-    let base_name = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("imaging");
+    let base_name = output_stem_from_path(input_path).unwrap_or_else(|_| "imaging".to_string());
 
     let dirty_path = output_dir.join(format!("{}_dirty.png", base_name));
     render_scalar_field_plot(
@@ -908,8 +904,7 @@ fn collect_visibilities_from_cor(
     time_flag_ranges: &[(DateTime<Utc>, DateTime<Utc>)],
     pp_flag_ranges: &[(u32, u32)],
 ) -> Result<(Vec<Visibility>, CorHeader, f64), Box<dyn Error>> {
-    let file = File::open(input_path)?;
-    let mmap = unsafe { Mmap::map(&file)? };
+    let (mmap, _temp_input_guard) = open_input_mmap(input_path)?;
     let mut cursor = Cursor::new(&mmap[..]);
 
     let header = parse_header(&mut cursor)?;
