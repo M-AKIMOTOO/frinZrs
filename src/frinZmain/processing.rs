@@ -785,7 +785,7 @@ pub fn process_cor_file(
                     1,
                 )?;
                 let output_png_path = output_stem_path.with_extension("png");
-                plot_bandpass_spectrum(output_png_path.to_str().unwrap(), &spectrum)?;
+                plot_bandpass_spectrum(output_png_path.to_str().unwrap(), &spectrum, false)?;
                 println!(
                     "Cross-power spectrum NPY/PNG written to \"{}.npy/.png\"",
                     output_stem_path.display()
@@ -805,7 +805,7 @@ pub fn process_cor_file(
                     0,
                 )?;
                 let output_png_path = output_stem_path.with_extension("png");
-                plot_bandpass_spectrum(output_png_path.to_str().unwrap(), &spectrum)?;
+                plot_bandpass_spectrum(output_png_path.to_str().unwrap(), &spectrum, true)?;
                 println!(
                     "Bandpass spectrum NPY/PNG written to \"{}.npy/.png\"",
                     output_stem_path.display()

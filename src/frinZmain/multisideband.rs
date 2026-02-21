@@ -551,11 +551,11 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
 
         if let Some(bp_data) = &c_band_bp_data {
             const EPSILON: f32 = 1e-9;
-            let bandpass_sum: C32 = bp_data.iter().copied().sum();
-            let bandpass_mean = bandpass_sum / bp_data.len() as f32;
+            let bandpass_mean_amp =
+                bp_data.iter().map(|bp| bp.norm()).sum::<f32>() / bp_data.len() as f32;
             for (elem, &bp_val) in c_complex_vec_sector.iter_mut().zip(bp_data.iter()) {
                 if bp_val.norm() > EPSILON {
-                    *elem = (*elem / bp_val) * bandpass_mean;
+                    *elem = (*elem / bp_val) * bandpass_mean_amp;
                 }
             }
         }
@@ -605,11 +605,11 @@ pub fn run_multisideband_analysis(args: &Args) -> Result<(), Box<dyn Error>> {
         )?;
         if let Some(bp_data) = &x_band_bp_data {
             const EPSILON: f32 = 1e-9;
-            let bandpass_sum: C32 = bp_data.iter().copied().sum();
-            let bandpass_mean = bandpass_sum / bp_data.len() as f32;
+            let bandpass_mean_amp =
+                bp_data.iter().map(|bp| bp.norm()).sum::<f32>() / bp_data.len() as f32;
             for (elem, &bp_val) in x_complex_vec_sector.iter_mut().zip(bp_data.iter()) {
                 if bp_val.norm() > EPSILON {
-                    *elem = (*elem / bp_val) * bandpass_mean;
+                    *elem = (*elem / bp_val) * bandpass_mean_amp;
                 }
             }
         }

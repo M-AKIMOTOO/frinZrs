@@ -820,10 +820,9 @@ pub fn run_folding_analysis(
     } else {
         None
     };
-    let bandpass_mean = bandpass_data.as_ref().map(|bp| {
-        let sum: C32 = bp.iter().copied().sum();
-        sum / bp.len() as f32
-    });
+    let bandpass_mean_amp = bandpass_data
+        .as_ref()
+        .map(|bp| bp.iter().map(|v| v.norm()).sum::<f32>() / bp.len() as f32);
 
     let skip_sec = args.skip.max(0) as f64;
     let mut start_sector = (skip_sec / effective_integ_time as f64).floor() as usize;
@@ -916,10 +915,10 @@ pub fn run_folding_analysis(
                 continue;
             }
             let mut sample = row[chan];
-            if let (Some(bp), Some(bp_mean)) = (&bandpass_data, bandpass_mean) {
+            if let (Some(bp), Some(bp_mean_amp)) = (&bandpass_data, bandpass_mean_amp) {
                 let bp_val = bp[chan];
                 if bp_val.norm() > BP_EPSILON {
-                    sample = (sample / bp_val) * bp_mean;
+                    sample = (sample / bp_val) * bp_mean_amp;
                 } else {
                     continue;
                 }

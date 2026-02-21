@@ -1416,16 +1416,14 @@ mod deep {
             return correction;
         }
 
-        let sum: C32 = bp_data.iter().copied().sum();
-        let mean = sum / bp_data.len() as f32;
-        let mean64 = Complex::<f64>::new(mean.re as f64, mean.im as f64);
+        let mean_amp = bp_data.iter().map(|bp| bp.norm() as f64).sum::<f64>() / bp_data.len() as f64;
 
         for ch in 0..fft_point_half.min(bp_data.len()) {
             let bp = bp_data[ch];
             let bp_norm = bp.norm() as f64;
             if bp_norm > 1e-12 {
                 let bp64 = Complex::<f64>::new(bp.re as f64, bp.im as f64);
-                correction[ch] = mean64 / bp64;
+                correction[ch] = Complex::<f64>::new(mean_amp, 0.0) / bp64;
             }
         }
         correction

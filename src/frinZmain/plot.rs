@@ -655,6 +655,7 @@ pub fn frequency_plane(
 pub fn plot_bandpass_spectrum(
     output_path: &str,
     spectrum: &[Complex<f32>],
+    show_complex_mean_overlay: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if spectrum.is_empty() {
         return Ok(());
@@ -677,6 +678,10 @@ pub fn plot_bandpass_spectrum(
         .enumerate()
         .map(|(i, z)| (i as f64, safe_arg(z).to_degrees() as f64))
         .collect();
+    let mean_complex: Complex<f32> =
+        spectrum.iter().copied().sum::<Complex<f32>>() / spectrum.len() as f32;
+    let mean_amp = spectrum.iter().map(|z| z.norm() as f64).sum::<f64>() / spectrum.len() as f64;
+    let mean_phase = safe_arg(&mean_complex).to_degrees() as f64;
 
     let x_max = if spectrum.len() > 1 {
         (spectrum.len() - 1) as f64
@@ -709,6 +714,14 @@ pub fn plot_bandpass_spectrum(
         .y_label_formatter(&|v| format!("{:.0}", v))
         .draw()?;
     phase_chart.draw_series(LineSeries::new(phase_points, RED.stroke_width(1)))?;
+    if show_complex_mean_overlay {
+        let phase_dash = horizontal_dashed_segments(0.0, x_max, mean_phase);
+        phase_chart.draw_series(
+            phase_dash
+                .into_iter()
+                .map(|seg| PathElement::new(seg, BLACK.mix(0.8).stroke_width(2))),
+        )?;
+    }
 
     let mut amp_chart = ChartBuilder::on(&lower)
         .margin_top(6)
@@ -728,13 +741,56 @@ pub fn plot_bandpass_spectrum(
         .y_max_light_lines(0)
         .label_style(("sans-serif", 24))
         .x_label_formatter(&|v| format!("{:.0}", v))
-        .y_label_formatter(&|v| format!("{:.1}", v))
+        .y_label_formatter(&|v| format!("{:.1e}", v))
         .draw()?;
     amp_chart.draw_series(LineSeries::new(amp_points, RED.stroke_width(1)))?;
+    if show_complex_mean_overlay {
+        let amp_dash = horizontal_dashed_segments(0.0, x_max, mean_amp);
+        amp_chart
+            .draw_series(
+                amp_dash
+                    .into_iter()
+                    .map(|seg| PathElement::new(seg, BLACK.mix(0.8).stroke_width(2))),
+            )?
+            .label(format!(
+                "mean amp. {:.2e} %\nmean phs. {:+.2} deg",
+                mean_amp, mean_phase
+            ))
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 18, y)], BLACK.stroke_width(2)));
+        amp_chart
+            .configure_series_labels()
+            .position(SeriesLabelPosition::UpperRight)
+            .border_style(BLACK)
+            .background_style(WHITE.mix(0.85))
+            .label_font(("sans-serif", 20))
+            .draw()?;
+    }
 
     root.present()?;
     compress_png_with_mode(output_path, CompressQuality::Low);
     Ok(())
+}
+
+fn horizontal_dashed_segments(x_start: f64, x_end: f64, y: f64) -> Vec<Vec<(f64, f64)>> {
+    if !(x_start.is_finite() && x_end.is_finite() && y.is_finite()) {
+        return Vec::new();
+    }
+    let (left, right) = if x_start <= x_end {
+        (x_start, x_end)
+    } else {
+        (x_end, x_start)
+    };
+    let span = (right - left).max(1.0);
+    let dash = (span / 60.0).max(1.0);
+    let gap = dash * 0.6;
+    let mut segments = Vec::new();
+    let mut x = left;
+    while x < right {
+        let x2 = (x + dash).min(right);
+        segments.push(vec![(x, y), (x2, y)]);
+        x += dash + gap;
+    }
+    segments
 }
 
 use crate::utils;
