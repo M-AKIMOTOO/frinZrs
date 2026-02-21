@@ -112,16 +112,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     // シンプルな仕様: --cumulate が指定されたら rate_padding は常に 1 にする
     if args.cumulate != 0 {
         args.rate_padding = 1;
-    } else if args.primary_search_mode() == Some("deep") && !rate_padding_explicit {
-        if args.rate_padding != 4 {
+    } else if matches!(
+        args.primary_search_mode(),
+        Some("peak") | Some("deep") | Some("coherent")
+    )
+        && !rate_padding_explicit
+    {
+        if args.rate_padding != 8 && matches!(args.primary_search_mode(), Some("deep")) {
             println!(
-                "#INFO: --search deep が指定されたため rate-padding を 4 に設定します (旧値 {}).",
+                "#INFO: --search peak/deep/coherent が指定されたため rate-padding を 8 に設定します (旧値 {}).",
                 args.rate_padding
             );
         }
-        args.rate_padding = 4;
+        args.rate_padding = 8;
     }
-    if args.primary_search_mode() == Some("deep") && !iter_explicit {
+    if matches!(args.primary_search_mode(), Some("deep") | Some("coherent")) && !iter_explicit {
         args.iter = 4;
     }
 

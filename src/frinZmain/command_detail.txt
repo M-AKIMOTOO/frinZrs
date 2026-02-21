@@ -5,8 +5,11 @@
 [基本モード]
   --in-beam                          in-beam VLBI 用の標準 delay-rate 解析フローで実行（出力先: frinZ/inbeamVLBI/ 直下）
                                      --plot 時は全面 delay-rate ヒートマップ表示
-  --search [peak|deep|rate|acel]     デフォルト peak（delay-rate 平面のピーク探索）
-  --iter N                           peak/deep の反復回数（deep は未指定時 4）
+  --search [peak|deep|coherent|rate|acel]
+                                     デフォルト peak（delay-rate 平面のピーク探索）
+                                     coherent: 候補評価はコヒーレント和で実行（最終段のみ FFT/IFFT）
+  --iter N                           peak/deep/coherent の反復回数（deep/coherent は未指定時 4）
+                                     peak は SNR 低下時に早期停止し、暫定で上限 5。
   --frequency                        周波数ドメイン処理（未指定は時間ドメイン）
   --plot                             グラフ出力（--frequency 併用で周波数グラフ）
   --output                           frinZ/fringe_output/... に保存
@@ -85,7 +88,7 @@
 
 [その他]
   --fft-rebin <PTS>                  FFT チャンネルを平均化して縮小
-  --cpu <N>                          deep 探索の並列数 (0=自動)
+  --cpu <N>                          deep/coherent 探索の並列数 (0=自動)
 
 [サブコマンド用バイナリ]
   gfrinZ          低レベルフリンジ処理/JSONL 出力（--help 参照）

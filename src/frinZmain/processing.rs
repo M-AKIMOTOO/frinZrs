@@ -582,13 +582,58 @@ pub fn process_cor_file(
 
                     result_tuple
                 }
+                Some("coherent") => {
+                    let mut coherent_search_result = search::run_coherent_search(
+                        &complex_vec,
+                        &processing_header,
+                        current_length,
+                        physical_length,
+                        effective_integ_time,
+                        &current_obs_time,
+                        &file_start_time,
+                        &rfi_ranges,
+                        &bandpass_data,
+                        &loop_args,
+                        pp,
+                        loop_args.cpu,
+                        prev_deep_solution,
+                    )?;
+                    coherent_search_result.analysis_results.residual_delay -= loop_args.delay_correct;
+                    coherent_search_result.analysis_results.residual_rate -= loop_args.rate_correct;
+                    coherent_search_result.analysis_results.corrected_delay = loop_args.delay_correct;
+                    coherent_search_result.analysis_results.corrected_rate = loop_args.rate_correct;
+                    let result_tuple = (
+                        coherent_search_result.analysis_results,
+                        coherent_search_result.freq_rate_array,
+                        coherent_search_result.delay_rate_2d_data,
+                    );
+
+                    prev_deep_solution = Some((
+                        result_tuple.0.residual_delay + loop_args.delay_correct,
+                        result_tuple.0.residual_rate + loop_args.rate_correct,
+                    ));
+
+                    result_tuple
+                }
                 Some("peak") => {
                     let mut total_delay_correct = loop_args.delay_correct;
                     let mut total_rate_correct = loop_args.rate_correct;
                     let delay_bounds = window_bounds(&args.drange);
                     let rate_bounds = window_bounds(&args.rrange);
+                    let peak_iter_threshold = 5_u32;
+                    let max_peak_iterations = args.iter.min(peak_iter_threshold);
+                    if args.iter > peak_iter_threshold {
+                        println!(
+                            "#INFO: --search peak では --iter の上限を {} に制限します (指定値 {}).",
+                            peak_iter_threshold, args.iter
+                        );
+                    }
 
-                    for _ in 0..args.iter {
+                    let mut best_delay_correct = total_delay_correct;
+                    let mut best_rate_correct = total_rate_correct;
+                    let mut best_snr = f32::NEG_INFINITY;
+
+                    for _iter_idx in 0..max_peak_iterations {
                         let (iter_results, _, _) = run_analysis_pipeline(
                             &complex_vec,
                             &processing_header,
@@ -606,6 +651,15 @@ pub fn process_cor_file(
                             &bandpass_data,
                             effective_fft_point,
                         )?;
+
+                        if iter_results.delay_snr > best_snr {
+                            best_snr = iter_results.delay_snr;
+                            best_delay_correct = total_delay_correct;
+                            best_rate_correct = total_rate_correct;
+                        } else if iter_results.delay_snr < best_snr {
+                            break;
+                        }
+
                         total_delay_correct += iter_results.delay_offset;
                         total_rate_correct += iter_results.rate_offset;
 
@@ -617,6 +671,9 @@ pub fn process_cor_file(
                             total_rate_correct = total_rate_correct.clamp(low, high);
                         }
                     }
+
+                    total_delay_correct = best_delay_correct;
+                    total_rate_correct = best_rate_correct;
 
                     let (mut final_analysis_results, final_freq_rate_array, final_delay_rate_array) =
                         run_analysis_pipeline(

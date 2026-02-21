@@ -1,5 +1,5 @@
 pub use acel::run_acel_search_analysis;
-pub use deep::{run_deep_search, DeepSearchParams, DeepSearchResult};
+pub use deep::{run_coherent_search, run_deep_search, DeepSearchParams, DeepSearchResult};
 
 mod acel {
     use std::error::Error;
@@ -552,8 +552,6 @@ mod deep {
     /// Deep searchで使用する探索パラメータ
     #[derive(Debug, Clone)]
     pub struct DeepSearchParams {
-        pub delay_fine_step: f32,          // 0.1 sample
-        pub rate_fine_step_factor: f32,    // 1/(10*pp)
         pub delay_search_range: f32,       // ±0.5 sample
         pub rate_search_range_factor: f32, // ±1/(2*pp) Hz
 
@@ -563,8 +561,6 @@ mod deep {
     impl Default for DeepSearchParams {
         fn default() -> Self {
             Self {
-                delay_fine_step: 0.1,
-                rate_fine_step_factor: 0.1,
                 delay_search_range: 0.5,
                 rate_search_range_factor: 0.5,
 
@@ -643,6 +639,7 @@ mod deep {
                 bandpass_data,
                 args,
                 effective_fft_point,
+                true,
             )?
         };
 
@@ -679,8 +676,17 @@ mod deep {
             let delay_range = search_params.delay_search_range / scale_factor;
             let rate_range =
                 search_params.rate_search_range_factor / (2.0 * pp as f32) / scale_factor;
-            let delay_step = search_params.delay_fine_step / scale_factor;
-            let rate_step = search_params.rate_fine_step_factor / (10.0 * pp as f32) / scale_factor;
+            let grid_points_per_axis = 11usize;
+            let delay_step = if grid_points_per_axis > 1 {
+                (2.0 * delay_range) / (grid_points_per_axis as f32 - 1.0)
+            } else {
+                0.0
+            };
+            let rate_step = if grid_points_per_axis > 1 {
+                (2.0 * rate_range) / (grid_points_per_axis as f32 - 1.0)
+            } else {
+                0.0
+            };
 
             println!(
                 "[DEEP SEARCH]   Delay range: +/- {:.6} samples, step: {:.6}",
@@ -692,7 +698,7 @@ mod deep {
             );
 
             // 並列グリッド探索
-            let (best_delay, best_rate, best_snr) = parallel_grid_search(
+            let (best_delay, best_rate, _best_score) = parallel_grid_search(
                 complex_vec,
                 header,
                 current_length,
@@ -706,12 +712,29 @@ mod deep {
                 current_rate,
                 delay_range,
                 rate_range,
-                delay_step,
-                rate_step,
+                grid_points_per_axis,
                 &pool,
                 start_time_offset_sec,
                 effective_fft_point,
+                true,
             )?;
+
+            let (iter_analysis_results, _, _) = perform_final_analysis(
+                complex_vec,
+                header,
+                current_length,
+                physical_length,
+                effective_integ_time,
+                current_obs_time,
+                rfi_ranges,
+                bandpass_data,
+                args,
+                best_delay,
+                best_rate,
+                start_time_offset_sec,
+                effective_fft_point,
+            )?;
+            let iter_snr = iter_analysis_results.delay_snr;
 
             // 結果を更新
             current_delay = best_delay;
@@ -719,7 +742,7 @@ mod deep {
 
             println!(
                 "[DEEP SEARCH]   Best result: delay={:.6} samples, rate={:.6} Hz, SNR={:.3}",
-                current_delay, current_rate, best_snr
+                current_delay, current_rate, iter_snr
             );
         }
 
@@ -754,6 +777,229 @@ mod deep {
             freq_rate_array: final_freq_rate_array,
             delay_rate_2d_data: final_delay_rate_2d_data,
         })
+    }
+
+    /// Coherent search:
+    /// delay/rate 候補の評価は FFT/IFFT を使わず、コヒーレント和の SNR のみで行う。
+    /// 最後に 1 回だけ既存パイプライン（FFT/IFFT）で最終解析を実行する。
+    pub fn run_coherent_search(
+        complex_vec: &[C32],
+        header: &CorHeader,
+        current_length: i32,
+        physical_length: i32,
+        effective_integ_time: f32,
+        current_obs_time: &DateTime<Utc>,
+        _obs_time: &DateTime<Utc>,
+        rfi_ranges: &[(usize, usize)],
+        bandpass_data: &Option<Vec<C32>>,
+        args: &Args,
+        _pp: i32,
+        cpu_count_arg: u32,
+        previous_solution: Option<(f32, f32)>,
+    ) -> Result<DeepSearchResult, Box<dyn Error>> {
+        // println!("[COHERENT SEARCH] Starting coherent delay-rate search");
+
+        let start_time_offset_sec = 0.0;
+
+        if current_length <= 0 {
+            return Err("有効なセクター長が 0 以下です".into());
+        }
+        let rows = current_length as usize;
+        if rows == 0 || complex_vec.is_empty() {
+            return Err("有効なデータが存在しません".into());
+        }
+        if complex_vec.len() % rows != 0 {
+            return Err(format!(
+                "複素データ長 ({}) がセクター数 ({}) の整数倍ではありません",
+                complex_vec.len(),
+                rows
+            )
+            .into());
+        }
+
+        let fft_point_half = complex_vec.len() / rows;
+        if fft_point_half == 0 {
+            return Err("FFT チャンネル数が 0 です".into());
+        }
+        let effective_fft_point = (fft_point_half * 2) as i32;
+
+        let has_window = args.drange.len() == 2 || args.rrange.len() == 2;
+        let (mut current_delay, mut current_rate) = if let Some((prev_delay, prev_rate)) = previous_solution {
+            // println!(
+            //     "[COHERENT SEARCH] Seeding from previous solution: delay={:.6}, rate={:.6}",
+            //     prev_delay, prev_rate
+            // );
+            (prev_delay, prev_rate)
+        } else if has_window {
+            let (d0, r0) = infer_coherent_initial_center(args, fft_point_half);
+            // println!(
+            //     "[COHERENT SEARCH] Initial center from windows: delay={:.6}, rate={:.6}",
+            //     d0, r0
+            // );
+            (d0, r0)
+        } else {
+            // println!(
+            //     "[COHERENT SEARCH] No windows specified. Running one-shot coarse FFT seed search."
+            // );
+            let (d0, r0) = get_coarse_estimates(
+                complex_vec,
+                header,
+                current_length,
+                physical_length,
+                effective_integ_time,
+                current_obs_time,
+                rfi_ranges,
+                bandpass_data,
+                args,
+                effective_fft_point,
+                false,
+            )?;
+            // println!(
+            //     "[COHERENT SEARCH] Initial center: delay={:.6}, rate={:.6}",
+            //     d0, r0
+            // );
+            (d0, r0)
+        };
+
+        let (initial_delay_range, initial_rate_range) = infer_coherent_initial_ranges(args, _pp);
+        // println!(
+        //     "[COHERENT SEARCH] Initial range: delay=+/-{:.6}, rate=+/-{:.6}",
+        //     initial_delay_range, initial_rate_range
+        // );
+
+        let max_iterations = args.iter.max(1) as usize;
+        let effective_cpu_count =
+            determine_effective_cpu_count(cpu_count_arg, rows, fft_point_half, args.rate_padding);
+        // println!(
+        //     "[COHERENT SEARCH] Using {} worker threads (requested: {}).",
+        //     effective_cpu_count,
+        //     if cpu_count_arg == 0 {
+        //         "auto".to_string()
+        //     } else {
+        //         cpu_count_arg.to_string()
+        //     }
+        // );
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(effective_cpu_count)
+            .build()?;
+
+        for iteration in 0..max_iterations {
+            let scale_factor = 10.0_f32.powi(iteration as i32);
+            let delay_range = initial_delay_range / scale_factor;
+            let rate_range = initial_rate_range / scale_factor;
+            let grid_points_per_axis = 11usize;
+            let _delay_step = if grid_points_per_axis > 1 {
+                (2.0 * delay_range) / (grid_points_per_axis as f32 - 1.0)
+            } else {
+                0.0
+            };
+            let _rate_step = if grid_points_per_axis > 1 {
+                (2.0 * rate_range) / (grid_points_per_axis as f32 - 1.0)
+            } else {
+                0.0
+            };
+
+            // println!("[COHERENT SEARCH] Iteration {} starting", iteration + 1);
+            // println!(
+            //     "[COHERENT SEARCH]   Delay range: +/- {:.6} samples, step: {:.6}",
+            //     delay_range, delay_step
+            // );
+            // println!(
+            //     "[COHERENT SEARCH]   Rate range: +/- {:.6} Hz, step: {:.6}",
+            //     rate_range, rate_step
+            // );
+
+            let (best_delay, best_rate, _best_score) = parallel_grid_search(
+                complex_vec,
+                header,
+                current_length,
+                physical_length,
+                effective_integ_time,
+                current_obs_time,
+                rfi_ranges,
+                bandpass_data,
+                args,
+                current_delay,
+                current_rate,
+                delay_range,
+                rate_range,
+                grid_points_per_axis,
+                &pool,
+                start_time_offset_sec,
+                effective_fft_point,
+                false,
+            )?;
+
+            current_delay = best_delay;
+            current_rate = best_rate;
+            // println!(
+            //     "[COHERENT SEARCH]   Best result: delay={:.6}, rate={:.6}, coh={:.3}",
+            //     current_delay, current_rate, best_score
+            // );
+        }
+
+        // println!(
+        //     "[COHERENT SEARCH] Final result - Delay: {:.6} samples, Rate: {:.6} Hz",
+        //     current_delay, current_rate
+        // );
+
+        let (final_analysis_results, final_freq_rate_array, final_delay_rate_2d_data) =
+            perform_final_analysis(
+                complex_vec,
+                header,
+                current_length,
+                physical_length,
+                effective_integ_time,
+                current_obs_time,
+                rfi_ranges,
+                bandpass_data,
+                args,
+                current_delay,
+                current_rate,
+                start_time_offset_sec,
+                effective_fft_point,
+            )?;
+
+        Ok(DeepSearchResult {
+            analysis_results: final_analysis_results,
+            freq_rate_array: final_freq_rate_array,
+            delay_rate_2d_data: final_delay_rate_2d_data,
+        })
+    }
+
+    fn infer_coherent_initial_center(args: &Args, fft_point_half: usize) -> (f32, f32) {
+        let mut delay_center = if args.drange.len() == 2 {
+            0.5 * (args.drange[0] + args.drange[1])
+        } else {
+            args.delay_correct
+        };
+
+        let rate_center = if args.rrange.len() == 2 {
+            0.5 * (args.rrange[0] + args.rrange[1])
+        } else {
+            args.rate_correct
+        };
+
+        let delay_limit = fft_point_half as f32;
+        delay_center = delay_center.clamp(-delay_limit, delay_limit);
+
+        (delay_center, rate_center)
+    }
+
+    fn infer_coherent_initial_ranges(args: &Args, pp: i32) -> (f32, f32) {
+        let delay_range = if args.drange.len() == 2 {
+            0.5 * (args.drange[1] - args.drange[0]).abs()
+        } else {
+            0.5
+        };
+
+        let rate_range = if args.rrange.len() == 2 {
+            0.5 * (args.rrange[1] - args.rrange[0]).abs()
+        } else {
+            0.5 / (2.0 * (pp.max(1) as f32))
+        };
+
+        (delay_range.max(0.0), rate_range.max(0.0))
     }
 
     fn determine_effective_cpu_count(
@@ -839,9 +1085,10 @@ mod deep {
         bandpass_data: &Option<Vec<C32>>,
         args: &Args,
         effective_fft_point: i32,
+        emit_logs: bool,
     ) -> Result<(f32, f32), Box<dyn Error>> {
         let coarse_rate_padding = 1_u32;
-        if args.rate_padding > coarse_rate_padding {
+        if emit_logs && args.rate_padding > coarse_rate_padding {
             println!(
                 "[DEEP SEARCH] Coarse stage uses rate-padding={} (final stage keeps {}).",
                 coarse_rate_padding, args.rate_padding
@@ -850,7 +1097,9 @@ mod deep {
 
         // drange/rrange が指定されている場合は、その範囲で探索
         if !args.drange.is_empty() || !args.rrange.is_empty() {
-            println!("[DEEP SEARCH] Using specified delay/rate windows for coarse estimation");
+            if emit_logs {
+                println!("[DEEP SEARCH] Using specified delay/rate windows for coarse estimation");
+            }
 
             let (mut freq_rate_array, padding_length) = process_fft(
                 complex_vec,
@@ -886,7 +1135,11 @@ mod deep {
             Ok((coarse_delay, coarse_rate))
         } else {
             // delay-windowとrate-windowが指定されていない場合は、二次関数フィッティングなしの粗い探索を実行
-            println!("[DEEP SEARCH] No windows specified, running coarse search (no fitting) for initial estimates");
+            if emit_logs {
+                println!(
+                    "[DEEP SEARCH] No windows specified, running coarse search (no fitting) for initial estimates"
+                );
+            }
 
             let mut search_args = args.clone();
             search_args.search = vec!["deep".to_string()]; // Enable global max search, disable fitting
@@ -931,7 +1184,7 @@ mod deep {
     /// 並列グリッド探索
     fn parallel_grid_search(
         complex_vec: &[C32],
-        header: &CorHeader,
+        _header: &CorHeader,
         _current_length: i32,
         _physical_length: i32,
         effective_integ_time: f32,
@@ -943,11 +1196,11 @@ mod deep {
         center_rate: f32,
         delay_range: f32,
         rate_range: f32,
-        delay_step: f32,
-        rate_step: f32,
+        grid_points_per_axis: usize,
         pool: &rayon::ThreadPool,
         start_time_offset_sec: f32,
         effective_fft_point: i32,
+        emit_grid_log: bool,
     ) -> Result<(f32, f32, f32), Box<dyn Error>> {
         let fft_point_half = (effective_fft_point / 2) as usize;
         if fft_point_half == 0 {
@@ -966,19 +1219,31 @@ mod deep {
             }
         }
 
+        let valid_channel_indices: Vec<usize> = valid_channels
+            .iter()
+            .enumerate()
+            .filter_map(|(ch, &is_valid)| if is_valid { Some(ch) } else { None })
+            .collect();
+        if valid_channel_indices.is_empty() {
+            return Ok((center_delay, center_rate, 0.0));
+        }
+
+        let channel_correction = build_channel_correction(fft_point_half, bandpass_data);
+
         // 探索グリッドを生成
-        let delay_points = generate_search_points(center_delay, delay_range, delay_step);
-        let rate_points = generate_search_points(center_rate, rate_range, rate_step);
+        let delay_points =
+            generate_search_points(center_delay, delay_range, grid_points_per_axis);
+        let rate_points = generate_search_points(center_rate, rate_range, grid_points_per_axis);
 
-        println!(
-            "[DEEP SEARCH]   Grid: {} delay x {} rate = {} combinations",
-            delay_points.len(),
-            rate_points.len(),
-            delay_points.len() * rate_points.len()
-        );
+        if emit_grid_log {
+            println!(
+                "[SEARCH]   Grid: {} delay x {} rate = {} combinations",
+                delay_points.len(),
+                rate_points.len(),
+                delay_points.len() * rate_points.len()
+            );
+        }
 
-        // 全ての組み合わせを生成
-        let mut search_combinations = Vec::with_capacity(delay_points.len() * rate_points.len());
         let delay_bounds = if args.drange.len() == 2 {
             Some((
                 args.drange[0].min(args.drange[1]),
@@ -996,41 +1261,46 @@ mod deep {
             None
         };
 
-        for &delay in &delay_points {
-            if let Some((low, high)) = delay_bounds {
-                if delay < low || delay > high {
-                    continue;
-                }
-            }
-            for &rate in &rate_points {
-                if let Some((low, high)) = rate_bounds {
-                    if rate < low || rate > high {
-                        continue;
-                    }
-                }
-                search_combinations.push((delay, rate));
-            }
-        }
-
         // 並列探索実行
         let final_result = pool.install(|| {
-            search_combinations
+            delay_points
                 .par_iter()
-                .filter_map(|&(delay, rate)| {
-                    evaluate_delay_rate_snr(
-                        complex_vec,
-                        header,
-                        effective_integ_time,
-                        bandpass_data,
-                        args,
-                        &valid_channels,
-                        delay,
-                        rate,
-                        start_time_offset_sec,
-                        effective_fft_point,
-                    )
-                    .ok()
-                    .map(|snr| (delay, rate, snr))
+                .filter_map(|&delay| {
+                    if let Some((low, high)) = delay_bounds {
+                        if delay < low || delay > high {
+                            return None;
+                        }
+                    }
+
+                    let mut best_for_delay: Option<(f32, f32, f32)> = None;
+                    for &rate in &rate_points {
+                        if let Some((low, high)) = rate_bounds {
+                            if rate < low || rate > high {
+                                continue;
+                            }
+                        }
+
+                        let Ok(score) = evaluate_delay_rate_snr(
+                            complex_vec,
+                            effective_integ_time,
+                            args.acel_correct,
+                            &valid_channel_indices,
+                            &channel_correction,
+                            delay,
+                            rate,
+                            start_time_offset_sec,
+                            effective_fft_point,
+                        ) else {
+                            continue;
+                        };
+
+                        match best_for_delay {
+                            Some((_, _, best_score)) if score <= best_score => {}
+                            _ => best_for_delay = Some((delay, rate, score)),
+                        }
+                    }
+
+                    best_for_delay
                 })
                 .reduce_with(|best, candidate| {
                     if candidate.2 > best.2 {
@@ -1048,11 +1318,10 @@ mod deep {
     /// 特定の遅延・レート組み合わせでのSNRを評価
     fn evaluate_delay_rate_snr(
         complex_vec: &[C32],
-        header: &CorHeader,
         effective_integ_time: f32,
-        bandpass_data: &Option<Vec<C32>>,
-        args: &Args,
-        valid_channels: &[bool],
+        acel_correct: f32,
+        valid_channel_indices: &[usize],
+        channel_correction: &[Complex<f64>],
         delay: f32,
         rate: f32,
         start_time_offset_sec: f32,
@@ -1062,78 +1331,66 @@ mod deep {
         if fft_point_half == 0 || complex_vec.len() % fft_point_half != 0 {
             return Err("deep候補評価: 複素データ形状が不正です".into());
         }
-
-        if valid_channels.len() != fft_point_half {
-            return Err("deep候補評価: チャンネルマスク長が不正です".into());
+        if channel_correction.len() != fft_point_half {
+            return Err("deep候補評価: チャンネル補正長が不正です".into());
         }
 
         let row_count = complex_vec.len() / fft_point_half;
-        if row_count == 0 {
+        if row_count == 0 || valid_channel_indices.is_empty() {
             return Ok(0.0);
         }
 
-        let sampling_speed = (header.sampling_speed as f64).abs().max(1.0);
-        let freq_resolution_hz = sampling_speed / effective_fft_point as f64;
-        let delay_seconds = delay as f64 / sampling_speed;
+        let fft_point_f64 = effective_fft_point as f64;
+        let delay_phase_scale = -2.0 * PI * (delay as f64) / fft_point_f64;
         let start_offset = start_time_offset_sec as f64;
         let integ_time = effective_integ_time as f64;
         let rate_hz = rate as f64;
-        let acel_hz = args.acel_correct as f64;
+        let acel_hz = acel_correct as f64;
 
-        let bp_mean = bandpass_data.as_ref().and_then(|bp_data| {
-            if bp_data.is_empty() {
-                None
-            } else {
-                let sum: C32 = bp_data.iter().copied().sum();
-                Some(sum / bp_data.len() as f32)
-            }
-        });
-        let bp_mean64 = bp_mean.map(|m| Complex::new(m.re as f64, m.im as f64));
+        let delay_factors: Vec<Complex<f64>> = valid_channel_indices
+            .iter()
+            .map(|&ch| {
+                let phase_delay = delay_phase_scale * ch as f64;
+                Complex::<f64>::new(0.0, phase_delay).exp()
+            })
+            .collect();
 
         let mut coherent_sum = Complex::<f64>::new(0.0, 0.0);
         let mut total_power = 0.0f64;
-        let mut valid_count: usize = 0;
-
-        for row in 0..row_count {
-            let t = row as f64 * integ_time + start_offset;
-            let phase_rate = -2.0 * PI * rate_hz * t - PI * acel_hz * t * t;
-            let rate_factor = Complex::<f64>::new(0.0, phase_rate).exp();
-
-            let row_base = row * fft_point_half;
-            for ch in 0..fft_point_half {
-                if !valid_channels[ch] {
-                    continue;
-                }
-
-                let mut value = Complex::<f64>::new(
-                    complex_vec[row_base + ch].re as f64,
-                    complex_vec[row_base + ch].im as f64,
-                );
-
-                if let (Some(bp_data), Some(mean64)) = (bandpass_data.as_ref(), bp_mean64) {
-                    if ch < bp_data.len() {
-                        let bp = bp_data[ch];
-                        let bp_norm = bp.norm() as f64;
-                        if bp_norm > 1e-12 {
-                            let bp64 = Complex::<f64>::new(bp.re as f64, bp.im as f64);
-                            value = (value / bp64) * mean64;
-                        }
-                    }
-                }
-
-                let freq_hz = ch as f64 * freq_resolution_hz;
-                let phase_delay = -2.0 * PI * delay_seconds * freq_hz;
-                let delay_factor = Complex::<f64>::new(0.0, phase_delay).exp();
-
-                let corrected = value * rate_factor * delay_factor;
-                coherent_sum += corrected;
-                total_power += corrected.norm_sqr();
-                valid_count += 1;
-            }
-        }
-
+        let valid_count = row_count * valid_channel_indices.len();
         if valid_count == 0 {
             return Ok(0.0);
+        }
+
+        // phase(row) = a*t + b*t^2 を使って位相因子を再帰更新し、exp() 呼び出しを最小化する。
+        let a = -2.0 * PI * rate_hz;
+        let b = -PI * acel_hz;
+        let dt = integ_time;
+        let t0 = start_offset;
+        let phase0 = a * t0 + b * t0 * t0;
+        let delta0 = a * dt + b * (2.0 * t0 * dt + dt * dt);
+        let delta_delta = 2.0 * b * dt * dt;
+
+        let mut rate_factor = Complex::<f64>::new(0.0, phase0).exp();
+        let mut rate_step = Complex::<f64>::new(0.0, delta0).exp();
+        let rate_step_inc = Complex::<f64>::new(0.0, delta_delta).exp();
+
+        for row in 0..row_count {
+            let row_base = row * fft_point_half;
+            for (idx, &ch) in valid_channel_indices.iter().enumerate() {
+                let raw = complex_vec[row_base + ch];
+                let value = Complex::<f64>::new(raw.re as f64, raw.im as f64) * channel_correction[ch];
+                let corrected = value * rate_factor * delay_factors[idx];
+                coherent_sum += corrected;
+                total_power += corrected.norm_sqr();
+            }
+
+            rate_factor *= rate_step;
+            rate_step *= rate_step_inc;
+            if (row & 1023) == 1023 {
+                normalize_unit_complex(&mut rate_factor);
+                normalize_unit_complex(&mut rate_step);
+            }
         }
 
         let n = valid_count as f64;
@@ -1144,6 +1401,42 @@ mod deep {
         let snr = (coherent_sum.norm() / denom) as f32;
 
         Ok(snr)
+    }
+
+    fn build_channel_correction(
+        fft_point_half: usize,
+        bandpass_data: &Option<Vec<C32>>,
+    ) -> Vec<Complex<f64>> {
+        let mut correction = vec![Complex::<f64>::new(1.0, 0.0); fft_point_half];
+
+        let Some(bp_data) = bandpass_data.as_ref() else {
+            return correction;
+        };
+        if bp_data.is_empty() {
+            return correction;
+        }
+
+        let sum: C32 = bp_data.iter().copied().sum();
+        let mean = sum / bp_data.len() as f32;
+        let mean64 = Complex::<f64>::new(mean.re as f64, mean.im as f64);
+
+        for ch in 0..fft_point_half.min(bp_data.len()) {
+            let bp = bp_data[ch];
+            let bp_norm = bp.norm() as f64;
+            if bp_norm > 1e-12 {
+                let bp64 = Complex::<f64>::new(bp.re as f64, bp.im as f64);
+                correction[ch] = mean64 / bp64;
+            }
+        }
+        correction
+    }
+
+    #[inline]
+    fn normalize_unit_complex(value: &mut Complex<f64>) {
+        let norm = value.norm();
+        if norm > 0.0 {
+            *value /= norm;
+        }
     }
 
     /// 最終的な解析を実行
@@ -1216,41 +1509,14 @@ mod deep {
     }
 
     /// 探索点を生成
-    fn generate_search_points(center: f32, range: f32, step: f32) -> Vec<f32> {
-        let mut points = Vec::new();
-
-        // Use f64 for precision-critical calculations to avoid floating point errors
-        // with very small steps, which can cause inconsistent point counts or infinite loops.
-        let center64 = center as f64;
-        let range64 = range as f64;
-        let step64 = step as f64;
-
-        // Guard against infinite loop if step is zero or too small to be represented.
-        if step64 == 0.0 {
-            if range64 >= 0.0 {
-                points.push(center);
-            }
-            return points;
+    fn generate_search_points(center: f32, range: f32, count: usize) -> Vec<f32> {
+        if !range.is_finite() || range <= 0.0 || count <= 1 {
+            return vec![center];
         }
-
-        let start = center64 - range64;
-        let end = center64 + range64;
-
-        let mut current = start;
-        // Add a small tolerance to the end condition to handle floating point inaccuracies
-        while current <= end + step64 * 0.5 {
-            points.push(current as f32);
-            current += step64;
-        }
-
-        // 最大10点に制限（計算量制御）
-        if points.len() > 10 {
-            // Ensure step_by is at least 1 to avoid panic
-            let step_by = (points.len() / 10).max(1);
-            points = points.into_iter().step_by(step_by).collect();
-        }
-
-        points
+        let n = count.max(2);
+        let start = center - range;
+        let step = (2.0 * range) / (n as f32 - 1.0);
+        (0..n).map(|i| start + step * i as f32).collect()
     }
 
     /// 位相補正を適用
