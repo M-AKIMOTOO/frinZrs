@@ -2,8 +2,8 @@
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use chrono::{DateTime, Utc};
-use num_complex::Complex;
 use npyz::WriterBuilder;
+use num_complex::Complex;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -45,12 +45,7 @@ pub fn npy<T: npyz::AutoSerialize>(output_path: &Path, rows: &[T]) -> io::Result
     Ok(())
 }
 
-pub fn npy_f32_2d(
-    output_path: &Path,
-    rows: usize,
-    cols: usize,
-    values: &[f32],
-) -> io::Result<()> {
+pub fn npy_f32_2d(output_path: &Path, rows: usize, cols: usize, values: &[f32]) -> io::Result<()> {
     if rows.checked_mul(cols).unwrap_or(0) != values.len() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -333,15 +328,23 @@ pub fn write_add_plot_data_to_file(
         .zip(noise.iter())
         .zip(res_delay.iter())
         .zip(res_rate.iter())
-        .map(|((((((&elapsed_time_s, &amplitude_pct), &snr), &phase_deg), &noise_level_pct), &res_delay_samp), &res_rate_hz)| AddPlotRow {
-            elapsed_time_s,
-            amplitude_pct,
-            snr,
-            phase_deg,
-            noise_level_pct,
-            res_delay_samp,
-            res_rate_hz,
-        })
+        .map(
+            |(
+                (
+                    ((((&elapsed_time_s, &amplitude_pct), &snr), &phase_deg), &noise_level_pct),
+                    &res_delay_samp,
+                ),
+                &res_rate_hz,
+            )| AddPlotRow {
+                elapsed_time_s,
+                amplitude_pct,
+                snr,
+                phase_deg,
+                noise_level_pct,
+                res_delay_samp,
+                res_rate_hz,
+            },
+        )
         .collect();
     npy(&output_file_path, &rows)?;
     Ok(())

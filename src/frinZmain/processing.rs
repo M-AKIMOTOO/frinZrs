@@ -377,13 +377,6 @@ pub fn process_cor_file(
     }
 
     let bandpass_active = bandpass_data.as_ref().map_or(false, |bp| !bp.is_empty());
-    if args.bandpass.is_some() {
-        println!(
-            "#Bandpass applied: {}",
-            if bandpass_active { "True" } else { "False" }
-        );
-    }
-
     let mut processing_header = header.clone();
     processing_header.fft_point = effective_fft_point;
 
@@ -598,9 +591,11 @@ pub fn process_cor_file(
                         loop_args.cpu,
                         prev_deep_solution,
                     )?;
-                    coherent_search_result.analysis_results.residual_delay -= loop_args.delay_correct;
+                    coherent_search_result.analysis_results.residual_delay -=
+                        loop_args.delay_correct;
                     coherent_search_result.analysis_results.residual_rate -= loop_args.rate_correct;
-                    coherent_search_result.analysis_results.corrected_delay = loop_args.delay_correct;
+                    coherent_search_result.analysis_results.corrected_delay =
+                        loop_args.delay_correct;
                     coherent_search_result.analysis_results.corrected_rate = loop_args.rate_correct;
                     let result_tuple = (
                         coherent_search_result.analysis_results,

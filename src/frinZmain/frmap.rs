@@ -534,12 +534,7 @@ pub fn run_fringe_rate_map_analysis(
 
     let map_npy_filename = frinz_dir.join(format!("{}_frmap.npy", file_stem));
     let map_values: Vec<f32> = total_map.iter().copied().collect();
-    npy_f32_2d(
-        &map_npy_filename,
-        image_size,
-        image_size,
-        &map_values,
-    )?;
+    npy_f32_2d(&map_npy_filename, image_size, image_size, &map_values)?;
     println!("Fringe rate map data saved to: {:?}", map_npy_filename);
 
     let beam_map_filename = frinz_dir.join(format!("{}_beam.png", file_stem));

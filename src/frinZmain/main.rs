@@ -22,9 +22,9 @@ mod fitting;
 mod folding;
 mod frmap;
 mod header;
-mod input_support;
 #[path = "inbeamVLBI.rs"]
 mod inbeam_vlbi;
+mod input_support;
 
 mod earth_rotation_imaging;
 mod logo;
@@ -49,8 +49,8 @@ use crate::earth_rotation_imaging::{
 };
 use crate::folding::run_folding_analysis;
 use crate::frmap::run_fringe_rate_map_analysis;
-use crate::input_support::{output_stem_from_path, read_input_bytes};
 use crate::inbeam_vlbi::run_inbeam_vlbi_analysis;
+use crate::input_support::{output_stem_from_path, read_input_bytes};
 use crate::maser::run_maser_analysis;
 use crate::multisideband::run_multisideband_analysis;
 use crate::phsref::run_phase_reference_analysis;
@@ -115,8 +115,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else if matches!(
         args.primary_search_mode(),
         Some("peak") | Some("deep") | Some("coherent")
-    )
-        && !rate_padding_explicit
+    ) && !rate_padding_explicit
     {
         if args.rate_padding != 8 && matches!(args.primary_search_mode(), Some("deep")) {
             println!(
@@ -226,8 +225,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let buffer = match read_input_bytes(input_path) {
             Ok(buf) => buf,
             Err(e) => {
-            eprintln!("Error reading input file {:?}: {}", input_path, e);
-            exit(1);
+                eprintln!("Error reading input file {:?}: {}", input_path, e);
+                exit(1);
             }
         };
         let mut cursor = Cursor::new(buffer.as_slice());

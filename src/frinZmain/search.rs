@@ -824,42 +824,43 @@ mod deep {
         let effective_fft_point = (fft_point_half * 2) as i32;
 
         let has_window = args.drange.len() == 2 || args.rrange.len() == 2;
-        let (mut current_delay, mut current_rate) = if let Some((prev_delay, prev_rate)) = previous_solution {
-            // println!(
-            //     "[COHERENT SEARCH] Seeding from previous solution: delay={:.6}, rate={:.6}",
-            //     prev_delay, prev_rate
-            // );
-            (prev_delay, prev_rate)
-        } else if has_window {
-            let (d0, r0) = infer_coherent_initial_center(args, fft_point_half);
-            // println!(
-            //     "[COHERENT SEARCH] Initial center from windows: delay={:.6}, rate={:.6}",
-            //     d0, r0
-            // );
-            (d0, r0)
-        } else {
-            // println!(
-            //     "[COHERENT SEARCH] No windows specified. Running one-shot coarse FFT seed search."
-            // );
-            let (d0, r0) = get_coarse_estimates(
-                complex_vec,
-                header,
-                current_length,
-                physical_length,
-                effective_integ_time,
-                current_obs_time,
-                rfi_ranges,
-                bandpass_data,
-                args,
-                effective_fft_point,
-                false,
-            )?;
-            // println!(
-            //     "[COHERENT SEARCH] Initial center: delay={:.6}, rate={:.6}",
-            //     d0, r0
-            // );
-            (d0, r0)
-        };
+        let (mut current_delay, mut current_rate) =
+            if let Some((prev_delay, prev_rate)) = previous_solution {
+                // println!(
+                //     "[COHERENT SEARCH] Seeding from previous solution: delay={:.6}, rate={:.6}",
+                //     prev_delay, prev_rate
+                // );
+                (prev_delay, prev_rate)
+            } else if has_window {
+                let (d0, r0) = infer_coherent_initial_center(args, fft_point_half);
+                // println!(
+                //     "[COHERENT SEARCH] Initial center from windows: delay={:.6}, rate={:.6}",
+                //     d0, r0
+                // );
+                (d0, r0)
+            } else {
+                // println!(
+                //     "[COHERENT SEARCH] No windows specified. Running one-shot coarse FFT seed search."
+                // );
+                let (d0, r0) = get_coarse_estimates(
+                    complex_vec,
+                    header,
+                    current_length,
+                    physical_length,
+                    effective_integ_time,
+                    current_obs_time,
+                    rfi_ranges,
+                    bandpass_data,
+                    args,
+                    effective_fft_point,
+                    false,
+                )?;
+                // println!(
+                //     "[COHERENT SEARCH] Initial center: delay={:.6}, rate={:.6}",
+                //     d0, r0
+                // );
+                (d0, r0)
+            };
 
         let (initial_delay_range, initial_rate_range) = infer_coherent_initial_ranges(args, _pp);
         // println!(
@@ -1231,8 +1232,7 @@ mod deep {
         let channel_correction = build_channel_correction(fft_point_half, bandpass_data);
 
         // 探索グリッドを生成
-        let delay_points =
-            generate_search_points(center_delay, delay_range, grid_points_per_axis);
+        let delay_points = generate_search_points(center_delay, delay_range, grid_points_per_axis);
         let rate_points = generate_search_points(center_rate, rate_range, grid_points_per_axis);
 
         if emit_grid_log {
@@ -1379,7 +1379,8 @@ mod deep {
             let row_base = row * fft_point_half;
             for (idx, &ch) in valid_channel_indices.iter().enumerate() {
                 let raw = complex_vec[row_base + ch];
-                let value = Complex::<f64>::new(raw.re as f64, raw.im as f64) * channel_correction[ch];
+                let value =
+                    Complex::<f64>::new(raw.re as f64, raw.im as f64) * channel_correction[ch];
                 let corrected = value * rate_factor * delay_factors[idx];
                 coherent_sum += corrected;
                 total_power += corrected.norm_sqr();
@@ -1416,7 +1417,8 @@ mod deep {
             return correction;
         }
 
-        let mean_amp = bp_data.iter().map(|bp| bp.norm() as f64).sum::<f64>() / bp_data.len() as f64;
+        let mean_amp =
+            bp_data.iter().map(|bp| bp.norm() as f64).sum::<f64>() / bp_data.len() as f64;
 
         for ch in 0..fft_point_half.min(bp_data.len()) {
             let bp = bp_data[ch];

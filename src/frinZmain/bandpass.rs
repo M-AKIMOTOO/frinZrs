@@ -89,11 +89,8 @@ pub fn apply_bandpass_correction(freq_rate_array: &mut Array2<C32>, bandpass_dat
 
     // Phase+amplitude are corrected by division with complex bandpass.
     // Rescaling uses real mean amplitude to avoid injecting a global phase rotation.
-    let bandpass_mean_amp = bandpass_data
-        .iter()
-        .map(|bp| bp.norm())
-        .sum::<f32>()
-        / bandpass_data.len() as f32;
+    let bandpass_mean_amp =
+        bandpass_data.iter().map(|bp| bp.norm()).sum::<f32>() / bandpass_data.len() as f32;
 
     for (mut row, &bp_val) in freq_rate_array
         .rows_mut()
