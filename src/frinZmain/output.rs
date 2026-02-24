@@ -211,18 +211,20 @@ pub fn format_delay_output(
     rfi_display: &str,
     bandpass_applied: bool,
 ) -> String {
-    let display_length = if args_length != 0 {
-        args_length as f32
+    let display_length = if args_length > 0 {
+        args_length as f32 * results.effective_integ_time_s
     } else {
-        results.length_f32.ceil()
+        results.length_f32
     };
+    let epoch_display = format_epoch_for_length(results, display_length);
+    let length_display = format_length_for_table(display_length);
     let label_segment = label.get(3).copied().unwrap_or("");
     format!(
-        " {}   {:<5}  {:<10} {:<8.2} {:<3.6} {:>7.1} {:>+10.3}  {:>10.6}  {:>+9.6}   {:>+4.8}   {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}   {:<15} {:<5}",
-        results.yyyydddhhmmss1,
+        " {} {:<10} {:<8} {:>8}  {:>8.6} {:>7.1} {:>+10.3} {:>10.6} {:>+11.6} {:>+11.8} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}   {:<15} {:<5}",
+        epoch_display,
         label_segment,
         results.source_name,
-        display_length,
+        length_display,
         results.delay_max_amp * 100.0,
         results.delay_snr,
         results.delay_phase,
@@ -250,18 +252,20 @@ pub fn format_freq_output(
     rfi_display: &str,
     bandpass_applied: bool,
 ) -> String {
-    let display_length = if args_length != 0 {
-        args_length as f32
+    let display_length = if args_length > 0 {
+        args_length as f32 * results.effective_integ_time_s
     } else {
-        results.length_f32.ceil()
+        results.length_f32
     };
+    let epoch_display = format_epoch_for_length(results, display_length);
+    let length_display = format_length_for_table(display_length);
     let label_segment = label.get(3).copied().unwrap_or("");
     format!(
-        " {}   {:<5}  {:<10} {:<8.2} {:<8.6}  {:>7.1}   {:>+10.3} {:>+12.7} {:>10.6} {:>+10.6} {:>7.3} {:>7.3} {:>7.3}  {:>7.3} {:>7.3} {:>7.3} {:>12.5}   {:<15} {:<5}",
-        results.yyyydddhhmmss1,
+        " {} {:<10} {:<8} {:>8}  {:>8.6} {:>7.1} {:>+10.3} {:>+12.7} {:>10.6} {:>+11.6} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>12.5}   {:<15} {:<5}",
+        epoch_display,
         label_segment,
         results.source_name,
-        display_length,
+        length_display,
         results.freq_max_amp * 100.0,
         results.freq_snr,
         results.freq_phase,
@@ -280,6 +284,27 @@ pub fn format_freq_output(
         //results.l_coord,
         //results.m_coord
     )
+}
+
+fn format_epoch_for_length(results: &AnalysisResults, length_s: f32) -> &str {
+    if length_s < 1e-3 {
+        &results.yyyydddhhmmss1_us
+    } else if length_s < 1.0 {
+        &results.yyyydddhhmmss1_ms
+    } else {
+        &results.yyyydddhhmmss1
+    }
+}
+
+fn format_length_for_table(length_s: f32) -> String {
+    if !length_s.is_finite() {
+        return "nan".to_string();
+    }
+    if length_s >= 1.0 {
+        format!("{}", length_s.round() as i64)
+    } else {
+        format!("{:.1e}", length_s)
+    }
 }
 
 pub fn write_phase_corrected_spectrum_binary(

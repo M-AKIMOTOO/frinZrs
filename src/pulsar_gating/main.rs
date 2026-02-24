@@ -3,23 +3,25 @@ use clap::{CommandFactory, Parser};
 use std::path::PathBuf;
 
 mod known_pulsar;
+mod shared;
 mod unknown_pulsar;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "pulsar_gating",
-    about = "frinZ の相関データからパルサー信号を抽出するゲーティングツール",
-    long_about = "frinZ の .cor 相関データを読み込み、周波数チャネル毎のスペクトルを時間方向に並べた行列を構築します。\n\
+    about = "GICO3 出力の .cor 相関データを解析し、パルサー信号を抽出するゲーティングツール",
+    long_about = "GICO3 が出力した .cor 相関データを読み込み、周波数チャネル毎のスペクトルを時間方向に並べた行列を構築します。\n\
     オプションで分散補正（DM）を適用した後に折り畳み処理（fold）を行い、オンパルス／オフパルスの推定、\n\
-    各種時系列やスペクトルのプロット、レポート出力を実施します。"
+    各種時系列やスペクトルのプロット、レポート出力を実施します。\n\
+    frinZ は .cor を解析するツールです。"
 )]
 struct Cli {
     /// 入力する .cor ファイルのパス
     #[arg(
         long,
         value_name = "FILE",
-        help = ".cor 形式の相関データファイルを指定します。",
-        long_help = ".cor 形式の相関データファイルを指定します。ファイルパスは絶対パス・相対パスいずれでも構いません。\n\
+        help = "GICO3 出力の .cor 相関データファイルを指定します。",
+        long_help = "GICO3 出力の .cor 相関データファイルを指定します。ファイルパスは絶対パス・相対パスいずれでも構いません。\n\
         出力は入力ファイルと同じディレクトリ直下の frinZ/pulsar_gating/ に保存されます。"
     )]
     input: PathBuf,
@@ -28,7 +30,7 @@ struct Cli {
     #[arg(
         long,
         value_name = "SECONDS",
-        help = "既知のパルサー周期を指定します。未指定の場合は未知モードで解析します。",
+        help = "既知のパルサー周期を指定します（任意指定）。未指定の場合は未知モードで解析します。",
         long_help = "既知のパルサーの回転周期（秒単位）です。観測データと整合する実測値もしくはカタログ値を指定してください。\n\
         未指定の場合は周期未知モードとして解析フローを切り替えます。"
     )]
@@ -83,6 +85,26 @@ struct Cli {
         オンパルスとみなすかを指定します。典型的には 0.05 ～ 0.2 程度が利用されます。"
     )]
     on_duty: f64,
+
+    /// delay-rate 抽出で使う振幅しきい値
+    #[arg(
+        long,
+        default_value_t = 0.015,
+        help = "delay-rate 平面で抽出する最小振幅（amplitude >= threshold）。",
+        long_help = "周期探索補助のため、delay-rate 平面から amplitude がこの値以上の点だけを抽出します。\n\
+        未指定時は 0.015 を使用します。"
+    )]
+    amp_threshold: f64,
+
+    /// 詳細な中間CSV/PNG出力を有効化
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "詳細な中間生成物（CSV/PNG）を出力します（既定: 無効）。",
+        long_help = "実行速度を優先するため、既定では必要最小限の出力のみを生成します。\n\
+        このオプションを指定すると、詳細な中間生成物（CSV/PNG）も出力します。"
+    )]
+    full_output: bool,
 }
 
 fn main() -> Result<()> {
@@ -100,6 +122,8 @@ fn main() -> Result<()> {
         skip,
         length,
         on_duty,
+        amp_threshold,
+        full_output,
     } = cli;
 
     if let Some(period) = period {
@@ -111,6 +135,7 @@ fn main() -> Result<()> {
             skip,
             length,
             on_duty,
+            full_output,
         };
         known_pulsar::run(args)
     } else {
@@ -125,6 +150,8 @@ fn main() -> Result<()> {
             skip,
             length,
             on_duty,
+            amp_threshold,
+            full_output,
         };
         unknown_pulsar::run(args)
     }

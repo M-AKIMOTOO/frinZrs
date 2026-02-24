@@ -398,19 +398,16 @@ pub fn process_cor_file(
 
     // --- Loop and Processing Setup ---
     cursor.set_position(0);
-    let (_, file_start_time, effective_integ_time) =
+    let (_, file_start_time, _effective_integ_time) =
         read_visibility_data(&mut cursor, &header, 1, 0, 0, false, pp_flag_ranges)?;
     cursor.set_position(256);
 
     let pp = header.number_of_sector;
-    let mut length = if args.length == 0 { pp } else { args.length };
-
-    let total_obs_time_seconds = pp as f32 * effective_integ_time;
-    if args.length != 0 && args.length as f32 > total_obs_time_seconds {
-        length = (total_obs_time_seconds / effective_integ_time).ceil() as i32;
-    } else if args.length != 0 {
-        length = (args.length as f32 / effective_integ_time).ceil() as i32;
-    }
+    let mut length = if args.length <= 0 {
+        pp
+    } else {
+        args.length.min(pp)
+    };
     let mut loop_count = if (pp - args.skip) / length <= 0 {
         1
     } else if (pp - args.skip) / length <= args.loop_ {
@@ -453,7 +450,7 @@ pub fn process_cor_file(
         } else {
             length
         };
-        let (mut complex_vec, current_obs_time, effective_integ_time) = match read_visibility_data(
+        let (mut complex_vec, raw_obs_time, effective_integ_time) = match read_visibility_data(
             &mut cursor,
             &header,
             requested_length,
@@ -465,6 +462,17 @@ pub fn process_cor_file(
             Ok(data) => data,
             Err(_) => break,
         };
+
+        let sector_start_idx = if args.cumulate != 0 {
+            0
+        } else {
+            (args.skip + length * l1).max(0)
+        };
+        let start_offset_ns =
+            ((sector_start_idx as f64) * (effective_integ_time as f64) * 1.0e9).round() as i64;
+        let current_obs_time = file_start_time
+            .checked_add_signed(Duration::nanoseconds(start_offset_ns))
+            .unwrap_or(raw_obs_time);
 
         let original_fft_half = (header.fft_point / 2) as usize;
         if original_fft_half == 0 {

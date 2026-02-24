@@ -1,13 +1,15 @@
+use super::shared::{
+    compress_plot_png, output_stem, prepare_output_directory, scaled_font_size,
+    scaled_legend_font_size,
+};
 use anyhow::{anyhow, Context, Result};
 use frinZ::header::{parse_header, CorHeader};
-use frinZ::plot::plot_spectrum_heatmaps;
 use frinZ::read::read_visibility_data;
 use num_complex::Complex;
+use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::colors::colormaps::ViridisRGB;
-use plotters::style::FontTransform;
 use std::fs;
-use std::io::BufWriter;
 use std::io::Cursor;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -28,6 +30,25 @@ pub struct KnownArgs {
     pub length: u32,
     /// オンパルスに割り当てる位相ビン割合
     pub on_duty: f64,
+    /// 詳細な中間出力の有効化フラグ
+    pub full_output: bool,
+}
+
+fn draw_info_block(root: &DrawingArea<BitMapBackend<'_>, Shift>, lines: &[String]) -> Result<()> {
+    let text_style =
+        TextStyle::from(("sans-serif", scaled_font_size(20)).into_font()).color(&BLACK);
+    let x_pos = 145;
+    let mut y_pos = 80;
+    let line_step = scaled_font_size(20) + 8;
+    for line in lines {
+        root.draw(&Text::new(
+            line.as_str(),
+            (x_pos, y_pos),
+            text_style.clone(),
+        ))?;
+        y_pos += line_step;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -252,7 +273,9 @@ fn build_dedispersed_series(
         for (chan_idx, &delay) in delays.iter().enumerate() {
             let src_series = &time_series_complex[chan_idx];
             for dest_idx in 0..sectors.len() {
-                let target_time = centers[dest_idx] + delay;
+                // Dedisperse by delaying early-arriving channels (positive delay)
+                // so all channels align to the reference channel timeline.
+                let target_time = centers[dest_idx] - delay;
                 let value = interpolate_complex(&centers, src_series, target_time, last_index);
                 dedispersed_heatmap[dest_idx][chan_idx] = value;
             }
@@ -320,6 +343,95 @@ fn build_dedispersed_series(
         dm_delay_min: dm_delay_stats.map(|(mn, _)| mn),
         dm_delay_max: dm_delay_stats.map(|(_, mx)| mx),
     })
+}
+
+#[allow(dead_code)]
+pub(crate) fn build_onpulse_dedispersed_sectors(
+    sectors: &[SectorData],
+    freq_axis_mhz: &[f64],
+    period: f64,
+    bins: usize,
+    on_duty: f64,
+    dm: Option<f64>,
+) -> Result<Vec<SectorData>> {
+    if sectors.is_empty() {
+        return Ok(Vec::new());
+    }
+    if period <= 0.0 || bins == 0 || !(0.0..=1.0).contains(&on_duty) {
+        return Err(anyhow!(
+            "invalid gating parameters (period, bins, on_duty) for on-pulse sector construction"
+        ));
+    }
+
+    let cli = KnownArgs {
+        input: PathBuf::new(),
+        period,
+        dm,
+        bins,
+        skip: 0,
+        length: 0,
+        on_duty,
+        full_output: false,
+    };
+    let dedispersed = build_dedispersed_series(sectors, freq_axis_mhz, &cli)?;
+    let folded = fold_profile(
+        &dedispersed.dedispersed_time_series,
+        &dedispersed.dedispersed_weights,
+        period,
+        bins,
+    )?;
+    let gating = determine_gating(&folded, on_duty);
+
+    let mut on_mask = vec![false; bins];
+    for &bin in &gating.on_bins {
+        if bin < bins {
+            on_mask[bin] = true;
+        }
+    }
+    if !on_mask.iter().any(|&v| v) {
+        return Err(anyhow!(
+            "failed to determine on-pulse bins for gated delay-rate analysis"
+        ));
+    }
+
+    let channels = dedispersed
+        .dedispersed_heatmap
+        .first()
+        .map(|r| r.len())
+        .unwrap_or(0);
+    let first_center = dedispersed.pp_elapsed.get(0).copied().unwrap_or(0.0)
+        + dedispersed.pp_durations.get(0).copied().unwrap_or(0.0) / 2.0;
+
+    let on_count = on_mask.iter().filter(|&&v| v).count();
+    let off_count = bins.saturating_sub(on_count);
+    let off_scale = if off_count > 0 {
+        on_count as f32 / off_count as f32
+    } else {
+        0.0
+    };
+
+    let mut out = Vec::with_capacity(dedispersed.dedispersed_heatmap.len());
+    for idx in 0..dedispersed.dedispersed_heatmap.len() {
+        let center = dedispersed.pp_elapsed[idx] + dedispersed.pp_durations[idx] / 2.0;
+        let phase = ((center - first_center) / period).rem_euclid(1.0);
+        let bin = ((phase * bins as f64).floor() as usize).min(bins - 1);
+        // Use a zero-mean gate (+1 for on-pulse, -alpha for off-pulse) to reduce
+        // periodic window leakage in delay-rate space while preserving cadence.
+        let weight: f32 = if on_mask[bin] { 1.0 } else { -off_scale };
+        let spectra = if weight.abs() <= f32::EPSILON {
+            vec![Complex::new(0.0, 0.0); channels]
+        } else {
+            dedispersed.dedispersed_heatmap[idx]
+                .iter()
+                .map(|v| *v * weight)
+                .collect()
+        };
+        out.push(SectorData {
+            integ_time: dedispersed.pp_durations[idx],
+            spectra,
+        });
+    }
+    Ok(out)
 }
 
 fn compute_dispersion_delays(freq_axis_mhz: &[f64], ref_freq_mhz: f64, dm: f64) -> Vec<f64> {
@@ -485,7 +597,6 @@ struct GatedAggregation {
     gated_profile_snr: Option<f64>,
     gated_profile_sigma: Option<f64>,
     diff_time_series: Vec<(f64, f64)>,
-    diff_heatmap: Vec<Vec<f64>>,
 }
 
 fn determine_gating(profile: &[(f64, f64)], on_duty: f64) -> GatingResult {
@@ -768,22 +879,18 @@ fn compute_gated_aggregation(
         .collect();
 
     let mut diff_time_series = Vec::with_capacity(sectors);
-    let mut diff_heatmap = Vec::with_capacity(sectors);
     let mut on_diff_values = Vec::new();
     let mut off_diff_values = Vec::new();
     for (sector_idx, row) in dedispersed.dedispersed_heatmap.iter().enumerate() {
         let (center, bin) = bin_assignments[sector_idx];
         let is_on = on_mask[bin];
         let mut diff_sum = 0.0f64;
-        let mut diff_row = Vec::with_capacity(channels);
         for (chan_idx, value) in row.iter().enumerate() {
             let amp = value.norm() as f64;
             let diff = amp - off_channel_means[chan_idx];
             diff_sum += diff;
-            diff_row.push(diff);
         }
         diff_time_series.push((center, diff_sum));
-        diff_heatmap.push(diff_row);
 
         if is_on {
             on_diff_values.push(diff_sum);
@@ -837,16 +944,7 @@ fn compute_gated_aggregation(
         gated_profile_snr: gated_snr,
         gated_profile_sigma: gated_sigma,
         diff_time_series,
-        diff_heatmap,
     })
-}
-
-pub(crate) fn prepare_output_directory(input: &Path) -> Result<PathBuf> {
-    let parent = input.parent().unwrap_or_else(|| Path::new(""));
-    let output_dir = parent.join("frinZ").join("pulsar_gating");
-    fs::create_dir_all(&output_dir)
-        .with_context(|| format!("failed to create {}", output_dir.display()))?;
-    Ok(output_dir)
 }
 
 fn write_outputs(
@@ -860,11 +958,10 @@ fn write_outputs(
     gating: &GatingResult,
     gated: Option<&GatedAggregation>,
 ) -> Result<()> {
-    let stem = cli
-        .input
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("pulsar");
+    let stem_owned = output_stem(&cli.input);
+    let stem = stem_owned.as_str();
+    cleanup_legacy_bin_outputs(output_dir, stem);
+    let full_output = cli.full_output;
     let raw_rows = dedispersed.spectra_heatmap.len();
     let raw_cols = dedispersed
         .spectra_heatmap
@@ -877,7 +974,8 @@ fn write_outputs(
         .get(0)
         .map(|row| row.len())
         .unwrap_or(0);
-    if cli.dm.is_some()
+    if full_output
+        && cli.dm.is_some()
         && raw_rows == dedisp_rows
         && raw_cols == dedisp_cols
         && raw_rows > 0
@@ -892,7 +990,7 @@ fn write_outputs(
             max_diff, mean_diff
         );
     }
-    if cli.dm.is_some() && (raw_rows != dedisp_rows || raw_cols != dedisp_cols) {
+    if full_output && cli.dm.is_some() && (raw_rows != dedisp_rows || raw_cols != dedisp_cols) {
         eprintln!(
             "Warning: dedispersed heatmap size {}x{} differs from raw heatmap {}x{}",
             dedisp_rows, dedisp_cols, raw_rows, raw_cols
@@ -909,7 +1007,7 @@ fn write_outputs(
     let profile_plot = output_dir.join(format!("{stem}_folded_profile.png"));
     plot_folded_profile(&profile_plot, folded, gating, cli)?;
 
-    if !dedispersed.integrated_time_series.is_empty() {
+    if full_output && !dedispersed.integrated_time_series.is_empty() {
         let time_series_csv = output_dir.join(format!("{stem}_dedispersed_time_series.csv"));
         let mut ts_file = fs::File::create(&time_series_csv)
             .with_context(|| format!("failed to write {time_series_csv:?}"))?;
@@ -928,33 +1026,16 @@ fn write_outputs(
         )?;
     }
 
-    if !dedispersed.spectra_heatmap.is_empty() {
-        let heatmap_path = output_dir.join(format!("{stem}_raw_heatmap.png"));
-        plot_spectrum_heatmaps(&heatmap_path, &dedispersed.spectra_heatmap, 0.0)
-            .map_err(|e| anyhow!(e.to_string()))?;
-
-        if !dedispersed.raw_phase_heatmap.is_empty() {
-            let phase_heatmap_path = output_dir.join(format!("{stem}_raw_phase_heatmap.png"));
-            plot_phase_aligned_heatmap(
-                &phase_heatmap_path,
-                &dedispersed.raw_phase_heatmap,
-                freq_axis_mhz,
-                center_freq_mhz,
-            )?;
-
-            let phase_bin_path = output_dir.join(format!("{stem}_raw_phase_heatmap.bin"));
-            write_heatmap_binary(&phase_bin_path, &dedispersed.raw_phase_heatmap)?;
-        }
+    if full_output && !dedispersed.raw_phase_heatmap.is_empty() {
+        let phase_heatmap_path = output_dir.join(format!("{stem}_raw_phase_heatmap.png"));
+        plot_phase_aligned_heatmap(
+            &phase_heatmap_path,
+            &dedispersed.raw_phase_heatmap,
+            freq_axis_mhz,
+            center_freq_mhz,
+        )?;
     }
-    if cli.dm.is_some() && !dedispersed.dedispersed_heatmap.is_empty() {
-        let heatmap_path = output_dir.join(format!("{stem}_dedispersed_heatmap.png"));
-        plot_spectrum_heatmaps(&heatmap_path, &dedispersed.dedispersed_heatmap, 0.0)
-            .map_err(|e| anyhow!(e.to_string()))?;
-
-        let heatmap_bin_path = output_dir.join(format!("{stem}_dedispersed_heatmap.bin"));
-        write_heatmap_binary(&heatmap_bin_path, &dedispersed.dedispersed_heatmap)?;
-    }
-    if cli.dm.is_some() && !dedispersed.dedispersed_phase_heatmap.is_empty() {
+    if full_output && cli.dm.is_some() && !dedispersed.dedispersed_phase_heatmap.is_empty() {
         let heatmap_path = output_dir.join(format!("{stem}_phase_aligned_heatmap.png"));
         plot_phase_aligned_heatmap(
             &heatmap_path,
@@ -962,9 +1043,6 @@ fn write_outputs(
             freq_axis_mhz,
             center_freq_mhz,
         )?;
-
-        let heatmap_bin_path = output_dir.join(format!("{stem}_phase_aligned_heatmap.bin"));
-        write_heatmap_binary(&heatmap_bin_path, &dedispersed.dedispersed_phase_heatmap)?;
 
         let on_diff_heatmap = build_on_pulse_phase_difference_heatmap(
             &dedispersed.dedispersed_heatmap,
@@ -983,30 +1061,15 @@ fn write_outputs(
                 freq_axis_mhz,
                 center_freq_mhz,
             )?;
-
-            let diff_heatmap_bin_path =
-                output_dir.join(format!("{stem}_phase_aligned_onminusoff_heatmap.bin"));
-            write_heatmap_binary(&diff_heatmap_bin_path, &on_diff_heatmap)?;
         }
     }
     if let Some(gated_data) = gated {
-        let on_path = output_dir.join(format!("{stem}_gated_spectrum_on.csv"));
-        write_spectrum_csv(&on_path, &gated_data.on_spectrum, "amplitude_on")?;
-
-        if gated_data.off_weight > 0.0 {
-            let off_path = output_dir.join(format!("{stem}_gated_spectrum_off.csv"));
-            write_spectrum_csv(&off_path, &gated_data.off_spectrum, "amplitude_off")?;
-        }
-
         let diff_path = output_dir.join(format!("{stem}_gated_spectrum_difference.csv"));
         write_spectrum_csv(
             &diff_path,
             &gated_data.diff_spectrum,
             "amplitude_on_minus_off",
         )?;
-
-        let time_series_path = output_dir.join(format!("{stem}_gated_time_series.csv"));
-        write_gated_time_series_csv(&time_series_path, &gated_data.time_series)?;
 
         let spectrum_plot = output_dir.join(format!("{stem}_gated_spectrum.png"));
         plot_gated_spectrum(
@@ -1016,8 +1079,18 @@ fn write_outputs(
             &gated_data.diff_spectrum,
         )?;
 
-        let time_series_plot = output_dir.join(format!("{stem}_gated_time_series.png"));
-        plot_gated_time_series(&time_series_plot, &gated_data.time_series)?;
+        if full_output {
+            let on_path = output_dir.join(format!("{stem}_gated_spectrum_on.csv"));
+            write_spectrum_csv(&on_path, &gated_data.on_spectrum, "amplitude_on")?;
+            if gated_data.off_weight > 0.0 {
+                let off_path = output_dir.join(format!("{stem}_gated_spectrum_off.csv"));
+                write_spectrum_csv(&off_path, &gated_data.off_spectrum, "amplitude_off")?;
+            }
+            let time_series_path = output_dir.join(format!("{stem}_gated_time_series.csv"));
+            write_gated_time_series_csv(&time_series_path, &gated_data.time_series)?;
+            let time_series_plot = output_dir.join(format!("{stem}_gated_time_series.png"));
+            plot_gated_time_series(&time_series_plot, &gated_data.time_series)?;
+        }
 
         if !gated_data.gated_profile.is_empty() {
             let profile_csv = output_dir.join(format!("{stem}_gated_profile.csv"));
@@ -1040,7 +1113,7 @@ fn write_outputs(
             )?;
         }
 
-        if !gated_data.diff_time_series.is_empty() {
+        if full_output && !gated_data.diff_time_series.is_empty() {
             let diff_ts_csv = output_dir.join(format!("{stem}_gated_time_series_diff.csv"));
             let mut diff_file = fs::File::create(&diff_ts_csv)
                 .with_context(|| format!("failed to write {diff_ts_csv:?}"))?;
@@ -1059,19 +1132,7 @@ fn write_outputs(
             )?;
         }
 
-        if !gated_data.diff_heatmap.is_empty() {
-            let diff_heatmap_path = output_dir.join(format!("{stem}_gated_diff_heatmap.png"));
-            let diff_complex: Vec<Vec<Complex<f32>>> = gated_data
-                .diff_heatmap
-                .iter()
-                .map(|row| row.iter().map(|&v| Complex::new(v as f32, 0.0)).collect())
-                .collect();
-            plot_spectrum_heatmaps(&diff_heatmap_path, &diff_complex, 0.0)
-                .map_err(|e| anyhow!(e.to_string()))?;
-
-            let diff_bin_path = output_dir.join(format!("{stem}_gated_diff_heatmap.bin"));
-            write_heatmap_binary(&diff_bin_path, &diff_complex)?;
-        }
+        let _ = full_output;
     }
 
     let bins_path = output_dir.join(format!("{stem}_onoff_pulse_bins.txt"));
@@ -1229,6 +1290,42 @@ fn write_outputs(
     )?;
 
     Ok(())
+}
+
+fn cleanup_legacy_bin_outputs(output_dir: &Path, stem: &str) {
+    let legacy_png_files = [
+        format!("{stem}_raw_heatmap.png"),
+        format!("{stem}_dedispersed_heatmap.png"),
+        format!("{stem}_gated_diff_heatmap.png"),
+    ];
+    for name in legacy_png_files {
+        let path = output_dir.join(name);
+        let _ = fs::remove_file(path);
+    }
+
+    let legacy_files = [
+        format!("{stem}_raw_phase_heatmap.bin"),
+        format!("{stem}_dedispersed_heatmap.bin"),
+        format!("{stem}_phase_aligned_heatmap.bin"),
+        format!("{stem}_phase_aligned_onminusoff_heatmap.bin"),
+        format!("{stem}_gated_diff_heatmap.bin"),
+    ];
+    for name in legacy_files {
+        let path = output_dir.join(name);
+        let _ = fs::remove_file(path);
+    }
+
+    let legacy_or_full_csv = [
+        format!("{stem}_gated_spectrum_on.csv"),
+        format!("{stem}_gated_spectrum_off.csv"),
+        format!("{stem}_gated_time_series.csv"),
+        format!("{stem}_gated_time_series_diff.csv"),
+        format!("{stem}_dedispersed_time_series.csv"),
+    ];
+    for name in legacy_or_full_csv {
+        let path = output_dir.join(name);
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn print_summary(
@@ -1392,13 +1489,12 @@ fn plot_folded_profile(
     let x_range = (x_max - x_min).abs().max(1e-9);
     let y_range = (y_max - y_min).abs().max(1e-9);
 
-    let root = BitMapBackend::new(output_path, (1280, 720)).into_drawing_area();
+    let root = BitMapBackend::new(output_path, (850, 550)).into_drawing_area();
     root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .caption("Folded pulse profile", ("sans-serif", 28))
-        .x_label_area_size(50)
-        .y_label_area_size(60)
+        .x_label_area_size(80)
+        .y_label_area_size(110)
         .build_cartesian_2d(
             (x_min - 0.05 * x_range)..(x_max + 0.05 * x_range),
             (y_min - 0.05 * y_range)..(y_max + 0.05 * y_range),
@@ -1408,41 +1504,46 @@ fn plot_folded_profile(
         .configure_mesh()
         .x_desc("Pulse phase")
         .y_desc("Amplitude")
+        .y_label_formatter(&|v| format!("{:.1e}", v))
+        .light_line_style(TRANSPARENT)
+        .label_style(("sans-serif", scaled_font_size(20)).into_font())
+        .axis_desc_style(("sans-serif", scaled_font_size(22)).into_font())
         .draw()?;
 
-    chart.draw_series(LineSeries::new(data.iter().map(|&(x, y)| (x, y)), &BLUE))?;
+    chart
+        .draw_series(LineSeries::new(data.iter().map(|&(x, y)| (x, y)), &BLUE))?
+        .label("Folded amplitude")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 25, y)], BLUE));
 
-    let info_lines = [
+    let dm_text = cli
+        .dm
+        .map(|dm| format!("{:.5} pc cm^-3", dm))
+        .unwrap_or_else(|| "n/a".to_string());
+    let info_lines = vec![
         format!("Peak amplitude : {:.3e}", peak_amp),
         format!("Off mean       : {:.3e}", off_mean),
         format!("Off sigma      : {:.3e}", off_sigma),
-        format!("S/N            : {:.3e}", snr_display),
+        format!("S/N            : {:.3}", snr_display),
         format!("Period         : {:.3e} s", cli.period),
+        format!("DM             : {}", dm_text),
         format!(
-            "Pulse width    : {:.3e} s ({:.1} bins)",
+            "On-window width(est.) : {:.3e} s ({:.1} bins)",
             pulse_width_sec, pulse_width_bin
         ),
     ];
 
-    let text_style = TextStyle::from(("sans-serif", 20).into_font()).color(&BLACK);
-    let x_text = x_min + 0.02 * x_range;
-    let mut y_cursor = y_max - 0.05 * y_range;
-    let line_spacing = 0.035 * y_range;
-    for line in info_lines.iter() {
-        chart.plotting_area().draw(&Text::new(
-            line.as_str(),
-            (x_text, y_cursor),
-            text_style.clone(),
-        ))?;
-        y_cursor -= line_spacing;
-    }
+    draw_info_block(&root, &info_lines)?;
 
     chart
         .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .label_font(("sans-serif", scaled_legend_font_size(16)).into_font())
+        .background_style(WHITE.mix(0.8))
         .border_style(&BLACK)
         .draw()?;
 
     root.present()?;
+    compress_plot_png(output_path);
     Ok(())
 }
 
@@ -1473,13 +1574,12 @@ fn plot_gated_profile(
     let x_range = (x_max - x_min).abs().max(1e-9);
     let y_range = (y_max - y_min).abs().max(1e-9);
 
-    let root = BitMapBackend::new(output_path, (1280, 720)).into_drawing_area();
+    let root = BitMapBackend::new(output_path, (850, 550)).into_drawing_area();
     root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .caption("Gated pulse profile", ("sans-serif", 28))
-        .x_label_area_size(50)
-        .y_label_area_size(60)
+        .x_label_area_size(80)
+        .y_label_area_size(110)
         .build_cartesian_2d(
             (x_min - 0.05 * x_range)..(x_max + 0.05 * x_range),
             (y_min - 0.05 * y_range)..(y_max + 0.05 * y_range),
@@ -1489,9 +1589,16 @@ fn plot_gated_profile(
         .configure_mesh()
         .x_desc("Pulse phase")
         .y_desc("Amplitude (on-pulse)")
+        .y_label_formatter(&|v| format!("{:.1e}", v))
+        .light_line_style(TRANSPARENT)
+        .label_style(("sans-serif", scaled_font_size(20)).into_font())
+        .axis_desc_style(("sans-serif", scaled_font_size(22)).into_font())
         .draw()?;
 
-    chart.draw_series(LineSeries::new(data.iter().map(|&(x, y)| (x, y)), &RED))?;
+    chart
+        .draw_series(LineSeries::new(data.iter().map(|&(x, y)| (x, y)), &RED))?
+        .label("Gated profile")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 25, y)], RED));
 
     let peak_amp = gating
         .on_bins
@@ -1500,20 +1607,25 @@ fn plot_gated_profile(
         .fold(0.0, f64::max);
     let off_sigma_val = off_sigma.unwrap_or(0.0);
     let snr_text = snr
-        .map(|v| format!("{:.3e}", v))
+        .map(|v| format!("{:.3}", v))
         .unwrap_or_else(|| "n/a".to_string());
     let sigma_text = sigma
         .map(|v| format!("{:.3e}", v))
         .unwrap_or_else(|| "n/a".to_string());
-    let info_lines = [
+    let dm_text = cli
+        .dm
+        .map(|dm| format!("{:.5} pc cm^-3", dm))
+        .unwrap_or_else(|| "n/a".to_string());
+    let info_lines = vec![
         format!("Peak (on-off)  : {:.3e}", peak_amp),
         format!("Off mean       : {:.3e}", off_mean),
         format!("Off sigma      : {:.3e}", off_sigma_val),
         format!("Gated S/N      : {}", snr_text),
         format!("Gated σ        : {}", sigma_text),
         format!("Period         : {:.3e} s", cli.period),
+        format!("DM             : {}", dm_text),
         format!(
-            "Pulse width    : {:.3e} s ({:.1} bins)",
+            "On-window width(est.) : {:.3e} s ({:.1} bins)",
             if cli.bins > 0 {
                 cli.period * gating.on_bins.len() as f64 / cli.bins as f64
             } else {
@@ -1523,25 +1635,18 @@ fn plot_gated_profile(
         ),
     ];
 
-    let text_style = TextStyle::from(("sans-serif", 20).into_font()).color(&BLACK);
-    let x_text = x_min + 0.02 * x_range;
-    let mut y_cursor = y_max - 0.05 * y_range;
-    let line_spacing = 0.035 * y_range;
-    for line in info_lines.iter() {
-        chart.plotting_area().draw(&Text::new(
-            line.as_str(),
-            (x_text, y_cursor),
-            text_style.clone(),
-        ))?;
-        y_cursor -= line_spacing;
-    }
+    draw_info_block(&root, &info_lines)?;
 
     chart
         .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .label_font(("sans-serif", scaled_legend_font_size(16)).into_font())
+        .background_style(WHITE.mix(0.8))
         .border_style(&BLACK)
         .draw()?;
 
     root.present()?;
+    compress_plot_png(output_path);
     Ok(())
 }
 
@@ -1549,7 +1654,7 @@ fn plot_time_series(
     output_path: &Path,
     data: &[(f64, f64)],
     period: f64,
-    title: &str,
+    _title: &str,
     y_label: &str,
 ) -> Result<()> {
     if data.len() < 2 {
@@ -1569,13 +1674,12 @@ fn plot_time_series(
     let x_range = (x_max - x_min).abs().max(1e-9);
     let y_range = (y_max - y_min).abs().max(1e-9);
 
-    let root = BitMapBackend::new(output_path, (1280, 720)).into_drawing_area();
+    let root = BitMapBackend::new(output_path, (850, 550)).into_drawing_area();
     root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .caption(title, ("sans-serif", 28))
-        .x_label_area_size(60)
-        .y_label_area_size(60)
+        .x_label_area_size(80)
+        .y_label_area_size(110)
         .build_cartesian_2d(
             (x_min - 0.05 * x_range)..(x_max + 0.05 * x_range),
             (y_min - 0.05 * y_range)..(y_max + 0.05 * y_range),
@@ -1585,16 +1689,24 @@ fn plot_time_series(
         .configure_mesh()
         .x_desc("Time [s]")
         .y_desc(y_label)
+        .y_label_formatter(&|v| format!("{:.1e}", v))
+        .light_line_style(TRANSPARENT)
+        .label_style(("sans-serif", scaled_font_size(20)).into_font())
+        .axis_desc_style(("sans-serif", scaled_font_size(22)).into_font())
         .draw()?;
 
-    chart.draw_series(LineSeries::new(data.iter().copied(), &BLUE))?;
+    chart
+        .draw_series(LineSeries::new(data.iter().copied(), &BLUE))?
+        .label("Time series")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 25, y)], BLUE));
 
     let info_lines = [
         format!("Total span    : {:.3e} s", x_max - x_min),
         format!("Period        : {:.3e} s", period),
         format!("Samples count : {}", data.len()),
     ];
-    let text_style = TextStyle::from(("sans-serif", 20).into_font()).color(&BLACK);
+    let text_style =
+        TextStyle::from(("sans-serif", scaled_font_size(20)).into_font()).color(&BLACK);
     let x_text = x_min + 0.02 * x_range;
     let mut y_cursor = y_max - 0.05 * y_range;
     let line_spacing = 0.04 * y_range;
@@ -1607,30 +1719,16 @@ fn plot_time_series(
         y_cursor -= line_spacing;
     }
 
+    chart
+        .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .label_font(("sans-serif", scaled_legend_font_size(16)).into_font())
+        .background_style(WHITE.mix(0.8))
+        .border_style(BLACK)
+        .draw()?;
+
     root.present()?;
-    Ok(())
-}
-
-fn write_heatmap_binary(path: &Path, heatmap: &[Vec<Complex<f32>>]) -> Result<()> {
-    if heatmap.is_empty() || heatmap[0].is_empty() {
-        return Ok(());
-    }
-
-    let file = fs::File::create(path).with_context(|| format!("failed to write {:?}", path))?;
-    let mut writer = BufWriter::new(file);
-
-    for row in heatmap {
-        for cell in row {
-            let amplitude = cell.norm() as f32;
-            writer
-                .write_all(&amplitude.to_le_bytes())
-                .with_context(|| format!("failed to write {:?}", path))?;
-        }
-    }
-
-    writer
-        .flush()
-        .with_context(|| format!("failed to finalize {:?}", path))?;
+    compress_plot_png(output_path);
     Ok(())
 }
 
@@ -1690,13 +1788,12 @@ fn plot_gated_spectrum(
     }
     let y_range = (y_max - y_min).abs().max(1e-9);
 
-    let root = BitMapBackend::new(output_path, (1280, 720)).into_drawing_area();
+    let root = BitMapBackend::new(output_path, (850, 550)).into_drawing_area();
     root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .caption("Gated spectrum comparison", ("sans-serif", 28))
-        .x_label_area_size(60)
-        .y_label_area_size(70)
+        .x_label_area_size(80)
+        .y_label_area_size(110)
         .build_cartesian_2d(
             freq_min..freq_max,
             (y_min - 0.05 * y_range)..(y_max + 0.05 * y_range),
@@ -1705,7 +1802,11 @@ fn plot_gated_spectrum(
     chart
         .configure_mesh()
         .x_desc("Frequency [MHz]")
-        .y_desc("Amplitude (a.u.)")
+        .y_desc("Amplitude")
+        .y_label_formatter(&|v| format!("{:.1e}", v))
+        .light_line_style(TRANSPARENT)
+        .label_style(("sans-serif", scaled_font_size(20)).into_font())
+        .axis_desc_style(("sans-serif", scaled_font_size(22)).into_font())
         .draw()?;
 
     chart
@@ -1727,11 +1828,14 @@ fn plot_gated_spectrum(
 
     chart
         .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .label_font(("sans-serif", scaled_legend_font_size(16)).into_font())
         .background_style(&WHITE.mix(0.8))
         .border_style(&BLACK)
         .draw()?;
 
     root.present()?;
+    compress_plot_png(output_path);
     Ok(())
 }
 
@@ -1765,13 +1869,12 @@ fn plot_gated_time_series(output_path: &Path, data: &[(f64, f64, bool)]) -> Resu
     }
     let y_range = (y_max - y_min).abs().max(1e-9);
 
-    let root = BitMapBackend::new(output_path, (1280, 720)).into_drawing_area();
+    let root = BitMapBackend::new(output_path, (850, 550)).into_drawing_area();
     root.fill(&WHITE)?;
     let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .caption("Dedispersed time series with gating", ("sans-serif", 28))
-        .x_label_area_size(60)
-        .y_label_area_size(70)
+        .x_label_area_size(80)
+        .y_label_area_size(110)
         .build_cartesian_2d(
             t_min..t_max,
             (y_min - 0.05 * y_range)..(y_max + 0.05 * y_range),
@@ -1780,7 +1883,11 @@ fn plot_gated_time_series(output_path: &Path, data: &[(f64, f64, bool)]) -> Resu
     chart
         .configure_mesh()
         .x_desc("Time [s]")
-        .y_desc("Amplitude (a.u.)")
+        .y_desc("Amplitude")
+        .y_label_formatter(&|v| format!("{:.1e}", v))
+        .light_line_style(TRANSPARENT)
+        .label_style(("sans-serif", scaled_font_size(20)).into_font())
+        .axis_desc_style(("sans-serif", scaled_font_size(22)).into_font())
         .draw()?;
 
     let mut current_segment: Vec<(f64, f64)> = Vec::new();
@@ -1839,11 +1946,14 @@ fn plot_gated_time_series(output_path: &Path, data: &[(f64, f64, bool)]) -> Resu
 
     chart
         .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .label_font(("sans-serif", scaled_legend_font_size(16)).into_font())
         .background_style(&WHITE.mix(0.8))
         .border_style(&BLACK)
         .draw()?;
 
     root.present()?;
+    compress_plot_png(output_path);
     Ok(())
 }
 
@@ -1870,7 +1980,7 @@ fn plot_phase_aligned_heatmap(
     output_path: &Path,
     heatmap: &[Vec<Complex<f32>>],
     freq_axis_mhz: &[f64],
-    center_freq_mhz: f64,
+    _center_freq_mhz: f64,
 ) -> Result<()> {
     if heatmap.is_empty()
         || heatmap[0].is_empty()
@@ -1938,22 +2048,16 @@ fn plot_phase_aligned_heatmap(
         phase_edges.push(bin_idx as f64 * phase_step);
     }
 
-    let total_width = 1280u32;
-    let total_height = 720u32;
-    let color_bar_width = 140u32;
-    let plot_width = total_width.saturating_sub(color_bar_width);
-
-    let root = BitMapBackend::new(output_path, (total_width, total_height)).into_drawing_area();
+    let root = BitMapBackend::new(output_path, (850, 550)).into_drawing_area();
     root.fill(&WHITE)?;
-    let (plot_area, color_bar_area) = root.split_horizontally(plot_width);
 
     let freq_min = 0.0;
     let freq_max = last_edge;
 
-    let mut chart = ChartBuilder::on(&plot_area)
+    let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .x_label_area_size(70)
-        .y_label_area_size(70)
+        .x_label_area_size(80)
+        .y_label_area_size(110)
         .build_cartesian_2d(freq_min..freq_max, 0.0..360.0)?;
 
     chart
@@ -1962,15 +2066,12 @@ fn plot_phase_aligned_heatmap(
         .y_desc("Pulse phase [deg]")
         .x_label_formatter(&|v| format!("{:.0}", v))
         .y_label_formatter(&|v| format!("{:.0}", v))
-        .x_label_style(("sans-serif", 24).into_font())
-        .y_label_style(("sans-serif", 24).into_font())
+        .y_label_offset(6)
+        .x_label_style(("sans-serif", scaled_font_size(24)).into_font())
+        .y_label_style(("sans-serif", scaled_font_size(24)).into_font())
+        .axis_desc_style(("sans-serif", scaled_font_size(22)).into_font())
+        .light_line_style(TRANSPARENT)
         .draw()?;
-
-    plot_area.draw_text(
-        &format!("Frequency {:.0} MHz", center_freq_mhz),
-        &TextStyle::from(("sans-serif", 28).into_font()).color(&BLACK),
-        (30, 30),
-    )?;
 
     for bin_idx in 0..bins {
         let phase_low = phase_edges[bin_idx];
@@ -1988,46 +2089,8 @@ fn plot_phase_aligned_heatmap(
         }
     }
 
-    let (bar_width_px, bar_height_px) = color_bar_area.dim_in_pixel();
-    let bar_x_start = (bar_width_px as i32).saturating_sub(70);
-    let top_margin = 40i32;
-    let bottom_margin = 40i32;
-    let usable_height = (bar_height_px as i32).saturating_sub(top_margin + bottom_margin);
-    if usable_height > 1 {
-        for i in 0..usable_height {
-            let frac = 1.0 - (i as f64 / (usable_height - 1) as f64);
-            let color = ViridisRGB.get_color(frac);
-            color_bar_area.draw(&Rectangle::new(
-                [
-                    (bar_x_start, top_margin + i),
-                    (bar_x_start + 30, top_margin + i + 1),
-                ],
-                color.filled(),
-            ))?;
-        }
-
-        let label_count = 5.max(usable_height / 80);
-        for i in 0..label_count {
-            let frac = i as f64 / (label_count - 1).max(1) as f64;
-            let value = min_amp as f64 + (max_amp as f64 - min_amp as f64) * (1.0 - frac);
-            let y_pos = top_margin + (frac * (usable_height - 1) as f64) as i32;
-            color_bar_area.draw_text(
-                &format!("{:.2e}", value),
-                &TextStyle::from(("sans-serif", 20).into_font()).color(&BLACK),
-                (bar_x_start + 35, y_pos - 8),
-            )?;
-        }
-
-        color_bar_area.draw_text(
-            "Amplitude (a.u.)",
-            &TextStyle::from(("sans-serif", 22).into_font())
-                .color(&BLACK)
-                .transform(FontTransform::Rotate270),
-            (bar_x_start + 80, (bar_height_px / 2) as i32),
-        )?;
-    }
-
     root.present()?;
+    compress_plot_png(output_path);
     Ok(())
 }
 
@@ -2157,6 +2220,7 @@ mod tests {
             skip: 0,
             length: 0,
             on_duty: 0.1,
+            full_output: false,
         };
         let outputs = build_dedispersed_series(&sectors, &freq_axis_mhz, &cli).unwrap();
 

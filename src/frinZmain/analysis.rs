@@ -126,11 +126,135 @@ fn refine_peak_3x3_quadratic(
     Some((refined_delay, refined_rate))
 }
 
+fn refine_peak_rate15_delay3_profile(
+    surface: &Array2<f32>,
+    center_rate_idx: usize,
+    center_delay_idx: usize,
+    rate_range: &[f32],
+    delay_range: &Array1<f32>,
+    rrange: &[f32],
+    drange: &[f32],
+    padding_length: usize,
+    effective_integ_time: f32,
+) -> Option<(f32, f32)> {
+    let (rows, cols) = surface.dim();
+    if rows < 3 || cols < 3 {
+        return None;
+    }
+    if center_delay_idx == 0 || center_delay_idx + 1 >= cols {
+        return None;
+    }
+    if rate_range.len() != rows || delay_range.len() != cols {
+        return None;
+    }
+
+    let rate_bounds = window_bounds(rrange);
+    let delay_bounds = window_bounds(drange);
+    let rate_min_idx = center_rate_idx.saturating_sub(7);
+    let rate_max_idx = (center_rate_idx + 7).min(rows - 1);
+
+    // (rate, refined_delay, refined_peak_amp)
+    let mut candidates: Vec<(f64, f64, f64)> = Vec::new();
+
+    for r_idx in rate_min_idx..=rate_max_idx {
+        let rate_val = rate_range[r_idx];
+        if !in_window(rate_val, rate_bounds) {
+            continue;
+        }
+
+        let mut x_coords: Vec<f64> = Vec::with_capacity(3);
+        let mut y_values: Vec<f64> = Vec::with_capacity(3);
+        for d_off in -1isize..=1 {
+            let d_idx = (center_delay_idx as isize + d_off) as usize;
+            let delay_val = delay_range[d_idx];
+            if !in_window(delay_val, delay_bounds) {
+                x_coords.clear();
+                y_values.clear();
+                break;
+            }
+            x_coords.push(delay_val as f64);
+            y_values.push(surface[[r_idx, d_idx]] as f64);
+        }
+
+        if x_coords.len() != 3 {
+            continue;
+        }
+
+        let Ok(fit_result) = fitting::fit_quadratic_least_squares(&x_coords, &y_values) else {
+            continue;
+        };
+        let x_min = x_coords[0].min(x_coords[2]);
+        let x_max = x_coords[0].max(x_coords[2]);
+        if !fit_result.peak_x.is_finite() || fit_result.peak_x < x_min || fit_result.peak_x > x_max
+        {
+            continue;
+        }
+
+        let peak_amp = fit_result.c - (fit_result.b * fit_result.b) / (4.0 * fit_result.a);
+        if !peak_amp.is_finite() {
+            continue;
+        }
+        candidates.push((rate_val as f64, fit_result.peak_x, peak_amp.max(0.0)));
+    }
+
+    if candidates.len() < 3 {
+        return None;
+    }
+
+    let best_idx = candidates
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(idx, _)| idx)?;
+    let best_rate = candidates[best_idx].0;
+    let best_delay = candidates[best_idx].1;
+
+    let rate_scale_factor = (10.0 * padding_length as f64 * effective_integ_time as f64)
+        .abs()
+        .max(1e-9);
+    let x_coords: Vec<f64> = candidates.iter().map(|c| c.0 * rate_scale_factor).collect();
+    let y_values: Vec<f64> = candidates.iter().map(|c| c.2).collect();
+    let refined_rate_f64 =
+        if let Ok(fit_result) = fitting::fit_quadratic_least_squares(&x_coords, &y_values) {
+            fit_result.peak_x / rate_scale_factor
+        } else {
+            best_rate
+        };
+    let rate_min = candidates.iter().map(|c| c.0).fold(f64::INFINITY, f64::min);
+    let rate_max = candidates
+        .iter()
+        .map(|c| c.0)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let refined_rate_f64 = refined_rate_f64.clamp(rate_min, rate_max);
+
+    let refined_delay_f64 = candidates
+        .iter()
+        .min_by(|a, b| {
+            (a.0 - refined_rate_f64)
+                .abs()
+                .partial_cmp(&(b.0 - refined_rate_f64).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|c| c.1)
+        .unwrap_or(best_delay);
+
+    let refined_delay = refined_delay_f64 as f32;
+    let refined_rate = refined_rate_f64 as f32;
+    if !in_window(refined_delay, delay_bounds) || !in_window(refined_rate, rate_bounds) {
+        return None;
+    }
+
+    Some((refined_delay, refined_rate))
+}
+
 #[derive(Debug, Clone)]
 pub struct AnalysisResults {
     // Common
     pub yyyydddhhmmss1: String,
+    pub yyyydddhhmmss1_ms: String,
+    pub yyyydddhhmmss1_us: String,
     pub source_name: String,
+    pub effective_integ_time_s: f32,
     pub length_f32: f32,
     pub ant1_az: f32,
     pub ant1_el: f32,
@@ -265,6 +389,21 @@ pub fn analyze_results(
     let delay_max_amp = delay_rate_2d_data_array[[peak_rate_idx, peak_delay_idx]];
     let delay_phase = safe_arg(&delay_rate_array[[peak_rate_idx, peak_delay_idx]]).to_degrees();
     let delay_rate_slice = delay_rate_2d_data_array.column(peak_delay_idx).to_owned();
+    let refined_peak_rate15 = if search_mode == Some("peak") && !args.frequency {
+        refine_peak_rate15_delay3_profile(
+            &delay_rate_2d_data_array,
+            peak_rate_idx,
+            peak_delay_idx,
+            &rate_range,
+            &delay_range,
+            &args.rrange,
+            &args.drange,
+            padding_length,
+            effective_integ_time,
+        )
+    } else {
+        None
+    };
     let refined_peak_3x3 = if search_mode == Some("peak") && !args.frequency {
         refine_peak_3x3_quadratic(
             &delay_rate_2d_data_array,
@@ -278,11 +417,12 @@ pub fn analyze_results(
     } else {
         None
     };
+    let refined_peak = refined_peak_rate15.or(refined_peak_3x3);
 
     let mut residual_delay_val: f32 = delay_range[peak_delay_idx];
     let mut delay_offset = 0.0;
     if search_mode == Some("peak") {
-        if let Some((refined_delay, _)) = refined_peak_3x3 {
+        if let Some((refined_delay, _)) = refined_peak {
             delay_offset = refined_delay;
             residual_delay_val = refined_delay;
         } else {
@@ -514,7 +654,7 @@ pub fn analyze_results(
                     residual_rate_val = rate_offset;
                 }
             }
-        } else if let Some((_, refined_rate)) = refined_peak_3x3 {
+        } else if let Some((_, refined_rate)) = refined_peak {
             rate_offset = refined_rate;
             residual_rate_val = refined_rate;
         } else {
@@ -592,7 +732,10 @@ pub fn analyze_results(
 
     AnalysisResults {
         yyyydddhhmmss1: obs_time.format("%Y/%j %H:%M:%S").to_string(),
+        yyyydddhhmmss1_ms: obs_time.format("%Y/%j %H:%M:%S%.3f").to_string(),
+        yyyydddhhmmss1_us: obs_time.format("%Y/%j %H:%M:%S%.6f").to_string(),
         source_name: header.source_name.clone(),
+        effective_integ_time_s: effective_integ_time,
         length_f32,
         ant1_az: ant1_az as f32,
         ant1_el: ant1_el as f32,

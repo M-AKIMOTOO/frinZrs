@@ -30,11 +30,11 @@ pub struct Args {
     #[arg(long = "closure-phase", aliases = ["cp"], num_args = 0.., value_name = "FILE|KEY:VALUE")]
     pub closure_phase: Option<Vec<String>>,
 
-    /// Integration time in seconds (0 = whole file).
+    /// Integration length in sectors (pp). Effective time = len * effective_integ_time.
     #[arg(long, aliases = ["le", "len", "leng", "lengt"], default_value_t = 0)]
     pub length: i32,
 
-    /// Skip time in seconds from the start.
+    /// Skip sectors (pp) from the start.
     #[arg(long, aliases = ["sk", "ski"], default_value_t = 0)]
     pub skip: i32,
 

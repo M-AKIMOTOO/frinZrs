@@ -51,24 +51,25 @@ pub fn compress_png_with_mode<P: AsRef<Path>>(path: P, mode: CompressQuality) {
         .collect();
 
     let mut base_attr = iq_new();
-    let _ = base_attr.set_speed(1);
     match mode {
         CompressQuality::High => {
-            let _ = base_attr.set_quality(10, 100);
+            let _ = base_attr.set_speed(4);
+            let _ = base_attr.set_quality(30, 90);
         }
         CompressQuality::Low => {
-            let _ = base_attr.set_quality(10, 10);
+            let _ = base_attr.set_speed(8);
+            let _ = base_attr.set_quality(10, 40);
         }
     }
     let _ = base_attr.set_max_colors(256);
     let _ = base_attr.set_min_posterization(0);
 
-    let color_targets = [
-        256u32, 224, 192, 160, 144, 128, 112, 96, 80, 72, 64, 56, 48, 40, 32, 28, 24, 20, 16, 12,
-        10, 8,
-    ];
+    let color_targets: &[u32] = match mode {
+        CompressQuality::High => &[256, 192, 128, 96, 64, 48, 32, 24, 16],
+        CompressQuality::Low => &[128, 96, 64, 48, 32, 24, 16],
+    };
     let mut best_png: Option<Vec<u8>> = None;
-    for &colors in &color_targets {
+    for &colors in color_targets {
         if let Some(candidate) = quantize_with_colors(&base_attr, &pixels, width, height, colors) {
             let take = best_png
                 .as_ref()
@@ -157,8 +158,8 @@ fn encode_indexed_png(
         let mut encoder = Encoder::new(&mut compressed, width, height);
         encoder.set_color(ColorType::Indexed);
         encoder.set_depth(BitDepth::Eight);
-        encoder.set_compression(png::Compression::Best);
-        encoder.set_filter(png::FilterType::Paeth);
+        encoder.set_compression(png::Compression::Fast);
+        encoder.set_filter(png::FilterType::Sub);
         encoder.set_adaptive_filter(AdaptiveFilterType::Adaptive);
         encoder.set_palette(palette_rgb);
         if has_transparency {
