@@ -1,4 +1,4 @@
-<img src="./src/frinZmain/logo1.png" width=45%>  <img src="./src/frinZmain/logo2.png" width=45%>
+<img src="./src/frinZmain/frinZlogo1.png" width=45%>  <img src="./src/frinZmain/frinZlogo2.png" width=45%>
 
 # frinZrs
 
@@ -183,21 +183,110 @@ frinZ --phase-reference cal.cor target.cor 1 30 60 5 \
 ### Pulsar Gating Analysis
 
 ```bash
+# Known pulsar mode (period is given)
 pulsar_gating --input data.cor \
   --period 0.253 --dm 26.7 \
   --bins 128 --on-duty 0.12
+
+# Unknown pulsar mode (period/DM estimated from data)
+pulsar_gating --input data.cor --bins 128 --amp-threshold 0.015
 ```
 
-Outputs (CSV + PNG) are written under `frinZ/pulsar_gating` next to the input file:
-- `*_raw_time_series.*` – frequency-integrated amplitudes without DM correction
-- `*_dedispersed_time_series.*` – dedispersed, frequency-integrated amplitude vs time
-- `*_mean_spectrum.*` – time-integrated spectrum across channels
-- `*_dedispersed_spectrum.*` – DM 補正後の時間積分スペクトル
-- `*_profile.*` – folded pulse profile and gating summary
-- `*_raw_heatmap.png` – amplitude/phase heatmap of the raw spectra (PP × channel)
-- `*_dedispersed_heatmap.png` – DM 補正後のスペクトル行列（指定した場合のみ）
-- `*_phase_resolved_amplitude.png` – DM 補正後のパルス位相 vs 振幅プロファイル
-- `*_phase_series.png` – 周波数積分後の時系列を位相軸に展開した散布図
+`pulsar_gating` creates outputs under `frinZ/pulsar_gating/` next to the input `.cor`.
+
+#### Modes
+
+- **Known mode** (`--period` required, `--dm` optional): Performs dedispersion (if DM is given), fold, on/off pulse bin selection, and gated spectrum/profile products.
+- **Unknown mode** (`--period` omitted): Estimates period from fringe-derived products, estimates DM from sub-band delay fit, writes handoff parameters, then automatically runs known mode with estimated values.
+
+#### Core algorithm flow
+
+1. Read `.cor` sectors and build channel-wise time series.
+2. Build fringe products (`rate spectrum`, `delay-rate` plane).
+3. Estimate period from spacing of periodic peaks in the rate spectrum (`rate-diff`).
+4. Refine period by fold-SNR scan.
+5. Estimate DM by fitting delay vs `1/f^2` from phase-shifted sub-band folded profiles.
+6. Run known-mode gating with selected/refined parameters.
+
+Estimated/refined period and estimated DM are printed to stdout.
+
+#### Noise evaluation before/after gating
+
+`pulsar_gating` evaluates noise in two stages.
+
+1. **Before gating (folded profile)**
+   - On-pulse bins are chosen by `--on-duty` (largest folded amplitudes).
+   - Off-pulse bins are the remaining bins.
+   - `off_mean` and `off_sigma` are computed from off-pulse folded amplitudes.
+   - `Estimated S/N` is:
+     - `(peak_amp - off_mean) / off_sigma`
+
+2. **After gating (on/off weighted aggregation)**
+   - Time-domain means are computed from dedispersed sector amplitudes:
+     - `on_mean`: weighted mean over on-pulse sectors
+     - `off_mean`: weighted mean over off-pulse sectors
+     - `off_sigma`: standard deviation of off-pulse sector amplitudes
+   - `Gated time S/N` is:
+     - `(on_mean - off_mean) / off_sigma`
+   - `Gated profile S/N` is computed from channel-subtracted time series (`on-off`) as:
+     - `peak(on-off) / sigma(off on-off)`
+
+In stdout and `*_summary.txt`, these appear as:
+- `Estimated S/N` (pre-gating folded profile)
+- `Gated on-mean`, `Gated off-mean`, `Gated off σ`
+- `Gated time S/N`
+- `Gated profile S/N`, `Gated profile σ`
+
+#### ゲーティング前後のノイズ評価（日本語）
+
+`pulsar_gating` では、ノイズ評価を次の2段階で行います。
+
+1. **ゲーティング前（folded profile）**
+   - `--on-duty` で指定した割合だけ、振幅の大きい位相ビンを on-pulse として選択します。
+   - 残りの位相ビンを off-pulse とします。
+   - off-pulse の振幅から `off_mean` と `off_sigma` を計算します。
+   - `Estimated S/N` は次式です。
+     - `(peak_amp - off_mean) / off_sigma`
+
+2. **ゲーティング後（on/off 重み付き集約）**
+   - dedispersed したセクター振幅から次を計算します。
+     - `on_mean`: on-pulse セクターの重み付き平均
+     - `off_mean`: off-pulse セクターの重み付き平均
+     - `off_sigma`: off-pulse セクター振幅の標準偏差
+   - `Gated time S/N` は次式です。
+     - `(on_mean - off_mean) / off_sigma`
+   - `Gated profile S/N` は、チャネルごとの off 平均を引いた on-off 時系列から計算し、次式で定義します。
+     - `peak(on-off) / sigma(off on-off)`
+
+`stdout` と `*_summary.txt` では、主に以下の項目として表示されます。
+- `Estimated S/N`（ゲーティング前 folded profile）
+- `Gated on-mean`, `Gated off-mean`, `Gated off σ`
+- `Gated time S/N`
+- `Gated profile S/N`, `Gated profile σ`
+
+#### Main outputs (current default)
+
+- `*_rate_spectrum.png` – rate profile with threshold/periodic markers.
+- `*_rate_spectrum_above_amp.csv` – points above `--amp-threshold`.
+- `*_rate_spectrum_periodic_peaks.csv` – periodic peak candidates used for period spacing.
+- `*_delay_rate_peakscan.png` – delay-window peak scan map.
+- `*_rate_diff_folded_profile.png` – folded profile from rate-diff period (when available).
+- `*_dm_fit_points.csv` – DM fit points and residuals (when DM estimation succeeds).
+- `*_unknown_handoff.txt` – estimated `period`, `dm`, and reproducible command.
+- `*_profile.csv`, `*_folded_profile.png` – fold result from known-mode stage.
+- `*_gated_spectrum_difference.csv`, `*_gated_spectrum.png`
+- `*_gated_profile.csv`, `*_gated_profile.png`
+- `*_onoff_pulse_bins.txt`, `*_summary.txt`
+- `*_dedispersed_time_series.csv`, `*_dedispersed_time_series.png`
+- `*_raw_phase_heatmap.png`, `*_phase_aligned_heatmap.png`, `*_phase_aligned_onminusoff_heatmap.png`
+- `*_gated_spectrum_on.csv`, `*_gated_spectrum_off.csv`
+- `*_gated_time_series.csv`, `*_gated_time_series.png`
+- `*_gated_time_series_diff.csv`, `*_gated_time_series_diff.png`
+
+#### Notes
+
+- Recent versions intentionally reduce redundant CSV/PNG generation to shorten runtime and reduce disk usage.
+- Legacy files from older naming/output schemes are cleaned up automatically when running `pulsar_gating`.
 
 ## Output Files
 
